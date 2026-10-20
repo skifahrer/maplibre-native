@@ -1,8 +1,9 @@
 name: terrain-ios
 
-# Builds MapLibre iOS from upstream feature/terrain-3d. Releases normally come from a Mac
-# build (faster); this is the fallback, run by hand.
+# Builds MapLibre iOS from upstream feature/terrain-3d whenever that branch moves.
 on:
+  schedule:
+    - cron: "23 2 * * *"
   workflow_dispatch:
     inputs:
       force:
