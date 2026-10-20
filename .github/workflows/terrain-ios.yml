@@ -1,0 +1,108 @@
+name: terrain-ios
+
+# Builds MapLibre iOS from upstream feature/terrain-3d whenever that branch moves.
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even if this commit already has a release
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: terrain-ios
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: maplibre/maplibre-native
+  BRANCH: feature/terrain-3d
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.head.outputs.sha }}
+      tag: ${{ steps.head.outputs.tag }}
+      build: ${{ steps.head.outputs.build }}
+    steps:
+      - id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force || false }}
+        run: |
+          sha=$(git ls-remote "https://github.com/$UPSTREAM.git" "refs/heads/$BRANCH" | cut -f1)
+          if [ -z "$sha" ]; then
+            echo "::notice::$UPSTREAM has no $BRANCH any more (merged or dropped); nothing to build."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          tag="terrain-${sha:0:7}"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ "$FORCE" != "true" ] && gh release view "$tag" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::notice::$tag is already released."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: macos-26
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM }}
+          ref: ${{ needs.check.outputs.sha }}
+          submodules: recursive
+          persist-credentials: false
+
+      # The same flags as upstream's ios-release, so the framework is as small as theirs.
+      - name: Build the XCFramework
+        run: |
+          bazel build --compilation_mode=opt --//:renderer=metal \
+            --features=dead_strip,thin_lto --objc_enable_binary_stripping \
+            --apple_generate_dsym --output_groups=+dsyms \
+            //platform/ios:MapLibre.dynamic
+          echo "BIN=$(bazel info --compilation_mode=opt bazel-bin)/platform/ios" >> "$GITHUB_ENV"
+
+      # The zip carries ~570 MB of dSYMs; they go in a release asset of their own.
+      - name: Package
+        run: |
+          mkdir -p out x
+          unzip -q "$BIN/MapLibre.dynamic.xcframework.zip" -d x
+          chmod -R u+w x
+          rm -rf x/MapLibre.xcframework/*/dSYMs
+          for i in 0 1 2 3; do
+            /usr/libexec/PlistBuddy -c "Delete :AvailableLibraries:$i:DebugSymbolsPath" \
+              x/MapLibre.xcframework/Info.plist 2> /dev/null || true
+          done
+          cp LICENSE.md x/MapLibre.xcframework/
+          (cd x && ditto -c -k --keepParent MapLibre.xcframework ../out/MapLibre.xcframework.zip)
+          (cd "$BIN/MapLibre.dynamic_dsyms" &&
+            ditto -c -k --keepParent MapLibre_ios_device.framework.dSYM "$GITHUB_WORKSPACE/out/MapLibre.framework.dSYM.zip")
+          swift package compute-checksum out/MapLibre.xcframework.zip > out/checksum.txt
+          ls -la out
+          du -sh x/MapLibre.xcframework/ios-arm64/MapLibre.framework/MapLibre
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.check.outputs.sha }}
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          gh release delete "$TAG" -R "$GITHUB_REPOSITORY" --cleanup-tag --yes 2> /dev/null || true
+          subject=$(git log -1 --format=%s)
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "iOS terrain build ${SHA:0:7}" \
+            --notes "MapLibre Native iOS from [$UPSTREAM@${SHA:0:7}](https://github.com/$UPSTREAM/commit/$SHA) on \`$BRANCH\`: $subject
+
+          Checksum: \`$(cat out/checksum.txt)\`" \
+            out/MapLibre.xcframework.zip out/MapLibre.framework.dSYM.zip out/checksum.txt
