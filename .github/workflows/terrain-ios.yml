@@ -1,6 +1,7 @@
 name: terrain-ios
 
-# Builds MapLibre iOS from upstream feature/terrain-3d whenever that branch moves.
+# Builds MapLibre iOS from upstream feature/terrain-3d, with upstream main merged in,
+# whenever either moves.
 on:
   schedule:
     - cron: "23 2 * * *"
@@ -21,12 +22,14 @@ concurrency:
 env:
   UPSTREAM: maplibre/maplibre-native
   BRANCH: feature/terrain-3d
+  MAIN: main
 
 jobs:
   check:
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.head.outputs.sha }}
+      main_sha: ${{ steps.head.outputs.main_sha }}
       tag: ${{ steps.head.outputs.tag }}
       build: ${{ steps.head.outputs.build }}
     steps:
@@ -41,8 +44,10 @@ jobs:
             echo "build=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          tag="terrain-${sha:0:7}"
+          main_sha=$(git ls-remote "https://github.com/$UPSTREAM.git" "refs/heads/$MAIN" | cut -f1)
+          tag="terrain-${sha:0:7}-main-${main_sha:0:7}"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "main_sha=$main_sha" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if [ "$FORCE" != "true" ] && gh release view "$tag" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "::notice::$tag is already released."
@@ -63,6 +68,30 @@ jobs:
           ref: ${{ needs.check.outputs.sha }}
           submodules: recursive
           persist-credentials: false
+          # the merge base with main; blobs only for what the merge touches
+          fetch-depth: 0
+          filter: blob:none
+
+      # main's fixes in; its changelog lines are the only conflict we resolve
+      - name: Merge upstream main
+        env:
+          MAIN_SHA: ${{ needs.check.outputs.main_sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags --filter=blob:none origin "$MAIN_SHA"
+          if ! git merge --no-edit -m "Merge $MAIN ${MAIN_SHA:0:7} into $BRANCH" "$MAIN_SHA"; then
+            others=$(git diff --name-only --diff-filter=U | grep -v 'CHANGELOG\.md$' || true)
+            if [ -n "$others" ]; then
+              echo "::error::$MAIN does not merge into $BRANCH: $others"
+              exit 1
+            fi
+            git diff --name-only --diff-filter=U | xargs git checkout --ours --
+            git add -A
+            git commit --no-edit
+          fi
+          git submodule update --init --recursive
+          git log -1 --format='%H %s'
 
       # The same flags as upstream's ios-release, so the framework is as small as theirs.
       - name: Build the XCFramework
@@ -96,13 +125,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.check.outputs.sha }}
+          MAIN_SHA: ${{ needs.check.outputs.main_sha }}
           TAG: ${{ needs.check.outputs.tag }}
         run: |
           gh release delete "$TAG" -R "$GITHUB_REPOSITORY" --cleanup-tag --yes 2> /dev/null || true
-          subject=$(git log -1 --format=%s)
+          subject=$(git log -1 --format=%s "$SHA")
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "iOS terrain build ${SHA:0:7}" \
-            --notes "MapLibre Native iOS from [$UPSTREAM@${SHA:0:7}](https://github.com/$UPSTREAM/commit/$SHA) on \`$BRANCH\`: $subject
+            --title "iOS terrain build ${SHA:0:7} + main ${MAIN_SHA:0:7}" \
+            --notes "MapLibre Native iOS from [$UPSTREAM@${SHA:0:7}](https://github.com/$UPSTREAM/commit/$SHA) on \`$BRANCH\`: $subject, with \`$MAIN\` at [${MAIN_SHA:0:7}](https://github.com/$UPSTREAM/commit/$MAIN_SHA) merged in
 
           Checksum: \`$(cat out/checksum.txt)\`" \
             out/MapLibre.xcframework.zip out/MapLibre.framework.dSYM.zip out/checksum.txt
