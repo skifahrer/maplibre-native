@@ -16,7 +16,7 @@ def main(variants, sdk, out):
     def compile(line):
         file, shader, _, _, *defines = line.split("\t")
         # the options mtl::Context::createProgram hands newLibraryWithSource
-        command = ["xcrun", "-sdk", sdk, "metal", "-std=metal2.4", "-ffast-math", MINIMUM[sdk],
+        command = ["xcrun", "-sdk", sdk, "metal", "-std=ios-metal2.4", "-ffast-math", MINIMUM[sdk],
                    *[f"-D{d}" for d in defines], "-o", str(out / f"{file}.metallib"),
                    str(variants / f"{shader}.metal")]
         done = subprocess.run(command, capture_output=True, text=True)
