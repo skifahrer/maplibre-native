@@ -1,0 +1,97 @@
+diff --git a/src/mln/mtl/context.cpp b/src/mln/mtl/context.cpp
+index e6d9348..e19327c 100644
+--- a/src/mln/mtl/context.cpp
++++ b/src/mln/mtl/context.cpp
+@@ -30,7 +30,9 @@
+ #include <Metal/Metal.hpp>
+ 
+ #include <algorithm>
++#include <cctype>
+ #include <cstring>
++#include <dlfcn.h>
+ 
+ namespace mln {
+ namespace mtl {
+@@ -39,6 +41,59 @@ namespace mtl {
+ // 31 for Apple2-8, Mac2, per https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf
+ constexpr uint32_t maximumVertexBindingCount = 31;
+ 
++namespace {
++
++bool isIdentifierChar(const char c) {
++    return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
++}
++
++bool mentions(const std::string_view text, const std::string_view token) {
++    for (auto at = text.find(token); at != std::string_view::npos; at = text.find(token, at + 1)) {
++        const auto end = at + token.size();
++        if ((at == 0 || !isIdentifierChar(text[at - 1])) && (end == text.size() || !isIdentifierChar(text[end]))) {
++            return true;
++        }
++    }
++    return false;
++}
++
++// The file the build compiled this variant to, named as shaders/variants.py in skifahrer/maplibre-native names it.
++std::string precompiledName(const std::string& name,
++                            const std::string_view source,
++                            const std::unordered_map<std::string, std::string>& programDefines,
++                            const mln::unordered_map<std::string, std::string>& additionalDefines) {
++    std::string scale;
++    for (const auto& define : programDefines) {
++        if (define.first != "DEVICE_PIXEL_RATIO") return {};
++        if (mentions(source, define.first)) scale = "@" + define.second;
++    }
++    constexpr std::string_view prefix = "HAS_UNIFORM_u_";
++    std::vector<std::string> properties;
++    for (const auto& define : additionalDefines) {
++        if (define.first.rfind(prefix, 0) != 0 || !define.second.empty()) return {};
++        if (mentions(source, define.first)) properties.push_back(define.first.substr(prefix.size()));
++    }
++    std::sort(properties.begin(), properties.end());
++    auto file = name.substr(0, name.find('#')) + scale;
++    for (const auto& property : properties) file += "." + property;
++    return file;
++}
++
++// Compiling from source on the first frame holds the main thread for seconds on older devices.
++NS::SharedPtr<MTL::Library> loadPrecompiled(MTL::Device* device, const std::string& file) {
++    Dl_info image;
++    if (file.empty() || !dladdr(reinterpret_cast<const void*>(&loadPrecompiled), &image) || !image.dli_fname) {
++        return {};
++    }
++    std::string path = image.dli_fname;
++    path = path.substr(0, path.rfind('/') + 1) + "Shaders/" + file + ".metallib";
++    const auto* url = NS::URL::fileURLWithPath(NS::String::string(path.c_str(), NS::UTF8StringEncoding));
++    NS::Error* error = nullptr;
++    return NS::TransferPtr(device->newLibrary(url, &error));
++}
++
++} // namespace
++
+ Context::Context(RendererBackend& backend_)
+     : gfx::Context(mtl::maximumVertexBindingCount),
+       backend(backend_) {}
+@@ -144,7 +199,21 @@ UniqueShaderProgram Context::createProgram(shaders::BuiltIn shaderID,
+         source.data(), NS::UTF8StringEncoding); // NOLINT(bugprone-suspicious-stringview-data-usage)
+ 
+     const auto& device = backend.getDevice();
+-    auto library = NS::TransferPtr(device->newLibrary(nsSource, options.get(), &error));
++    auto library = loadPrecompiled(device.get(),
++                                   precompiledName(name, source, programDefines, additionalDefines));
++    if (library) {
++        const auto has = [&](const std::string_view function) {
++            const std::string terminated(function);
++            return static_cast<bool>(NS::TransferPtr(
++                library->newFunction(NS::String::string(terminated.c_str(), NS::UTF8StringEncoding))));
++        };
++        if (!has(vertexName) || (!fragmentName.empty() && !has(fragmentName))) {
++            library.reset();
++        }
++    }
++    if (!library) {
++        library = NS::TransferPtr(device->newLibrary(nsSource, options.get(), &error));
++    }
+     if (!library || error) {
+         const auto errPtr = error ? error->localizedDescription()->utf8String() : nullptr;
+         const auto errStr = (errPtr && errPtr[0]) ? ": " + std::string(errPtr) : std::string();
