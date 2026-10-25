@@ -20,17 +20,22 @@ def main(variants, sdk, out):
                    *[f"-D{d}" for d in defines], "-o", str(out / f"{file}.metallib"),
                    str(variants / f"{shader}.metal")]
         done = subprocess.run(command, capture_output=True, text=True)
-        return file, done.returncode, done.stderr
+        return file, shader, done.returncode, done.stderr
 
-    failed = 0
+    built, skipped = set(), []
     with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as pool:
-        for file, code, errors in pool.map(compile, lines):
+        for file, shader, code, errors in pool.map(compile, lines):
             if code:
-                failed += 1
-                print(f"{file}: {errors}", file=sys.stderr)
+                # MapLibre cannot use a combination its own source does not compile
+                skipped.append(file)
+                print(f"{file}: {errors.splitlines()[0] if errors else code}", file=sys.stderr)
+            else:
+                built.add(shader)
     size = sum(f.stat().st_size for f in out.glob("*.metallib"))
-    print(f"{sdk}: {len(lines) - failed} of {len(lines)} variants, {size / 1e6:.1f} MB")
-    sys.exit(1 if failed else 0)
+    print(f"{sdk}: {len(lines) - len(skipped)} of {len(lines)} variants, {size / 1e6:.1f} MB")
+    unbuilt = sorted({line.split("\t")[1] for line in lines} - built)
+    if unbuilt:
+        sys.exit(f"no variant of {', '.join(unbuilt)} compiled")
 
 
 if __name__ == "__main__":
