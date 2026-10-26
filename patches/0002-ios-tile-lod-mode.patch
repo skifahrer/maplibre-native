@@ -1,0 +1,77 @@
+diff -ru a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
+--- a/platform/ios/src/MLNMapView.h	2026-10-26 22:03:16
++++ b/platform/ios/src/MLNMapView.h	2026-10-26 22:49:29
+@@ -132,6 +132,20 @@
+   MLNTerrainLoadModePerformance,
+ };
+ 
++/**
++ How the map picks the zoom of the tiles it covers the view with, used by
++ ``MLNMapView/tileLodMode``.
++ */
++typedef NS_ENUM(NSUInteger, MLNTileLodMode) {
++  /** One zoom for the whole view, the classic heuristic. */
++  MLNTileLodModeDefault = 0,
++  /** Coarser tiles with distance from the camera, steered by the `tileLod…` properties. */
++  MLNTileLodModeDistance,
++  /** A zoom per tile from the field of view and a tile budget, as maplibre-gl-js picks
++      tiles over terrain. Ignores the other `tileLod…` properties. */
++  MLNTileLodModeAdaptive,
++};
++
+ /** Options for ``MLNMapView/preferredFramesPerSecond``. */
+ typedef NSInteger MLNMapViewPreferredFramesPerSecond NS_TYPED_EXTENSIBLE_ENUM;
+ 
+@@ -545,6 +559,17 @@
+  average It is recommended to first configure the pixelRatio before adjusting TileLodZoomShift.
+  */
+ @property (nonatomic, assign) double tileLodZoomShift;
++
++/**
++ Camera based tile level of detail controls
++
++ The algorithm that picks tile zooms across the view. `MLNTileLodModeAdaptive`
++ draws finer tiles near the camera and coarser ones toward the horizon, which
++ is how maplibre-gl-js covers a tilted map over terrain.
++
++ The default value of this property is `MLNTileLodModeDefault`.
++ */
++@property (nonatomic, assign) MLNTileLodMode tileLodMode;
+ 
+ /**
+  Frustum offset used to disable rendering of elements at the edge of the screen
+diff -ru a/platform/ios/src/MLNMapView.mm b/platform/ios/src/MLNMapView.mm
+--- a/platform/ios/src/MLNMapView.mm	2026-10-26 22:03:16
++++ b/platform/ios/src/MLNMapView.mm	2026-10-26 22:49:29
+@@ -3237,6 +3237,31 @@
+   return _mbglMap->getTileLodZoomShift();
+ }
+ 
++- (void)setTileLodMode:(MLNTileLodMode)tileLodMode {
++  switch (tileLodMode) {
++    case MLNTileLodModeDistance:
++      _mbglMap->setTileLodMode(mln::TileLodMode::Distance);
++      break;
++    case MLNTileLodModeAdaptive:
++      _mbglMap->setTileLodMode(mln::TileLodMode::Adaptive);
++      break;
++    default:
++      _mbglMap->setTileLodMode(mln::TileLodMode::Default);
++      break;
++  }
++}
++
++- (MLNTileLodMode)tileLodMode {
++  switch (_mbglMap->getTileLodMode()) {
++    case mln::TileLodMode::Distance:
++      return MLNTileLodModeDistance;
++    case mln::TileLodMode::Adaptive:
++      return MLNTileLodModeAdaptive;
++    default:
++      return MLNTileLodModeDefault;
++  }
++}
++
+ - (void)setFrustumOffset:(UIEdgeInsets)frustumOffset {
+   _mbglMap->setFrustumOffset(MLNEdgeInsetsFromNSEdgeInsets(frustumOffset));
+ }
