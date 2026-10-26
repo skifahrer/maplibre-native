@@ -33,6 +33,11 @@ jobs:
       tag: ${{ steps.head.outputs.tag }}
       build: ${{ steps.head.outputs.build }}
     steps:
+      # our patches go into the tag, so a patched build never reuses an unpatched release
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: patches
+          persist-credentials: false
       - id: head
         env:
           GH_TOKEN: ${{ github.token }}
@@ -46,6 +51,9 @@ jobs:
           fi
           main_sha=$(git ls-remote "https://github.com/$UPSTREAM.git" "refs/heads/$MAIN" | cut -f1)
           tag="terrain-${sha:0:7}-main-${main_sha:0:7}"
+          if ls patches/*.patch > /dev/null 2>&1; then
+            tag="$tag-p$(cat patches/*.patch | shasum | cut -c1-7)"
+          fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "main_sha=$main_sha" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -91,6 +99,24 @@ jobs:
             git commit --no-edit
           fi
           git submodule update --init --recursive
+          git log -1 --format='%H %s'
+
+      - uses: actions/checkout@v4
+        with:
+          path: .ours
+          sparse-checkout: patches
+          persist-credentials: false
+
+      # What upstream does not have yet, such as iOS switches the core already offers
+      - name: Apply our patches
+        run: |
+          for patch in .ours/patches/*.patch; do
+            [ -e "$patch" ] || continue
+            echo "applying $patch"
+            git apply --index "$patch"
+          done
+          rm -rf .ours
+          git diff --cached --quiet || git commit -q -m "Our patches"
           git log -1 --format='%H %s'
 
       # The same flags as upstream's ios-release, so the framework is as small as theirs.

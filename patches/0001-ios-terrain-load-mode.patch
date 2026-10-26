@@ -1,0 +1,79 @@
+diff -ru a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
+--- a/platform/ios/src/MLNMapView.h	2026-10-26 22:03:15
++++ b/platform/ios/src/MLNMapView.h	2026-10-26 22:03:16
+@@ -118,6 +118,20 @@
+   MLNPanScrollingModeDefault
+ };
+ 
++/**
++ How much 3D terrain the map draws and builds per frame, used by
++ ``MLNMapView/terrainLoadMode``. Each mode also caps the terrain tiles drawn,
++ keeping those nearest the camera, so a lighter mode draws less of the distance.
++ */
++typedef NS_ENUM(NSUInteger, MLNTerrainLoadMode) {
++  /** No per-frame budget; up to 64 terrain tiles. */
++  MLNTerrainLoadModeQuality = 0,
++  /** 32 new tiles and 16 drapes a frame; up to 48 terrain tiles. */
++  MLNTerrainLoadModeBalanced,
++  /** 8 new tiles and 4 drapes a frame; up to 24 terrain tiles. */
++  MLNTerrainLoadModePerformance,
++};
++
+ /** Options for ``MLNMapView/preferredFramesPerSecond``. */
+ typedef NSInteger MLNMapViewPreferredFramesPerSecond NS_TYPED_EXTENSIBLE_ENUM;
+ 
+@@ -554,6 +568,19 @@
+  This property is experimental and subject to change.
+  */
+ @property (nonatomic, assign, getter=isCenterClampedToGround) BOOL centerClampedToGround;
++
++/**
++ How much 3D terrain the map draws and builds per frame.
++
++ Balanced and Performance spread new terrain tiles and drape re-renders across
++ frames and draw fewer far terrain tiles, for a smoother map on weaker GPUs.
++ Has no effect when terrain is not enabled.
++
++ The default value of this property is `MLNTerrainLoadModeQuality`.
++
++ This property is experimental and subject to change.
++ */
++@property (nonatomic, assign) MLNTerrainLoadMode terrainLoadMode;
+ 
+ // MARK: Displaying the User’s Location
+ 
+diff -ru a/platform/ios/src/MLNMapView.mm b/platform/ios/src/MLNMapView.mm
+--- a/platform/ios/src/MLNMapView.mm	2026-10-26 22:03:15
++++ b/platform/ios/src/MLNMapView.mm	2026-10-26 22:03:16
+@@ -3253,6 +3253,31 @@
+   return _mbglMap->getCenterClampedToGround();
+ }
+ 
++- (void)setTerrainLoadMode:(MLNTerrainLoadMode)terrainLoadMode {
++  switch (terrainLoadMode) {
++    case MLNTerrainLoadModeBalanced:
++      _mbglMap->setTerrainLoadMode(mln::TerrainLoadMode::Balanced);
++      break;
++    case MLNTerrainLoadModePerformance:
++      _mbglMap->setTerrainLoadMode(mln::TerrainLoadMode::Performance);
++      break;
++    default:
++      _mbglMap->setTerrainLoadMode(mln::TerrainLoadMode::Quality);
++      break;
++  }
++}
++
++- (MLNTerrainLoadMode)terrainLoadMode {
++  switch (_mbglMap->getTerrainLoadMode()) {
++    case mln::TerrainLoadMode::Balanced:
++      return MLNTerrainLoadModeBalanced;
++    case mln::TerrainLoadMode::Performance:
++      return MLNTerrainLoadModePerformance;
++    default:
++      return MLNTerrainLoadModeQuality;
++  }
++}
++
+ // MARK: - Accessibility -
+ 
+ - (NSString *)accessibilityValue {
