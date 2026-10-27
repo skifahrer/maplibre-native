@@ -1,0 +1,338 @@
+diff --git a/include/mln/map/map.hpp b/include/mln/map/map.hpp
+index 7967883532..8af9ea7eea 100644
+--- a/include/mln/map/map.hpp
++++ b/include/mln/map/map.hpp
+@@ -11,6 +11,7 @@
+ #include <mln/util/action_journal_options.hpp>
+ #include <mln/util/chrono.hpp>
+ #include <mln/util/client_options.hpp>
++#include <mln/util/color.hpp>
+ #include <mln/util/geometry.hpp>
+ #include <mln/util/noncopyable.hpp>
+ #include <mln/util/size.hpp>
+@@ -115,6 +116,14 @@ public:
+     /// mesh. Never nearer than the map centre. 0 (the default) keeps the full view.
+     void setDrawDistance(double metres);
+     double getDrawDistance() const;
++    /// Fades the 3D terrain into `color` from `startMetres` to `endMetres` from the camera,
++    /// smoothly, by the colour's alpha. A transparent colour (the default) turns it off.
++    /// Pair it with the draw distance and the style's background, and the view ends in haze
++    /// rather than on a line. Metal only for now; other backends ignore it.
++    void setFog(const Color& color, double startMetres, double endMetres);
++    Color getFogColor() const;
++    double getFogStart() const;
++    double getFogEnd() const;
+     MapOptions getMapOptions() const;
+ 
+     // Projection Mode
+diff --git a/include/mln/shaders/mtl/terrain.hpp b/include/mln/shaders/mtl/terrain.hpp
+index 477b431a42..127965af77 100644
+--- a/include/mln/shaders/mtl/terrain.hpp
++++ b/include/mln/shaders/mtl/terrain.hpp
+@@ -38,9 +38,14 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
+     /* 20 */ float elevation_offset;
+     /* 24 */ float pad1;
+     /* 28 */ float pad2;
+-    /* 32 */
++    /* 32 */ float4 fog_color;
++    /* 48 */ float fog_start;
++    /* 52 */ float fog_end;
++    /* 56 */ float pad3;
++    /* 60 */ float pad4;
++    /* 64 */
+ };
+-static_assert(sizeof(TerrainEvaluatedPropsUBO) == 32, "wrong size");
++static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64, "wrong size");
+ 
+ )";
+ 
+@@ -65,6 +70,7 @@ struct FragmentStage {
+     float4 position [[position, invariant]];
+     float2 uv;
+     float elevation;
++    float depth; // view depth, for the fog
+ };
+ 
+ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+@@ -98,6 +104,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+         .position  = position,
+         .uv        = uv,
+         .elevation = elevation,
++        .depth     = position.w,
+     };
+ }
+ 
+@@ -115,7 +122,16 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
+     // 1.0 - uv.y. Metal's NDC is Y-up, so the RTT is stored upright and the V must NOT
+     // be flipped here - sampling 1.0 - uv.y flips the draped map vertically (north/south
+     // swapped about the view). Sample uv.y directly on Metal.
+-    return half4(mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y)));
++    float4 color = mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
++
++    // Fog: from fog_start to fog_end the surface fades into the fog colour, straight (not
++    // premultiplied) and opaque, by as much as the colour's alpha.
++    if (props.fog_color.a > 0.0) {
++        const float t = smoothstep(props.fog_start, max(props.fog_end, props.fog_start + 1.0), in.depth);
++        const float4 fog = float4(props.fog_color.rgb / props.fog_color.a, 1.0);
++        color = mix(color, fog, t * props.fog_color.a);
++    }
++    return half4(color);
+ }
+ )";
+ };
+diff --git a/include/mln/shaders/terrain_layer_ubo.hpp b/include/mln/shaders/terrain_layer_ubo.hpp
+index d1cda507f3..e6f796a733 100644
+--- a/include/mln/shaders/terrain_layer_ubo.hpp
++++ b/include/mln/shaders/terrain_layer_ubo.hpp
+@@ -43,9 +43,14 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
+     /* 20 */ float elevation_offset;
+     /* 24 */ float pad1;
+     /* 28 */ float pad2;
+-    /* 32 */
++    /* 32 */ std::array<float, 4> fog_color; // premultiplied; alpha 0 = no fog
++    /* 48 */ float fog_start;                // view depth (world pixels) where the fog starts
++    /* 52 */ float fog_end;                  // and where it is full
++    /* 56 */ float pad3;
++    /* 60 */ float pad4;
++    /* 64 */
+ };
+-static_assert(sizeof(TerrainEvaluatedPropsUBO) == 32);
++static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64);
+ 
+ } // namespace shaders
+ } // namespace mln
+diff --git a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
+index b6f39d21e6..f1cd7e018a 100644
+--- a/platform/ios/src/MLNMapView.h
++++ b/platform/ios/src/MLNMapView.h
+@@ -596,6 +596,27 @@ MLN_EXPORT
+  */
+ @property (nonatomic, assign) CLLocationDistance drawDistance;
+ 
++/**
++ The color 3D terrain fades into with distance, or `nil` for no fog.
++
++ From ``MLNMapView/fogStartDistance`` to ``MLNMapView/fogEndDistance`` from the
++ camera, the terrain fades smoothly into this color, by as much as its alpha.
++ Set it to the style's background color and ``MLNMapView/fogEndDistance`` to
++ ``MLNMapView/drawDistance``, and the view ends in haze rather than on a line.
++ Has no effect when terrain is not enabled.
++
++ The default value of this property is `nil`.
++
++ This property is experimental and subject to change.
++ */
++@property (nonatomic, nullable) UIColor *fogColor;
++
++/** The distance from the camera, in meters, where the fog starts. Default 0. */
++@property (nonatomic, assign) CLLocationDistance fogStartDistance;
++
++/** The distance from the camera, in meters, where the fog is full. Default 0. */
++@property (nonatomic, assign) CLLocationDistance fogEndDistance;
++
+ /**
+  Whether the map centre rides the 3D terrain surface rather than sea level.
+ 
+diff --git a/platform/ios/src/MLNMapView.mm b/platform/ios/src/MLNMapView.mm
+index b9503fadaa..87e0c3b743 100644
+--- a/platform/ios/src/MLNMapView.mm
++++ b/platform/ios/src/MLNMapView.mm
+@@ -3278,6 +3278,32 @@ static void *windowScreenContext = &windowScreenContext;
+   return _mbglMap->getDrawDistance();
+ }
+ 
++- (void)setFogColor:(UIColor *)fogColor {
++  const mln::Color color = fogColor ? fogColor.mgl_color : mln::Color{0, 0, 0, 0};
++  _mbglMap->setFog(color, _mbglMap->getFogStart(), _mbglMap->getFogEnd());
++}
++
++- (UIColor *)fogColor {
++  const mln::Color color = _mbglMap->getFogColor();
++  return color.a > 0 ? [UIColor mgl_colorWithColor:color] : nil;
++}
++
++- (void)setFogStartDistance:(CLLocationDistance)fogStartDistance {
++  _mbglMap->setFog(_mbglMap->getFogColor(), fogStartDistance, _mbglMap->getFogEnd());
++}
++
++- (CLLocationDistance)fogStartDistance {
++  return _mbglMap->getFogStart();
++}
++
++- (void)setFogEndDistance:(CLLocationDistance)fogEndDistance {
++  _mbglMap->setFog(_mbglMap->getFogColor(), _mbglMap->getFogStart(), fogEndDistance);
++}
++
++- (CLLocationDistance)fogEndDistance {
++  return _mbglMap->getFogEnd();
++}
++
+ - (void)setCenterClampedToGround:(BOOL)centerClampedToGround {
+   _mbglMap->setCenterClampedToGround(centerClampedToGround);
+ }
+diff --git a/src/mln/map/map.cpp b/src/mln/map/map.cpp
+index 81b52f6267..f2a68f8c1e 100644
+--- a/src/mln/map/map.cpp
++++ b/src/mln/map/map.cpp
+@@ -398,6 +398,23 @@ double Map::getDrawDistance() const {
+     return impl->transform.getDrawDistance();
+ }
+ 
++void Map::setFog(const Color& color, double startMetres, double endMetres) {
++    impl->transform.setFog(color, startMetres, endMetres);
++    impl->onUpdate();
++}
++
++Color Map::getFogColor() const {
++    return impl->transform.getState().getFogColor();
++}
++
++double Map::getFogStart() const {
++    return impl->transform.getState().getFogStart();
++}
++
++double Map::getFogEnd() const {
++    return impl->transform.getState().getFogEnd();
++}
++
+ void Map::setNorthOrientation(NorthOrientation orientation) {
+     impl->transform.setNorthOrientation(orientation);
+     impl->onUpdate();
+diff --git a/src/mln/map/transform.cpp b/src/mln/map/transform.cpp
+index daae5d2716..e90b63fc96 100644
+--- a/src/mln/map/transform.cpp
++++ b/src/mln/map/transform.cpp
+@@ -497,6 +497,10 @@ double Transform::getDrawDistance() const {
+     return state.getDrawDistance();
+ }
+ 
++void Transform::setFog(const Color& color, double startMetres, double endMetres) {
++    state.setFog(color, startMetres, endMetres);
++}
++
+ // MARK: - Bearing
+ 
+ void Transform::rotateBy(const ScreenCoordinate& first,
+diff --git a/src/mln/map/transform.hpp b/src/mln/map/transform.hpp
+index 2eee6650dd..6c155b88b2 100644
+--- a/src/mln/map/transform.hpp
++++ b/src/mln/map/transform.hpp
+@@ -143,6 +143,7 @@ public:
+     EdgeInsets getFrustumOffset();
+     void setDrawDistance(double metres);
+     double getDrawDistance() const;
++    void setFog(const Color& color, double startMetres, double endMetres);
+ 
+ private:
+     TransformObserver& observer;
+diff --git a/src/mln/map/transform_state.cpp b/src/mln/map/transform_state.cpp
+index 84b9ef8fce..43ffdb6b20 100644
+--- a/src/mln/map/transform_state.cpp
++++ b/src/mln/map/transform_state.cpp
+@@ -438,6 +438,13 @@ double TransformState::getDrawDistance() const {
+     return drawDistance;
+ }
+ 
++void TransformState::setFog(const Color& color, double startMetres, double endMetres) {
++    const auto metres = [](double value) { return std::isfinite(value) ? std::max(0.0, value) : 0.0; };
++    fogColor = color;
++    fogStart = metres(startMetres);
++    fogEnd = std::max(fogStart, metres(endMetres));
++}
++
+ void TransformState::setDrawDistance(double metres) {
+     const double clamped = std::isfinite(metres) ? std::max(0.0, metres) : 0.0;
+     if (drawDistance != clamped) {
+diff --git a/src/mln/map/transform_state.hpp b/src/mln/map/transform_state.hpp
+index 3675c61c2b..d5e4111930 100644
+--- a/src/mln/map/transform_state.hpp
++++ b/src/mln/map/transform_state.hpp
+@@ -3,6 +3,7 @@
+ #include <mln/map/camera.hpp>
+ #include <mln/map/mode.hpp>
+ #include <mln/util/camera.hpp>
++#include <mln/util/color.hpp>
+ #include <mln/util/constants.hpp>
+ #include <mln/util/geo.hpp>
+ #include <mln/util/geometry.hpp>
+@@ -145,6 +146,13 @@ public:
+     double getDrawDistance() const;
+     void setDrawDistance(double metres);
+ 
++    /// The terrain's fog (Map::setFog): its colour, premultiplied, and where it starts and is
++    /// full, in metres from the camera.
++    Color getFogColor() const { return fogColor; }
++    double getFogStart() const { return fogStart; }
++    double getFogEnd() const { return fogEnd; }
++    void setFog(const Color& color, double startMetres, double endMetres);
++
+     // North Orientation
+     NorthOrientation getNorthOrientation() const;
+     double getNorthOrientationAngle() const;
+@@ -295,6 +303,9 @@ private:
+     Size size;
+     EdgeInsets frustumOffset;
+     double drawDistance = 0;
++    Color fogColor = Color{0.0f, 0.0f, 0.0f, 0.0f};
++    double fogStart = 0;
++    double fogEnd = 0;
+ 
+     mat4 coordinatePointMatrix(const mat4& projMatrix) const;
+     mat4 getPixelMatrix() const;
+diff --git a/src/mln/renderer/layers/terrain_layer_tweaker.cpp b/src/mln/renderer/layers/terrain_layer_tweaker.cpp
+index f6c5451d90..ff008bc887 100644
+--- a/src/mln/renderer/layers/terrain_layer_tweaker.cpp
++++ b/src/mln/renderer/layers/terrain_layer_tweaker.cpp
+@@ -10,6 +10,7 @@
+ #include <mln/util/constants.hpp>
+ #include <mln/util/convert.hpp>
+ #include <mln/util/mat4.hpp>
++#include <mln/util/projection.hpp>
+ #include <mln/util/logging.hpp>
+ 
+ #include <algorithm>
+@@ -42,13 +43,25 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
+     const auto zoom = std::max(parameters.state.getZoom(), 0.0);
+     const float elevationOffset = static_cast<float>(util::M2PI * util::EARTH_RADIUS_M / std::pow(2.0, zoom) / 5.0);
+ 
++
++    // Fog, as view depth in world pixels: 1 unit is 1 pixel at the centre, as the far plane.
++    const Color fogColor = parameters.state.getFogColor();
++    const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(parameters.state.getLatLng().latitude(),
++                                                                          parameters.state.getZoom());
++    const auto fogDepth = [&](double metres) { return static_cast<float>(metres / metresPerPixel); };
++
+     // Populate layer-level UBO with terrain properties
+     auto& layerUniforms = layerGroup.mutableUniformBuffers();
+     const TerrainEvaluatedPropsUBO propsUBO = {.unpack = terrain->getDEMUnpackVector(),
+                                                .exaggeration = exaggeration,
+                                                .elevation_offset = elevationOffset,
+                                                .pad1 = 0.0f,
+-                                               .pad2 = 0.0f};
++                                               .pad2 = 0.0f,
++                                               .fog_color = {fogColor.r, fogColor.g, fogColor.b, fogColor.a},
++                                               .fog_start = fogDepth(parameters.state.getFogStart()),
++                                               .fog_end = fogDepth(parameters.state.getFogEnd()),
++                                               .pad3 = 0.0f,
++                                               .pad4 = 0.0f};
+     layerUniforms.createOrUpdate(idTerrainEvaluatedPropsUBO, &propsUBO, context);
+ 
+ #if MLN_UBO_CONSOLIDATION
+diff --git a/src/mln/renderer/render_terrain.cpp b/src/mln/renderer/render_terrain.cpp
+index df77275ce5..d582ac2ba9 100644
+--- a/src/mln/renderer/render_terrain.cpp
++++ b/src/mln/renderer/render_terrain.cpp
+@@ -1319,7 +1319,12 @@ void RenderTerrain::updateInstancedDepthUBO(PaintParameters& parameters) {
+                                                         .exaggeration = getExaggeration(),
+                                                         .elevation_offset = elevationOffset,
+                                                         .pad1 = 0.0f,
+-                                                        .pad2 = 0.0f};
++                                                        .pad2 = 0.0f,
++                                                        .fog_color = {0.0f, 0.0f, 0.0f, 0.0f},
++                                                        .fog_start = 0.0f,
++                                                        .fog_end = 0.0f,
++                                                        .pad3 = 0.0f,
++                                                        .pad4 = 0.0f};
+ 
+     depthLg->visitDrawables([&](gfx::Drawable& drawable) {
+         auto& u = drawable.mutableUniformBuffers();
