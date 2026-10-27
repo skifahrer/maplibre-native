@@ -141,6 +141,10 @@ public:
     EdgeInsets getFrustumOffset() const;
     void setFrustumOffset(const EdgeInsets& frustumOffset_);
 
+    /// Metres from the camera beyond which nothing is drawn or loaded (Map::setDrawDistance).
+    double getDrawDistance() const;
+    void setDrawDistance(double metres);
+
     // North Orientation
     NorthOrientation getNorthOrientation() const;
     double getNorthOrientationAngle() const;
@@ -290,6 +294,7 @@ private:
     // logical dimensions
     Size size;
     EdgeInsets frustumOffset;
+    double drawDistance = 0;
 
     mat4 coordinatePointMatrix(const mat4& projMatrix) const;
     mat4 getPixelMatrix() const;

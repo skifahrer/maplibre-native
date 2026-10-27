@@ -9,6 +9,8 @@
 #include <mln/util/projection.hpp>
 #include <mln/util/tile_coordinate.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <numbers>
 
 using namespace std::numbers;
@@ -152,7 +154,14 @@ void TransformState::getProjMatrix(mat4& projMatrix, uint16_t nearZ, bool aligne
     // Calculate z distance of the farthest fragment that should be rendered.
     const double furthestDistance = cameraToSeaLevelDistance / (1 - tanMultiple);
     // Add a bit extra to avoid precision problems when a fragment's distance is exactly `furthestDistance`
-    const double farZ = furthestDistance * 1.01;
+    double farZ = furthestDistance * 1.01;
+    // The draw distance pulls the far plane in. The tile covers are culled to the same frustum,
+    // so the tiles past it are neither loaded nor drawn, and the view ends on a clean line
+    // rather than on tile edges. Never nearer than the map centre, so zooming out still shows it.
+    if (drawDistance > 0) {
+        const double limit = drawDistance / Projection::getMetersPerPixelAtLatitude(getLatLng().latitude(), getZoom());
+        farZ = std::min(farZ, std::max(limit, cameraToSeaLevelDistance * 1.2));
+    }
 
     // Make sure the camera state is up-to-date
     updateCameraState();
@@ -421,6 +430,18 @@ EdgeInsets TransformState::getFrustumOffset() const {
 void TransformState::setFrustumOffset(const EdgeInsets& frustumOffset_) {
     if (frustumOffset != frustumOffset_) {
         frustumOffset = frustumOffset_;
+        requestMatricesUpdate = true;
+    }
+}
+
+double TransformState::getDrawDistance() const {
+    return drawDistance;
+}
+
+void TransformState::setDrawDistance(double metres) {
+    const double clamped = std::isfinite(metres) ? std::max(0.0, metres) : 0.0;
+    if (drawDistance != clamped) {
+        drawDistance = clamped;
         requestMatricesUpdate = true;
     }
 }

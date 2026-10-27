@@ -118,6 +118,34 @@ typedef NS_ENUM(NSUInteger, MLNPanScrollingMode) {
   MLNPanScrollingModeDefault
 };
 
+/**
+ How much 3D terrain the map draws and builds per frame, used by
+ ``MLNMapView/terrainLoadMode``. Each mode also caps the terrain tiles drawn,
+ keeping those nearest the camera, so a lighter mode draws less of the distance.
+ */
+typedef NS_ENUM(NSUInteger, MLNTerrainLoadMode) {
+  /** No per-frame budget; up to 64 terrain tiles. */
+  MLNTerrainLoadModeQuality = 0,
+  /** 32 new tiles and 16 drapes a frame; up to 48 terrain tiles. */
+  MLNTerrainLoadModeBalanced,
+  /** 8 new tiles and 4 drapes a frame; up to 24 terrain tiles. */
+  MLNTerrainLoadModePerformance,
+};
+
+/**
+ How the map picks the zoom of the tiles it covers the view with, used by
+ ``MLNMapView/tileLodMode``.
+ */
+typedef NS_ENUM(NSUInteger, MLNTileLodMode) {
+  /** One zoom for the whole view, the classic heuristic. */
+  MLNTileLodModeDefault = 0,
+  /** Coarser tiles with distance from the camera, steered by the `tileLod…` properties. */
+  MLNTileLodModeDistance,
+  /** A zoom per tile from the field of view and a tile budget, as maplibre-gl-js picks
+      tiles over terrain. Ignores the other `tileLod…` properties. */
+  MLNTileLodModeAdaptive,
+};
+
 /** Options for ``MLNMapView/preferredFramesPerSecond``. */
 typedef NSInteger MLNMapViewPreferredFramesPerSecond NS_TYPED_EXTENSIBLE_ENUM;
 
@@ -533,6 +561,17 @@ MLN_EXPORT
 @property (nonatomic, assign) double tileLodZoomShift;
 
 /**
+ Camera based tile level of detail controls
+
+ The algorithm that picks tile zooms across the view. `MLNTileLodModeAdaptive`
+ draws finer tiles near the camera and coarser ones toward the horizon, which
+ is how maplibre-gl-js covers a tilted map over terrain.
+
+ The default value of this property is `MLNTileLodModeDefault`.
+ */
+@property (nonatomic, assign) MLNTileLodMode tileLodMode;
+
+/**
  Frustum offset used to disable rendering of elements at the edge of the screen
 
  Offset applied to camera frustum and scissor rectangle. The camrea frustum is modified
@@ -541,6 +580,21 @@ MLN_EXPORT
  the screen. All values are in logical pixels.
  */
 @property (nonatomic, assign) UIEdgeInsets frustumOffset;
+
+/**
+ The distance from the camera, in meters, beyond which the map draws and loads
+ nothing.
+
+ It moves the camera's far plane in, so the tiles past it are not loaded and the
+ view ends on a straight line rather than on tile edges. With a steep pitch,
+ especially over 3D terrain, this bounds the work of drawing to the horizon. It
+ never cuts nearer than the map's center.
+
+ The default value of this property is 0, which draws the full view.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic, assign) CLLocationDistance drawDistance;
 
 /**
  Whether the map centre rides the 3D terrain surface rather than sea level.
@@ -554,6 +608,32 @@ MLN_EXPORT
  This property is experimental and subject to change.
  */
 @property (nonatomic, assign, getter=isCenterClampedToGround) BOOL centerClampedToGround;
+
+/**
+ How much 3D terrain the map draws and builds per frame.
+
+ Balanced and Performance spread new terrain tiles and drape re-renders across
+ frames and draw fewer far terrain tiles, for a smoother map on weaker GPUs.
+ Has no effect when terrain is not enabled.
+
+ The default value of this property is `MLNTerrainLoadModeQuality`.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic, assign) MLNTerrainLoadMode terrainLoadMode;
+
+/**
+ Moves the map centre onto the 3D terrain under it without moving the camera.
+
+ The centre slides along the line of sight up to the ground and the zoom level
+ rises by the distance saved, so nothing on screen moves. Rotating and tilting
+ then turn around the ground being looked at, not a point at sea level beneath
+ it. A one-off, where ``centerClampedToGround`` is the continuous follow. Has
+ no effect when terrain is not enabled.
+
+ This method is experimental and subject to change.
+ */
+- (void)anchorCenterOnTerrain;
 
 // MARK: Displaying the User’s Location
 

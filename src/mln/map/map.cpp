@@ -389,6 +389,15 @@ EdgeInsets Map::getFrustumOffset() {
     return impl->transform.getFrustumOffset();
 }
 
+void Map::setDrawDistance(double metres) {
+    impl->transform.setDrawDistance(metres);
+    impl->onUpdate();
+}
+
+double Map::getDrawDistance() const {
+    return impl->transform.getDrawDistance();
+}
+
 void Map::setNorthOrientation(NorthOrientation orientation) {
     impl->transform.setNorthOrientation(orientation);
     impl->onUpdate();
