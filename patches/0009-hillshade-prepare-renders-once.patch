@@ -1,0 +1,14 @@
+diff --git a/src/mln/renderer/layers/render_hillshade_layer.cpp b/src/mln/renderer/layers/render_hillshade_layer.cpp
+--- a/src/mln/renderer/layers/render_hillshade_layer.cpp
++++ b/src/mln/renderer/layers/render_hillshade_layer.cpp
+@@ -267,6 +267,10 @@
+             }
+             bucket.renderTarget = renderTarget;
+             bucket.renderTargetPrepared = true;
++            // The prepare output depends only on this bucket's DEM, so draw it once and keep
++            // it; new DEM data (a backfilled border) makes a new target. Re-running every
++            // prepare target every frame cost ~40 ms a frame on an A10X, in 2D as in 3D.
++            renderTarget->setRenderOnce(true);
+ 
+             auto singleTileLayerGroup = context.createTileLayerGroup(0, /*initialCapacity=*/1, getID(), false);
+             if (!singleTileLayerGroup) {
