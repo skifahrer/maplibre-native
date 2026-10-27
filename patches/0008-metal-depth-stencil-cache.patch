@@ -1,0 +1,70 @@
+diff --git a/include/mln/mtl/context.hpp b/include/mln/mtl/context.hpp
+index 7adcf1ecb9..5dc4b486d5 100644
+--- a/include/mln/mtl/context.hpp
++++ b/include/mln/mtl/context.hpp
+@@ -14,6 +14,7 @@
+ 
+ #include <memory>
+ #include <optional>
++#include <unordered_map>
+ #include <vector>
+ 
+ namespace mln {
+@@ -183,6 +184,10 @@ private:
+     bool clipMaskUniformsBufferUsed = false;
+     const gfx::Renderable* stencilStateRenderable = nullptr;
+ 
++    // Depth-stencil states by everything their descriptor holds. The stencil reference is set on
++    // the encoder, not in the state, so a new reference must not cost a new state every frame.
++    mutable std::unordered_map<uint64_t, MTLDepthStencilStatePtr> depthStencilStates;
++
+     UniformBufferArray globalUniformBuffers;
+ };
+ 
+diff --git a/src/mln/mtl/context.cpp b/src/mln/mtl/context.cpp
+index e6d9348e86..41954cd23c 100644
+--- a/src/mln/mtl/context.cpp
++++ b/src/mln/mtl/context.cpp
+@@ -613,6 +613,7 @@ MTLDepthStencilStatePtr Context::makeDepthStencilState(const gfx::DepthMode& dep
+ 
+     auto& device = backend.getDevice();
+     const auto& renderableResource = renderable.getResource<RenderableResource>();
++    uint64_t key = 0;
+     if (const auto& rpd = renderableResource.getRenderPassDescriptor()) {
+         // Setting depth/stencil properties when the corresponding target textures aren't set causes, e.g.:
+         // `Draw Errors Validation MTLDepthStencilDescriptor sets depth test but MTLRenderPassDescriptor has a nil
+@@ -620,6 +621,8 @@ MTLDepthStencilStatePtr Context::makeDepthStencilState(const gfx::DepthMode& dep
+         if (auto* depthTarget = rpd->depthAttachment()) {
+             if (depthTarget->texture()) {
+                 applyDepthMode(depthMode, depthStencilDescriptor.get());
++                key |= 1ULL | (uint64_t(depthStencilDescriptor->depthCompareFunction()) << 1) |
++                       (uint64_t(depthStencilDescriptor->isDepthWriteEnabled()) << 5);
+             }
+         }
+         if (auto* stencilTarget = rpd->stencilAttachment()) {
+@@ -633,11 +636,24 @@ MTLDepthStencilStatePtr Context::makeDepthStencilState(const gfx::DepthMode& dep
+ 
+                 depthStencilDescriptor->setFrontFaceStencil(stencilDescriptor.get());
+                 depthStencilDescriptor->setBackFaceStencil(stencilDescriptor.get());
++                key |= (1ULL << 6) | (uint64_t(stencilDescriptor->stencilCompareFunction()) << 7) |
++                       (uint64_t(stencilDescriptor->stencilFailureOperation()) << 11) |
++                       (uint64_t(stencilDescriptor->depthFailureOperation()) << 15) |
++                       (uint64_t(stencilDescriptor->depthStencilPassOperation()) << 19) |
++                       (uint64_t(stencilDescriptor->readMask()) << 23) |
++                       (uint64_t(stencilDescriptor->writeMask() != stencilDescriptor->readMask()) << 55);
+             }
+         }
+     }
+ 
+-    return NS::TransferPtr(device->newDepthStencilState(depthStencilDescriptor.get()));
++    if (const auto found = depthStencilStates.find(key); found != depthStencilStates.end()) {
++        return found->second;
++    }
++    auto state = NS::TransferPtr(device->newDepthStencilState(depthStencilDescriptor.get()));
++    if (state) {
++        depthStencilStates.emplace(key, state);
++    }
++    return state;
+ }
+ 
+ void Context::bindGlobalUniformBuffers(gfx::RenderPass& renderPass) const noexcept {
