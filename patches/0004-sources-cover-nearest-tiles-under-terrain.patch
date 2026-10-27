@@ -1,0 +1,494 @@
+diff --git a/src/mln/renderer/render_orchestrator.cpp b/src/mln/renderer/render_orchestrator.cpp
+index fe4be276a704..86a52ac79220 100644
+--- a/src/mln/renderer/render_orchestrator.cpp
++++ b/src/mln/renderer/render_orchestrator.cpp
+@@ -296,6 +296,16 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
+         terrainEnabled ? renderTerrain->getExaggeration() : 1.0};
+     tileParameters.elevationProvider = terrainEnabled ? &elevationProvider : nullptr;
+ 
++    // A source whose minzoom is deeper than the far field's zoom is covered at that minzoom out
++    // to the horizon: thousands of tiles at a steep pitch, each kept with its geometry for as
++    // long as the view holds. The terrain mesh is capped to the tiles nearest the camera
++    // (RenderTerrain::computeMeshCover), so keep the nearest few per mesh tile, measured from
++    // the same point. The DEM source keeps its own cover.
++    const size_t coverTileLimit = terrainEnabled ? terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles *
++                                                       RenderTerrain::sourceTilesPerMeshTile
++                                                 : 0;
++    tileParameters.coverTileLimitOrigin = RenderTerrain::meshTileCapOrigin(updateParameters->transformState);
++
+     const ImageDifference imageDiff = diffImages(imageImpls, updateParameters->images);
+     imageImpls = updateParameters->images;
+ 
+@@ -518,9 +528,12 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
+             }
+         }
+         // Mark DEM source as needed for terrain rendering
+-        if (renderTerrain && renderTerrain->isEnabled() && sourceImpl->id == renderTerrain->getSourceID()) {
++        const bool isDemSource = renderTerrain && renderTerrain->isEnabled() &&
++                                 sourceImpl->id == renderTerrain->getSourceID();
++        if (isDemSource) {
+             sourceNeedsRendering = true;
+         }
++        tileParameters.coverTileLimit = isDemSource ? 0 : coverTileLimit;
+ 
+         tileParameters.isUpdateSynchronous = sourceImpl->isUpdateSynchronous();
+         source->update(sourceImpl, filteredLayersForSource, sourceNeedsRendering, sourceNeedsRelayout, tileParameters);
+diff --git a/src/mln/renderer/render_terrain.hpp b/src/mln/renderer/render_terrain.hpp
+index 522a88926820..df46721e6c32 100644
+--- a/src/mln/renderer/render_terrain.hpp
++++ b/src/mln/renderer/render_terrain.hpp
+@@ -87,6 +87,9 @@ class RenderTerrain {
+                                                       size_t maxTiles,
+                                                       const std::array<double, 2>& origin);
+ 
++    /// Tiles a source may cover per tile of the mesh-tile cap (TileParameters::coverTileLimit).
++    static constexpr size_t sourceTilesPerMeshTile = 4;
++
+     /// Resolve the DEM render source from the orchestrator if not yet bound.
+     /// Renderer::Impl::render calls this before building the frame's drape-target
+     /// pool from computeMeshCover: the source is otherwise first bound inside
+diff --git a/src/mln/renderer/tile_parameters.hpp b/src/mln/renderer/tile_parameters.hpp
+index 0fb18cc892bd..95393739de56 100644
+--- a/src/mln/renderer/tile_parameters.hpp
++++ b/src/mln/renderer/tile_parameters.hpp
+@@ -4,6 +4,7 @@
+ #include <mln/actor/scheduler.hpp>
+ #include <mln/util/feature.hpp>
+ 
++#include <array>
+ #include <memory>
+ #include <numbers>
+ 
+@@ -50,6 +51,14 @@ class TileParameters {
+     const util::TileElevationProvider* elevationProvider = nullptr;
+     bool isUpdateSynchronous = false;
+     bool captureRenderedFeatures = false;
++    /// With terrain on: the most tiles one source covers (ideal and prefetch covers each),
++    /// keeping those nearest `coverTileLimitOrigin`. A source whose minzoom is deeper than the
++    /// far field needs is covered at that minzoom to the horizon, thousands of tiles at a steep
++    /// pitch however few the mesh draws there. 0 = no limit.
++    size_t coverTileLimit = 0;
++    /// Where coverTileLimit measures from (normalized web-mercator): the ground under the
++    /// camera, RenderTerrain::meshTileCapOrigin, the same point the mesh-tile cap uses.
++    std::array<double, 2> coverTileLimitOrigin{{0.0, 0.0}};
+ };
+ 
+ } // namespace mln
+diff --git a/src/mln/renderer/tile_pyramid.cpp b/src/mln/renderer/tile_pyramid.cpp
+index e05d530a1ea1..8c438156632b 100644
+--- a/src/mln/renderer/tile_pyramid.cpp
++++ b/src/mln/renderer/tile_pyramid.cpp
+@@ -153,6 +153,11 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
+         }
+     }
+ 
++    if (parameters.coverTileLimit > 0) {
++        util::keepNearestTiles(idealTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin);
++        util::keepNearestTiles(panTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin);
++    }
++
+     // Stores a list of all the tiles that we're definitely going to retain.
+     // There are two kinds of tiles we need: the ideal tiles determined by the
+     // tile cover. They may not yet be in use because they're still loading. In
+diff --git a/src/mln/util/tile_cover.cpp b/src/mln/util/tile_cover.cpp
+index 8c20eef16394..9a59a8b0f991 100644
+--- a/src/mln/util/tile_cover.cpp
++++ b/src/mln/util/tile_cover.cpp
+@@ -8,6 +8,7 @@
+ #include <mln/util/tile_cover_impl.hpp>
+ #include <mln/util/tile_lod.hpp>
+ 
++#include <algorithm>
+ #include <functional>
+ #include <list>
+ 
+@@ -528,5 +529,24 @@ bool TileCover::hasNext() {
+     return impl->hasNext();
+ }
+ 
++void keepNearestTiles(std::vector<OverscaledTileID>& tiles, size_t maxTiles, const std::array<double, 2>& origin) {
++    if (maxTiles == 0 || tiles.size() <= maxTiles) {
++        return;
++    }
++    const auto dist2 = [&](const OverscaledTileID& id) {
++        const double scale = static_cast<double>(1u << id.canonical.z);
++        const double dx = (static_cast<double>(id.canonical.x) + 0.5) / scale + id.wrap - origin[0];
++        const double dy = (static_cast<double>(id.canonical.y) + 0.5) / scale - origin[1];
++        return dx * dx + dy * dy;
++    };
++    const auto keep = tiles.begin() + static_cast<std::ptrdiff_t>(maxTiles);
++    std::partial_sort(tiles.begin(), keep, tiles.end(), [&](const OverscaledTileID& a, const OverscaledTileID& b) {
++        const double da = dist2(a);
++        const double db = dist2(b);
++        return da < db || (da == db && a < b);
++    });
++    tiles.erase(keep, tiles.end());
++}
++
+ } // namespace util
+ } // namespace mln
+diff --git a/src/mln/util/tile_cover.hpp b/src/mln/util/tile_cover.hpp
+index e62851b91e92..73c6aedd9765 100644
+--- a/src/mln/util/tile_cover.hpp
++++ b/src/mln/util/tile_cover.hpp
+@@ -6,6 +6,7 @@
+ #include <mln/util/geometry.hpp>
+ #include <mln/util/range.hpp>
+ 
++#include <array>
+ #include <vector>
+ #include <memory>
+ #include <numbers>
+@@ -79,6 +80,13 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+ /// covers - so they render empty. Culling the mesh set to the frustum drops that
+ /// off-screen area. Uses params.elevationProvider the same way tileCover does.
+ std::set<UnwrappedTileID> frustumCull(const TileCoverParameters& state, const std::set<UnwrappedTileID>& tiles);
++
++/// Keep the `maxTiles` tiles whose centres lie nearest `origin` (normalized web-mercator; pass
++/// the ground under the camera to keep those nearest the camera), nearest first; all of them
++/// when there are no more than that or `maxTiles` is 0. The kept tiles are in this order, not
++/// the order tileCover returned them in. Ties go by tile ID, so the same view keeps the same
++/// tiles from one call to the next.
++void keepNearestTiles(std::vector<OverscaledTileID>& tiles, size_t maxTiles, const std::array<double, 2>& origin);
+ std::vector<UnwrappedTileID> tileCover(const LatLngBounds&, uint8_t z);
+ std::vector<UnwrappedTileID> tileCover(const Geometry<double>&, uint8_t z);
+ 
+diff --git a/test/CMakeLists.txt b/test/CMakeLists.txt
+index d62e2bd811dd..7e5ea2be7c97 100644
+--- a/test/CMakeLists.txt
++++ b/test/CMakeLists.txt
+@@ -33,6 +33,7 @@ add_library(
+     ${PROJECT_SOURCE_DIR}/test/renderer/layer_min_zoom_tiles.test.cpp
+     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_cache_policy.test.cpp
+     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_mesh_cover.test.cpp
++    ${PROJECT_SOURCE_DIR}/test/renderer/terrain_source_cover.test.cpp
+     $<$<BOOL:${MLN_WITH_WEBGPU}>:${PROJECT_SOURCE_DIR}/test/renderer/wgsl_preprocessor.test.cpp>
+     ${PROJECT_SOURCE_DIR}/test/sprite/sprite_loader.test.cpp
+     ${PROJECT_SOURCE_DIR}/test/sprite/sprite_parser.test.cpp
+diff --git a/test/renderer/terrain_source_cover.test.cpp b/test/renderer/terrain_source_cover.test.cpp
+new file mode 100644
+index 000000000000..38f04d72f3b1
+--- /dev/null
++++ b/test/renderer/terrain_source_cover.test.cpp
+@@ -0,0 +1,274 @@
++#include <mln/test/util.hpp>
++#include <mln/test/stub_file_source.hpp>
++#include <mln/test/map_adapter.hpp>
++
++#include <mln/gfx/headless_frontend.hpp>
++#include <mln/map/bound_options.hpp>
++#include <mln/map/camera.hpp>
++#include <mln/map/map_options.hpp>
++#include <mln/map/mode.hpp>
++#include <mln/renderer/render_terrain.hpp>
++#include <mln/style/layer.hpp>
++#include <mln/style/style.hpp>
++#include <mln/style/types.hpp>
++#include <mln/util/image.hpp>
++#include <mln/util/run_loop.hpp>
++#include <mln/util/tile_cover.hpp>
++
++#include <algorithm>
++#include <array>
++#include <chrono>
++#include <cmath>
++#include <cstdio>
++#include <numbers>
++#include <set>
++#include <string>
++#include <thread>
++#include <utility>
++#include <vector>
++
++using namespace mln;
++
++namespace {
++
++std::string makeFlatDEMTile() {
++    constexpr uint32_t size = 64;
++    PremultipliedImage image({size, size});
++    for (uint32_t i = 0; i < size * size; ++i) {
++        uint8_t* px = image.data.get() + i * 4;
++        px[0] = 1;
++        px[1] = 173;
++        px[2] = 176;
++        px[3] = 255;
++    }
++    return encodePNG(image);
++}
++
++// The flat DEM tile above decodes to this height everywhere.
++constexpr double flatDEMMeters = 1000.0;
++
++// A vector source whose minzoom is deeper than the far field needs, beside the DEM. The
++// vector layer starts hidden, so the DEM can load before the source asks for anything.
++std::string deepSourceStyle(int demMinZoom, int demMaxZoom) {
++    return R"STYLE({
++  "version": 8,
++  "sources": {
++    "dem": {
++      "type": "raster-dem",
++      "tiles": ["http://example.com/dem/{z}-{x}-{y}.png"],
++      "encoding": "mapbox",
++      "minzoom": )STYLE" +
++           std::to_string(demMinZoom) + R"STYLE(,
++      "maxzoom": )STYLE" +
++           std::to_string(demMaxZoom) + R"STYLE(,
++      "tileSize": 64
++    },
++    "parcels": {
++      "type": "vector",
++      "tiles": ["http://example.com/parcels/{z}-{x}-{y}.pbf"],
++      "minzoom": 13,
++      "maxzoom": 14
++    }
++  },
++  "terrain": {"source": "dem", "exaggeration": 1.0},
++  "layers": [{
++    "id": "parcels",
++    "type": "fill",
++    "source": "parcels",
++    "source-layer": "parcels",
++    "layout": {"visibility": "none"}
++  }]
++})STYLE";
++}
++
++CanonicalTileID tileIDFromURL(const std::string& url) {
++    const size_t slash = url.rfind('/');
++    unsigned z = 0, x = 0, y = 0;
++    std::sscanf(url.c_str() + slash + 1, "%u-%u-%u", &z, &x, &y);
++    return CanonicalTileID(static_cast<uint8_t>(z), x, y);
++}
++
++// The terrain's height everywhere, for the tile cover the renderer draws from the DEM it loaded.
++class FlatTerrain : public util::TileElevationProvider {
++public:
++    std::optional<Range<double>> getTileElevationRange(const CanonicalTileID&) const override {
++        return Range<double>{flatDEMMeters, flatDEMMeters};
++    }
++};
++
++// A steep view over terrain, with a vector source and the DEM both behind a stub file source that
++// records what each one is asked for.
++class TerrainSourceCoverTest {
++public:
++    struct Options {
++        int demMinZoom = 0;
++        int demMaxZoom = 6;
++        TerrainLoadMode mode = TerrainLoadMode::Quality;
++        double pitch = 70.0;
++        double zoom = 13.0;
++        Size size{1200, 800};
++    };
++
++    explicit TerrainSourceCoverTest(const Options& options)
++        : zoom(options.zoom),
++          fileSource(std::make_shared<StubFileSource>(ResourceOptions::Default(), ClientOptions())),
++          demTile(makeFlatDEMTile()),
++          frontend(options.size, 1),
++          map(frontend,
++              MapObserver::nullObserver(),
++              fileSource,
++              MapOptions().withMapMode(MapMode::Static).withSize(frontend.getSize())) {
++        fileSource->tileResponse = [this](const Resource& resource) {
++            Response res;
++            if (resource.url.find("/parcels/") != std::string::npos) {
++                parcelTiles.insert(tileIDFromURL(resource.url));
++                res.noContent = true;
++            } else {
++                demTiles.insert(tileIDFromURL(resource.url));
++                res.data = std::make_shared<std::string>(demTile);
++            }
++            return res;
++        };
++        map.setTerrainLoadMode(options.mode);
++        map.getStyle().loadJSON(deepSourceStyle(options.demMinZoom, options.demMaxZoom));
++        map.setBounds(BoundOptions().withMaxPitch(85.0));
++        map.jumpTo(CameraOptions().withCenter(LatLng{38.26, -120.68}).withZoom(options.zoom).withPitch(options.pitch));
++    }
++
++    void render(int frames) {
++        for (int i = 0; i < frames; ++i) {
++            loop.runOnce();
++            frontend.render(map);
++            std::this_thread::sleep_for(std::chrono::milliseconds(20));
++        }
++    }
++
++    // Renders until the DEM has stopped arriving: the elevated cover is then the same from one
++    // frame to the next.
++    void settleDEM() {
++        size_t seen = 0;
++        int quiet = 0;
++        for (int frames = 0; frames < 200 && quiet < 10; ++frames) {
++            render(1);
++            quiet = demTiles.size() == seen ? quiet + 1 : 0;
++            seen = demTiles.size();
++        }
++        ASSERT_GE(quiet, 10) << "the DEM was still loading after 200 frames";
++    }
++
++    void showParcels() { map.getStyle().getLayer("parcels")->setVisibility(style::VisibilityType::Visible); }
++
++    size_t sourceTileLimit() const {
++        return terrainLoadBudget(map.getTerrainLoadMode()).maxMeshTiles * RenderTerrain::sourceTilesPerMeshTile;
++    }
++
++    // Where the camera stands on the ground, from the free-camera API, worked out independently of
++    // RenderTerrain.
++    std::array<double, 2> cameraGround() const {
++        const vec3 position = *map.getFreeCameraOptions().position;
++        return {{position[0], position[1]}};
++    }
++
++    // The `count` tiles of the parcels source's whole cover nearest `origin` (normalized
++    // web-mercator), before any cap: tileCover over the flat plateau the DEM tiles describe, or
++    // over flat ground without terrain. `coverSize` gets the size of the whole cover.
++    std::set<CanonicalTileID> nearestCover(const std::array<double, 2>& origin,
++                                           size_t count,
++                                           size_t& coverSize,
++                                           bool overTerrain = true) const {
++        const auto coverZoom = static_cast<uint8_t>(std::clamp(static_cast<int>(zoom), 13, 14));
++        FlatTerrain terrain;
++        const util::TileCoverParameters params{.transformState = map.getTransformState(),
++                                               .elevationProvider = overTerrain ? &terrain : nullptr};
++        std::vector<std::pair<double, CanonicalTileID>> ranked;
++        for (const OverscaledTileID& id : util::tileCover(params, coverZoom, Range<uint8_t>{13, 14}, coverZoom)) {
++            const double scale = static_cast<double>(1u << id.canonical.z);
++            const double dx = (id.canonical.x + 0.5) / scale + id.wrap - origin[0];
++            const double dy = (id.canonical.y + 0.5) / scale - origin[1];
++            ranked.emplace_back(dx * dx + dy * dy, id.canonical);
++        }
++        std::sort(ranked.begin(), ranked.end());
++        coverSize = ranked.size();
++        std::set<CanonicalTileID> nearest;
++        for (size_t i = 0; i < std::min(count, ranked.size()); ++i) nearest.insert(ranked[i].second);
++        return nearest;
++    }
++
++    // The map centre in normalized web-mercator.
++    std::array<double, 2> mapCentre() const {
++        const LatLng centre = *map.getCameraOptions({}).center;
++        const double latRad = centre.latitude() * std::numbers::pi / 180.0;
++        return {{centre.longitude() / 360.0 + 0.5,
++                 0.5 - std::log(std::tan(std::numbers::pi / 4.0 + latRad / 2.0)) / (2.0 * std::numbers::pi)}};
++    }
++
++    double zoom;
++    util::RunLoop loop;
++    std::shared_ptr<StubFileSource> fileSource;
++    std::string demTile;
++    HeadlessFrontend frontend;
++    MapAdapter map;
++    std::set<CanonicalTileID> parcelTiles;
++    std::set<CanonicalTileID> demTiles;
++};
++
++// The source asks for the tiles nearest the camera and no others: the same set as the nearest
++// of the whole cover, measured from where the camera stands on the ground.
++void expectOnlyTheTilesNearestTheCamera(const TerrainSourceCoverTest::Options& options) {
++    TerrainSourceCoverTest test(options);
++    // The DEM arrives first: the elevated cover shifts as it lands, and a source that asked for
++    // the tiles on each side of that shift has asked for more than its cap in all.
++    test.settleDEM();
++    test.showParcels();
++    test.render(10);
++
++    const size_t limit = test.sourceTileLimit();
++    size_t coverSize = 0;
++    const std::set<CanonicalTileID> nearestTheCamera = test.nearestCover(test.cameraGround(), limit, coverSize);
++    ASSERT_GT(coverSize, limit) << "the view has to cover more than the cap";
++
++    // A cap measured from the map centre would keep a few other tiles here.
++    size_t unused = 0;
++    ASSERT_NE(nearestTheCamera, test.nearestCover(test.mapCentre(), limit, unused));
++
++    EXPECT_EQ(test.parcelTiles.size(), limit);
++    EXPECT_EQ(test.parcelTiles, nearestTheCamera);
++}
++
++} // namespace
++
++// A source whose minzoom is deeper than the far field is covered at that minzoom out to the
++// horizon, thousands of tiles at a steep pitch. Under terrain it asks for the nearest few per
++// tile of the mesh-tile cap, nearest the camera, not the map centre.
++TEST(TerrainSourceCover, ASourceRequestsOnlyTheTilesNearestTheCamera) {
++    expectOnlyTheTilesNearestTheCamera({.mode = TerrainLoadMode::Quality, .size = {1600, 1600}});
++}
++
++TEST(TerrainSourceCover, TheCapFollowsTheTerrainLoadMode) {
++    expectOnlyTheTilesNearestTheCamera({.mode = TerrainLoadMode::Performance});
++}
++
++// The terrain draws from its DEM source, so the DEM keeps its own cover rather than the cap.
++// Here the DEM is as deep as the vector source, so its cover holds far more tiles than the cap
++// allows. A capped DEM would stay within a few tiles of the limit: the tiles it asks for before
++// it has loaded and after differ by a handful.
++TEST(TerrainSourceCover, TheDEMSourceKeepsItsOwnCover) {
++    TerrainSourceCoverTest test({.demMinZoom = 13, .demMaxZoom = 13, .mode = TerrainLoadMode::Performance});
++    test.settleDEM();
++
++    EXPECT_GT(test.demTiles.size(), 2 * test.sourceTileLimit());
++}
++
++// Without terrain there is no mesh to size the cap from, and the source keeps its whole cover.
++TEST(TerrainSourceCover, ASourceKeepsItsWholeCoverWithoutTerrain) {
++    TerrainSourceCoverTest test({.mode = TerrainLoadMode::Performance});
++    test.settleDEM();
++    test.map.getStyle().setTerrain(nullptr);
++    test.showParcels();
++    test.render(10);
++
++    size_t coverSize = 0;
++    test.nearestCover(test.cameraGround(), 0, coverSize, false);
++    ASSERT_GT(coverSize, test.sourceTileLimit()) << "the view has to cover more than the cap would allow";
++    EXPECT_EQ(test.parcelTiles.size(), coverSize);
++}
+diff --git a/test/util/tile_cover.test.cpp b/test/util/tile_cover.test.cpp
+index a2f24462c43e..7537097ff510 100644
+--- a/test/util/tile_cover.test.cpp
++++ b/test/util/tile_cover.test.cpp
+@@ -728,3 +728,42 @@ TEST(TileCover, ElevatedCentreCoversTheGroundAtTheBottomOfTheView) {
+         }
+     }
+ }
++
++TEST(TileCover, KeepNearestTilesKeepsThoseNearestTheOrigin) {
++    // z3 row 4: columns 0..7 run west to east; the origin sits on column 2.
++    std::vector<OverscaledTileID> tiles;
++    for (uint32_t x = 0; x < 8; ++x) tiles.emplace_back(3, x, 4);
++    const std::array<double, 2> origin{{(2 + 0.5) / 8.0, (4 + 0.5) / 8.0}};
++
++    util::keepNearestTiles(tiles, 3, origin);
++
++    ASSERT_EQ(tiles.size(), 3u);
++    EXPECT_EQ(tiles[0], OverscaledTileID(3, 2, 4));
++    // Columns 1 and 3 tie on distance; the lower ID comes first.
++    EXPECT_EQ(tiles[1], OverscaledTileID(3, 1, 4));
++    EXPECT_EQ(tiles[2], OverscaledTileID(3, 3, 4));
++}
++
++TEST(TileCover, KeepNearestTilesLeavesSmallAndUnlimitedCoversAlone) {
++    std::vector<OverscaledTileID> tiles{{3, 0, 4}, {3, 7, 4}};
++    const std::array<double, 2> origin{{0.5, 0.5}};
++
++    util::keepNearestTiles(tiles, 2, origin);
++    ASSERT_EQ(tiles.size(), 2u);
++    EXPECT_EQ(tiles[0], OverscaledTileID(3, 0, 4));
++
++    util::keepNearestTiles(tiles, 0, origin);
++    EXPECT_EQ(tiles.size(), 2u);
++}
++
++TEST(TileCover, KeepNearestTilesMeasuresAcrossZoomsAndWraps) {
++    // A z1 tile centred at x=0.75 and a wrapped z2 copy of the origin's own tile: the wrapped
++    // copy is a world away, so the z1 tile wins despite its coarser zoom.
++    std::vector<OverscaledTileID> tiles{OverscaledTileID(2, 1, {2, 0, 0}), OverscaledTileID(1, 0, {1, 1, 0})};
++    const std::array<double, 2> origin{{0.125, 0.125}};
++
++    util::keepNearestTiles(tiles, 1, origin);
++
++    ASSERT_EQ(tiles.size(), 1u);
++    EXPECT_EQ(tiles[0], OverscaledTileID(1, 0, {1, 1, 0}));
++}
