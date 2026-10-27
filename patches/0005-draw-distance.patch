@@ -1,0 +1,184 @@
+diff --git a/include/mln/map/map.hpp b/include/mln/map/map.hpp
+index cb8e6e153a..7967883532 100644
+--- a/include/mln/map/map.hpp
++++ b/include/mln/map/map.hpp
+@@ -110,6 +110,11 @@ public:
+     void setSize(Size);
+     void setFrustumOffset(const EdgeInsets&);
+     EdgeInsets getFrustumOffset();
++    /// Nothing farther from the camera than this many metres is drawn or loaded: it moves the
++    /// frustum's far plane in, which also bounds every source's tile cover and the terrain
++    /// mesh. Never nearer than the map centre. 0 (the default) keeps the full view.
++    void setDrawDistance(double metres);
++    double getDrawDistance() const;
+     MapOptions getMapOptions() const;
+ 
+     // Projection Mode
+diff --git a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
+index aa6060af17..b6f39d21e6 100644
+--- a/platform/ios/src/MLNMapView.h
++++ b/platform/ios/src/MLNMapView.h
+@@ -581,6 +581,21 @@ MLN_EXPORT
+  */
+ @property (nonatomic, assign) UIEdgeInsets frustumOffset;
+ 
++/**
++ The distance from the camera, in meters, beyond which the map draws and loads
++ nothing.
++
++ It moves the camera's far plane in, so the tiles past it are not loaded and the
++ view ends on a straight line rather than on tile edges. With a steep pitch,
++ especially over 3D terrain, this bounds the work of drawing to the horizon. It
++ never cuts nearer than the map's center.
++
++ The default value of this property is 0, which draws the full view.
++
++ This property is experimental and subject to change.
++ */
++@property (nonatomic, assign) CLLocationDistance drawDistance;
++
+ /**
+  Whether the map centre rides the 3D terrain surface rather than sea level.
+ 
+diff --git a/platform/ios/src/MLNMapView.mm b/platform/ios/src/MLNMapView.mm
+index 0ac064ea9b..b9503fadaa 100644
+--- a/platform/ios/src/MLNMapView.mm
++++ b/platform/ios/src/MLNMapView.mm
+@@ -3270,6 +3270,14 @@ static void *windowScreenContext = &windowScreenContext;
+   return NSEdgeInsetsFromMLNEdgeInsets(_mbglMap->getFrustumOffset());
+ }
+ 
++- (void)setDrawDistance:(CLLocationDistance)drawDistance {
++  _mbglMap->setDrawDistance(drawDistance);
++}
++
++- (CLLocationDistance)drawDistance {
++  return _mbglMap->getDrawDistance();
++}
++
+ - (void)setCenterClampedToGround:(BOOL)centerClampedToGround {
+   _mbglMap->setCenterClampedToGround(centerClampedToGround);
+ }
+diff --git a/src/mln/map/map.cpp b/src/mln/map/map.cpp
+index 29e3ae5073..81b52f6267 100644
+--- a/src/mln/map/map.cpp
++++ b/src/mln/map/map.cpp
+@@ -389,6 +389,15 @@ EdgeInsets Map::getFrustumOffset() {
+     return impl->transform.getFrustumOffset();
+ }
+ 
++void Map::setDrawDistance(double metres) {
++    impl->transform.setDrawDistance(metres);
++    impl->onUpdate();
++}
++
++double Map::getDrawDistance() const {
++    return impl->transform.getDrawDistance();
++}
++
+ void Map::setNorthOrientation(NorthOrientation orientation) {
+     impl->transform.setNorthOrientation(orientation);
+     impl->onUpdate();
+diff --git a/src/mln/map/transform.cpp b/src/mln/map/transform.cpp
+index 5a48156487..daae5d2716 100644
+--- a/src/mln/map/transform.cpp
++++ b/src/mln/map/transform.cpp
+@@ -489,6 +489,14 @@ EdgeInsets Transform::getFrustumOffset() {
+     return state.getFrustumOffset();
+ }
+ 
++void Transform::setDrawDistance(double metres) {
++    state.setDrawDistance(metres);
++}
++
++double Transform::getDrawDistance() const {
++    return state.getDrawDistance();
++}
++
+ // MARK: - Bearing
+ 
+ void Transform::rotateBy(const ScreenCoordinate& first,
+diff --git a/src/mln/map/transform.hpp b/src/mln/map/transform.hpp
+index 3d609f79e3..2eee6650dd 100644
+--- a/src/mln/map/transform.hpp
++++ b/src/mln/map/transform.hpp
+@@ -141,6 +141,8 @@ public:
+     // Frustum
+     void setFrustumOffset(const EdgeInsets&);
+     EdgeInsets getFrustumOffset();
++    void setDrawDistance(double metres);
++    double getDrawDistance() const;
+ 
+ private:
+     TransformObserver& observer;
+diff --git a/src/mln/map/transform_state.cpp b/src/mln/map/transform_state.cpp
+index f7aa72ef89..84b9ef8fce 100644
+--- a/src/mln/map/transform_state.cpp
++++ b/src/mln/map/transform_state.cpp
+@@ -9,6 +9,8 @@
+ #include <mln/util/projection.hpp>
+ #include <mln/util/tile_coordinate.hpp>
+ 
++#include <algorithm>
++#include <cmath>
+ #include <numbers>
+ 
+ using namespace std::numbers;
+@@ -152,7 +154,14 @@ void TransformState::getProjMatrix(mat4& projMatrix, uint16_t nearZ, bool aligne
+     // Calculate z distance of the farthest fragment that should be rendered.
+     const double furthestDistance = cameraToSeaLevelDistance / (1 - tanMultiple);
+     // Add a bit extra to avoid precision problems when a fragment's distance is exactly `furthestDistance`
+-    const double farZ = furthestDistance * 1.01;
++    double farZ = furthestDistance * 1.01;
++    // The draw distance pulls the far plane in. The tile covers are culled to the same frustum,
++    // so the tiles past it are neither loaded nor drawn, and the view ends on a clean line
++    // rather than on tile edges. Never nearer than the map centre, so zooming out still shows it.
++    if (drawDistance > 0) {
++        const double limit = drawDistance / Projection::getMetersPerPixelAtLatitude(getLatLng().latitude(), getZoom());
++        farZ = std::min(farZ, std::max(limit, cameraToSeaLevelDistance * 1.2));
++    }
+ 
+     // Make sure the camera state is up-to-date
+     updateCameraState();
+@@ -425,6 +434,18 @@ void TransformState::setFrustumOffset(const EdgeInsets& frustumOffset_) {
+     }
+ }
+ 
++double TransformState::getDrawDistance() const {
++    return drawDistance;
++}
++
++void TransformState::setDrawDistance(double metres) {
++    const double clamped = std::isfinite(metres) ? std::max(0.0, metres) : 0.0;
++    if (drawDistance != clamped) {
++        drawDistance = clamped;
++        requestMatricesUpdate = true;
++    }
++}
++
+ // MARK: - North Orientation
+ 
+ NorthOrientation TransformState::getNorthOrientation() const {
+diff --git a/src/mln/map/transform_state.hpp b/src/mln/map/transform_state.hpp
+index f0c2a8d1ef..3675c61c2b 100644
+--- a/src/mln/map/transform_state.hpp
++++ b/src/mln/map/transform_state.hpp
+@@ -141,6 +141,10 @@ public:
+     EdgeInsets getFrustumOffset() const;
+     void setFrustumOffset(const EdgeInsets& frustumOffset_);
+ 
++    /// Metres from the camera beyond which nothing is drawn or loaded (Map::setDrawDistance).
++    double getDrawDistance() const;
++    void setDrawDistance(double metres);
++
+     // North Orientation
+     NorthOrientation getNorthOrientation() const;
+     double getNorthOrientationAngle() const;
+@@ -290,6 +294,7 @@ private:
+     // logical dimensions
+     Size size;
+     EdgeInsets frustumOffset;
++    double drawDistance = 0;
+ 
+     mat4 coordinatePointMatrix(const mat4& projMatrix) const;
+     mat4 getPixelMatrix() const;
