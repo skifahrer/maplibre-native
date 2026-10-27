@@ -1,0 +1,233 @@
+diff --git a/include/mln/shaders/circle_layer_ubo.hpp b/include/mln/shaders/circle_layer_ubo.hpp
+index bc2d47a44a..0517a903f2 100644
+--- a/include/mln/shaders/circle_layer_ubo.hpp
++++ b/include/mln/shaders/circle_layer_ubo.hpp
+@@ -27,7 +27,7 @@ struct alignas(16) CircleDrawableUBO {
+     /* 144 */ float dem_dim;
+     /* 148 */ float dem_exaggeration;
+     /* 152 */ float dem_enabled;
+-    /* 156 */ float pad4;
++    /* 156 */ float depth_enabled; // terrain occlusion (Metal); padding elsewhere
+     /* 160 */
+ };
+ static_assert(sizeof(CircleDrawableUBO) == 10 * 16);
+diff --git a/include/mln/shaders/mtl/circle.hpp b/include/mln/shaders/mtl/circle.hpp
+index 09dbd44313..74c7d22df9 100644
+--- a/include/mln/shaders/mtl/circle.hpp
++++ b/include/mln/shaders/mtl/circle.hpp
+@@ -37,7 +37,7 @@ struct alignas(16) CircleDrawableUBO {
+     /* 144 */ float dem_dim;
+     /* 148 */ float dem_exaggeration;
+     /* 152 */ float dem_enabled;
+-    /* 156 */ float pad4;
++    /* 156 */ float depth_enabled;
+     /* 160 */
+ };
+ static_assert(sizeof(CircleDrawableUBO) == 10 * 16, "wrong size");
+@@ -69,7 +69,7 @@ struct ShaderSource<BuiltIn::CircleShader, gfx::Backend::Type::Metal> {
+ 
+     static const std::array<AttributeInfo, 8> attributes;
+     static constexpr std::array<AttributeInfo, 0> instanceAttributes{};
+-    static const std::array<TextureInfo, 1> textures;
++    static const std::array<TextureInfo, 2> textures;
+ 
+     static constexpr auto prelude = circleShaderPrelude;
+     static constexpr auto source = R"(
+@@ -104,6 +104,7 @@ struct FragmentStage {
+     float4 position [[position, invariant]];
+     float2 extrude;
+     float antialiasblur;
++    half visibility;
+ 
+ #if !defined(HAS_UNIFORM_u_color)
+     half4 color;
+@@ -134,7 +135,9 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+                                 device const CircleDrawableUBO* drawableVector [[buffer(idCircleDrawableUBO)]],
+                                 device const CircleEvaluatedPropsUBO& props [[buffer(idCircleEvaluatedPropsUBO)]],
+                                 texture2d<float, access::sample> demTexture [[texture(0)]],
+-                                sampler demSampler [[sampler(0)]]) {
++                                sampler demSampler [[sampler(0)]],
++                                texture2d<float, access::sample> depthTexture [[texture(1)]],
++                                sampler depthSampler [[sampler(1)]]) {
+ 
+     device const CircleDrawableUBO& drawable = drawableVector[uboIndex];
+ 
+@@ -192,10 +195,17 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+     // to keep the blur at roughly 1px, the two are inversely related.
+     const half antialiasblur = 1.0 / DEVICE_PIXEL_RATIO / (radius + stroke_width);
+ 
++    // Fade out circles whose centre is hidden behind the terrain
++    const float4 center = drawable.matrix * float4(circle_center, ele, 1);
++    const half visibility = drawable.depth_enabled == 0.0
++                                ? half(1.0)
++                                : half(depth_opacity(center, depthTexture, depthSampler));
++
+     return {
+         .position       = position,
+         .extrude        = extrude,
+         .antialiasblur  = antialiasblur,
++        .visibility     = visibility,
+ 
+ #if !defined(HAS_UNIFORM_u_color)
+         .color          = half4(unpack_mix_color(vertx.color, drawable.color_t)),
+@@ -269,7 +279,7 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
+     const float color_t = (stroke_width < 0.01) ? 0.0 :
+         smoothstep(antialiased_blur, 0.0, extrude_length - radius / (radius + stroke_width));
+ 
+-    return half4(opacity_t * mix(color * opacity, stroke_color * stroke_opacity, color_t));
++    return half4(opacity_t * mix(color * opacity, stroke_color * stroke_opacity, color_t)) * in.visibility;
+ }
+ )";
+ };
+diff --git a/include/mln/shaders/mtl/common.hpp b/include/mln/shaders/mtl/common.hpp
+index 0c99770dd8..ccdb968162 100644
+--- a/include/mln/shaders/mtl/common.hpp
++++ b/include/mln/shaders/mtl/common.hpp
+@@ -105,24 +105,24 @@ inline float get_elevation(float2 pos,
+     return elevation * dem_exaggeration;
+ }
+ 
+-// Unpack a depth value packed by the terrain depth pass (mtl/terrain_depth.hpp),
+-// converted to NDC z, as in the maplibre-gl-js prelude
+-inline float unpack_depth(float4 rgba_depth) {
++// The camera distance (clip w) the terrain depth pass packed (mtl/terrain_depth.hpp)
++inline float unpack_distance(float4 rgba_depth) {
+     const float4 bit_shift = float4(1.0 / (256.0 * 256.0 * 256.0), 1.0 / (256.0 * 256.0), 1.0 / 256.0, 1.0);
+-    return dot(rgba_depth, bit_shift) * 2.0 - 1.0;
++    return dot(rgba_depth, bit_shift) * 16777216.0;
+ }
+ 
+-// Opacity of a fragment behind the terrain, in [0, 1]: 1 fully visible, 0 fully
+-// hidden, with a soft ramp over ~0.002 NDC depth and a small bias so geometry
+-// sitting exactly on the terrain surface (e.g. a label anchored to it) does not
+-// occlude itself. Matches the maplibre-gl-js depthOpacity() prelude function.
+-inline float depth_opacity(float3 frag,
++// Opacity of a clip-space position behind the terrain, in [0, 1]: 1 fully visible, 0
++// fully hidden. It compares distances from the camera, not NDC z: with the near plane
++// at 1 unit, a ridge and the valley behind it differ in z by less than any fixed bias.
++// Hidden from 3% farther than the terrain, fully at 10%: the mesh is coarser than the
++// DEM a label or circle samples, and bridges the gullies they sit in.
++inline float depth_opacity(float4 pos,
+                            texture2d<float, access::sample> depth_texture,
+                            sampler depth_sampler) {
+-    const float2 uv = frag.xy * 0.5 + 0.5;
+-    const float d = unpack_depth(depth_texture.sample(depth_sampler, float2(uv.x, 1.0 - uv.y))) + 0.0001 -
+-                    frag.z;
+-    return 1.0 - max(0.0, min(1.0, -d * 500.0));
++    const float2 uv = pos.xy / pos.w * 0.5 + 0.5;
++    const float terrain = unpack_distance(depth_texture.sample(depth_sampler, float2(uv.x, 1.0 - uv.y)));
++    const float behind = pos.w / terrain - 1.0;
++    return 1.0 - clamp((behind - 0.03) / 0.07, 0.0, 1.0);
+ }
+ 
+ // Whether a clip-space position is visible in front of the terrain, from the
+@@ -136,15 +136,14 @@ inline float calculate_visibility(float4 pos,
+     if (depth_enabled == 0.0) {
+         return 1.0;
+     }
+-    const float3 frag = pos.xyz / pos.w;
+     // check if coordinate is fully visible
+-    const float d = depth_opacity(frag, depth_texture, depth_sampler);
++    const float d = depth_opacity(pos, depth_texture, depth_sampler);
+     if (d > 0.95) {
+         return 1.0;
+     }
+     // if not, sample some pixels above: a label whose anchor is just behind a
+     // ridge still shows if its glyphs poke above it (maplibre-gl-js behaviour)
+-    return (d + depth_opacity(frag + float3(0.0, 0.01, 0.0), depth_texture, depth_sampler)) / 2.0;
++    return (d + depth_opacity(pos + float4(0.0, 0.01 * pos.w, 0.0, 0.0), depth_texture, depth_sampler)) / 2.0;
+ }
+ 
+ template<class ForwardIt, class T>
+diff --git a/include/mln/shaders/mtl/terrain_depth.hpp b/include/mln/shaders/mtl/terrain_depth.hpp
+index cb1ae0a093..32193cca8a 100644
+--- a/include/mln/shaders/mtl/terrain_depth.hpp
++++ b/include/mln/shaders/mtl/terrain_depth.hpp
+@@ -28,6 +28,7 @@ struct VertexStage {
+ 
+ struct FragmentStage {
+     float4 position [[position, invariant]];
++    float distance;
+ };
+ 
+ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+@@ -48,15 +49,17 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+ 
+     // Skirt vertices drop below the surface by elevation_offset (gl-js u_ele_delta)
+     const float ele_delta = (float(vertx.pos.z) == 1.0) ? props.elevation_offset : 0.0;
++    const float4 position = drawable.matrix * float4(pos.x, pos.y, elevation - ele_delta, 1.0);
+     return {
+-        .position = drawable.matrix * float4(pos.x, pos.y, elevation - ele_delta, 1.0),
++        .position = position,
++        .distance = position.w,
+     };
+ }
+ 
+ half4 fragment fragmentMain(FragmentStage in [[stage_in]]) {
+-    // Pack the fragment depth into RGBA8, matching the maplibre-gl-js
+-    // terrain_depth shader; unpacked by unpack_depth() for calculate_visibility()
+-    const float depth = in.position.z;
++    // Pack the camera distance / 2^24 into RGBA8, unpacked by unpack_distance(); the
++    // white clear colour unpacks as farther than any terrain
++    const float depth = in.distance / 16777216.0;
+     const float4 bit_shift = float4(256.0 * 256.0 * 256.0, 256.0 * 256.0, 256.0, 1.0);
+     const float4 bit_mask = float4(0.0, 1.0 / 256.0, 1.0 / 256.0, 1.0 / 256.0);
+     float4 res = fract(depth * bit_shift);
+diff --git a/include/mln/shaders/shader_defines.hpp b/include/mln/shaders/shader_defines.hpp
+index c21657deae..dc36770870 100644
+--- a/include/mln/shaders/shader_defines.hpp
++++ b/include/mln/shaders/shader_defines.hpp
+@@ -313,6 +313,7 @@ enum {
+ 
+ enum {
+     idCircleDEMTexture,
++    idCircleDepthTexture,
+     circleTextureCount
+ };
+ 
+diff --git a/src/mln/renderer/layers/circle_layer_tweaker.cpp b/src/mln/renderer/layers/circle_layer_tweaker.cpp
+index bc8fcd9d59..e527059de1 100644
+--- a/src/mln/renderer/layers/circle_layer_tweaker.cpp
++++ b/src/mln/renderer/layers/circle_layer_tweaker.cpp
+@@ -99,13 +99,15 @@ void CircleLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
+             drawable.setTexture(
+                 terrainData ? terrainData->demTexture : parameters.terrain->getPlaceholderDEMTexture(context),
+                 idCircleDEMTexture);
++            // Packed terrain depth, so a circle behind a ridge fades (depth_opacity)
++            drawable.setTexture(parameters.terrain->getDepthTexture(context), idCircleDepthTexture);
+         }
+ 
+         // The terrain surface writes depth (so its skirts get occluded); circles
+         // are elevated onto that surface and must not depth-test against it, or
+         // they would be culled by the ground they sit on. Depth stays on without
+-        // terrain. (Circles have no depth-texture occlusion path, so they simply
+-        // draw on top of the terrain, as in maplibre-gl-js.)
++        // terrain. Their occlusion comes from the terrain depth texture instead
++        // (Metal only; the other backends still draw them on top).
+         drawable.setEnableDepth(!terrainEnabled);
+ 
+ #if MLN_UBO_CONSOLIDATION
+@@ -134,7 +136,7 @@ void CircleLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
+             .dem_dim = terrainData ? terrainData->demDim : 0.0f,
+             .dem_exaggeration = parameters.terrain ? parameters.terrain->getExaggeration() : 0.0f,
+             .dem_enabled = terrainData ? 1.0f : 0.0f,
+-            .pad4 = 0
++            .depth_enabled = terrainEnabled ? 1.0f : 0.0f
+         };
+ #if MLN_UBO_CONSOLIDATION
+         drawable.setUBOIndex(i++);
+diff --git a/src/mln/shaders/mtl/circle.cpp b/src/mln/shaders/mtl/circle.cpp
+index 074f8a3ace..e46744d7e1 100644
+--- a/src/mln/shaders/mtl/circle.cpp
++++ b/src/mln/shaders/mtl/circle.cpp
+@@ -18,8 +18,9 @@ const std::array<AttributeInfo, 8> CircleShaderSource::attributes = {
+     AttributeInfo{6, gfx::AttributeDataType::Float2, circleUBOCount + 1, idCircleStrokeWidthVertexAttribute},
+     AttributeInfo{7, gfx::AttributeDataType::Float2, circleUBOCount + 1, idCircleStrokeOpacityVertexAttribute},
+ };
+-const std::array<TextureInfo, 1> CircleShaderSource::textures = {
++const std::array<TextureInfo, 2> CircleShaderSource::textures = {
+     TextureInfo{0, idCircleDEMTexture},
++    TextureInfo{1, idCircleDepthTexture},
+ };
+ 
+ } // namespace shaders
