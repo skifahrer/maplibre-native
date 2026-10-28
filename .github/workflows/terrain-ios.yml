@@ -85,15 +85,14 @@ jobs:
         env:
           MAIN_SHA: ${{ needs.check.outputs.main_sha }}
         run: |
+          # Homebrew's git 2.56 lazily fetches an object no upstream ref reaches during the
+          # merge, which GitHub refuses ("not our ref"); Apple's git merges the same commits.
+          git() { /usr/bin/git "$@"; }
+          git --version
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch --no-tags --filter=blob:none origin "$MAIN_SHA"
-          git --version
-          git config --list --show-origin | grep -iE "filter|promisor|sparse|submodule|partial" || true
-          export GIT_TRACE=1
-          # Rename detection reads blobs neither tip has, and GitHub refuses some of those
-          # lazy fetches in a blobless clone ("not our ref"); no rename is ours to follow.
-          if ! git -c merge.renames=false merge --no-edit -m "Merge $MAIN ${MAIN_SHA:0:7} into $BRANCH" "$MAIN_SHA"; then
+          if ! git merge --no-edit -m "Merge $MAIN ${MAIN_SHA:0:7} into $BRANCH" "$MAIN_SHA"; then
             others=$(git diff --name-only --diff-filter=U | grep -v 'CHANGELOG\.md$' || true)
             if [ -n "$others" ]; then
               echo "::error::$MAIN does not merge into $BRANCH: $others"
