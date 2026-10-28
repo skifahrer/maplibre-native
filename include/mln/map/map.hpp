@@ -11,6 +11,7 @@
 #include <mln/util/action_journal_options.hpp>
 #include <mln/util/chrono.hpp>
 #include <mln/util/client_options.hpp>
+#include <mln/util/color.hpp>
 #include <mln/util/geometry.hpp>
 #include <mln/util/noncopyable.hpp>
 #include <mln/util/size.hpp>
@@ -110,6 +111,19 @@ public:
     void setSize(Size);
     void setFrustumOffset(const EdgeInsets&);
     EdgeInsets getFrustumOffset();
+    /// Nothing farther from the camera than this many metres is drawn or loaded: it moves the
+    /// frustum's far plane in, which also bounds every source's tile cover and the terrain
+    /// mesh. Never nearer than the map centre. 0 (the default) keeps the full view.
+    void setDrawDistance(double metres);
+    double getDrawDistance() const;
+    /// Fades the 3D terrain into `color` from `startMetres` to `endMetres` from the camera,
+    /// smoothly, by the colour's alpha. A transparent colour (the default) turns it off.
+    /// Pair it with the draw distance and the style's background, and the view ends in haze
+    /// rather than on a line. Metal only for now; other backends ignore it.
+    void setFog(const Color& color, double startMetres, double endMetres);
+    Color getFogColor() const;
+    double getFogStart() const;
+    double getFogEnd() const;
     MapOptions getMapOptions() const;
 
     // Projection Mode

@@ -389,6 +389,32 @@ EdgeInsets Map::getFrustumOffset() {
     return impl->transform.getFrustumOffset();
 }
 
+void Map::setDrawDistance(double metres) {
+    impl->transform.setDrawDistance(metres);
+    impl->onUpdate();
+}
+
+double Map::getDrawDistance() const {
+    return impl->transform.getDrawDistance();
+}
+
+void Map::setFog(const Color& color, double startMetres, double endMetres) {
+    impl->transform.setFog(color, startMetres, endMetres);
+    impl->onUpdate();
+}
+
+Color Map::getFogColor() const {
+    return impl->transform.getState().getFogColor();
+}
+
+double Map::getFogStart() const {
+    return impl->transform.getState().getFogStart();
+}
+
+double Map::getFogEnd() const {
+    return impl->transform.getState().getFogEnd();
+}
+
 void Map::setNorthOrientation(NorthOrientation orientation) {
     impl->transform.setNorthOrientation(orientation);
     impl->onUpdate();

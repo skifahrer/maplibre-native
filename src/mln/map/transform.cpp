@@ -489,6 +489,18 @@ EdgeInsets Transform::getFrustumOffset() {
     return state.getFrustumOffset();
 }
 
+void Transform::setDrawDistance(double metres) {
+    state.setDrawDistance(metres);
+}
+
+double Transform::getDrawDistance() const {
+    return state.getDrawDistance();
+}
+
+void Transform::setFog(const Color& color, double startMetres, double endMetres) {
+    state.setFog(color, startMetres, endMetres);
+}
+
 // MARK: - Bearing
 
 void Transform::rotateBy(const ScreenCoordinate& first,

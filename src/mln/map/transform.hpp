@@ -141,6 +141,9 @@ public:
     // Frustum
     void setFrustumOffset(const EdgeInsets&);
     EdgeInsets getFrustumOffset();
+    void setDrawDistance(double metres);
+    double getDrawDistance() const;
+    void setFog(const Color& color, double startMetres, double endMetres);
 
 private:
     TransformObserver& observer;

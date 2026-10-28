@@ -267,6 +267,10 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
             }
             bucket.renderTarget = renderTarget;
             bucket.renderTargetPrepared = true;
+            // The prepare output depends only on this bucket's DEM, so draw it once and keep
+            // it; new DEM data (a backfilled border) makes a new target. Re-running every
+            // prepare target every frame cost ~40 ms a frame on an A10X, in 2D as in 3D.
+            renderTarget->setRenderOnce(true);
 
             auto singleTileLayerGroup = context.createTileLayerGroup(0, /*initialCapacity=*/1, getID(), false);
             if (!singleTileLayerGroup) {

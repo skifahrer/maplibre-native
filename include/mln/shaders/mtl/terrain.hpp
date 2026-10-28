@@ -38,9 +38,14 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
     /* 20 */ float elevation_offset;
     /* 24 */ float pad1;
     /* 28 */ float pad2;
-    /* 32 */
+    /* 32 */ float4 fog_color;
+    /* 48 */ float fog_start;
+    /* 52 */ float fog_end;
+    /* 56 */ float pad3;
+    /* 60 */ float pad4;
+    /* 64 */
 };
-static_assert(sizeof(TerrainEvaluatedPropsUBO) == 32, "wrong size");
+static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64, "wrong size");
 
 )";
 
@@ -65,6 +70,7 @@ struct FragmentStage {
     float4 position [[position, invariant]];
     float2 uv;
     float elevation;
+    float depth; // view depth, for the fog
 };
 
 FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
@@ -98,6 +104,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
         .position  = position,
         .uv        = uv,
         .elevation = elevation,
+        .depth     = position.w,
     };
 }
 
@@ -115,7 +122,16 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     // 1.0 - uv.y. Metal's NDC is Y-up, so the RTT is stored upright and the V must NOT
     // be flipped here - sampling 1.0 - uv.y flips the draped map vertically (north/south
     // swapped about the view). Sample uv.y directly on Metal.
-    return half4(mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y)));
+    float4 color = mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
+
+    // Fog: from fog_start to fog_end the surface fades into the fog colour, straight (not
+    // premultiplied) and opaque, by as much as the colour's alpha.
+    if (props.fog_color.a > 0.0) {
+        const float t = smoothstep(props.fog_start, max(props.fog_end, props.fog_start + 1.0), in.depth);
+        const float4 fog = float4(props.fog_color.rgb / props.fog_color.a, 1.0);
+        color = mix(color, fog, t * props.fog_color.a);
+    }
+    return half4(color);
 }
 )";
 };

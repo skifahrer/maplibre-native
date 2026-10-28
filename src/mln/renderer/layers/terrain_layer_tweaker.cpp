@@ -10,6 +10,7 @@
 #include <mln/util/constants.hpp>
 #include <mln/util/convert.hpp>
 #include <mln/util/mat4.hpp>
+#include <mln/util/projection.hpp>
 #include <mln/util/logging.hpp>
 
 #include <algorithm>
@@ -42,13 +43,25 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
     const auto zoom = std::max(parameters.state.getZoom(), 0.0);
     const float elevationOffset = static_cast<float>(util::M2PI * util::EARTH_RADIUS_M / std::pow(2.0, zoom) / 5.0);
 
+
+    // Fog, as view depth in world pixels: 1 unit is 1 pixel at the centre, as the far plane.
+    const Color fogColor = parameters.state.getFogColor();
+    const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(parameters.state.getLatLng().latitude(),
+                                                                          parameters.state.getZoom());
+    const auto fogDepth = [&](double metres) { return static_cast<float>(metres / metresPerPixel); };
+
     // Populate layer-level UBO with terrain properties
     auto& layerUniforms = layerGroup.mutableUniformBuffers();
     const TerrainEvaluatedPropsUBO propsUBO = {.unpack = terrain->getDEMUnpackVector(),
                                                .exaggeration = exaggeration,
                                                .elevation_offset = elevationOffset,
                                                .pad1 = 0.0f,
-                                               .pad2 = 0.0f};
+                                               .pad2 = 0.0f,
+                                               .fog_color = {fogColor.r, fogColor.g, fogColor.b, fogColor.a},
+                                               .fog_start = fogDepth(parameters.state.getFogStart()),
+                                               .fog_end = fogDepth(parameters.state.getFogEnd()),
+                                               .pad3 = 0.0f,
+                                               .pad4 = 0.0f};
     layerUniforms.createOrUpdate(idTerrainEvaluatedPropsUBO, &propsUBO, context);
 
 #if MLN_UBO_CONSOLIDATION

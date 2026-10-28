@@ -3237,6 +3237,31 @@ static void *windowScreenContext = &windowScreenContext;
   return _mbglMap->getTileLodZoomShift();
 }
 
+- (void)setTileLodMode:(MLNTileLodMode)tileLodMode {
+  switch (tileLodMode) {
+    case MLNTileLodModeDistance:
+      _mbglMap->setTileLodMode(mln::TileLodMode::Distance);
+      break;
+    case MLNTileLodModeAdaptive:
+      _mbglMap->setTileLodMode(mln::TileLodMode::Adaptive);
+      break;
+    default:
+      _mbglMap->setTileLodMode(mln::TileLodMode::Default);
+      break;
+  }
+}
+
+- (MLNTileLodMode)tileLodMode {
+  switch (_mbglMap->getTileLodMode()) {
+    case mln::TileLodMode::Distance:
+      return MLNTileLodModeDistance;
+    case mln::TileLodMode::Adaptive:
+      return MLNTileLodModeAdaptive;
+    default:
+      return MLNTileLodModeDefault;
+  }
+}
+
 - (void)setFrustumOffset:(UIEdgeInsets)frustumOffset {
   _mbglMap->setFrustumOffset(MLNEdgeInsetsFromNSEdgeInsets(frustumOffset));
 }
@@ -3245,12 +3270,75 @@ static void *windowScreenContext = &windowScreenContext;
   return NSEdgeInsetsFromMLNEdgeInsets(_mbglMap->getFrustumOffset());
 }
 
+- (void)setDrawDistance:(CLLocationDistance)drawDistance {
+  _mbglMap->setDrawDistance(drawDistance);
+}
+
+- (CLLocationDistance)drawDistance {
+  return _mbglMap->getDrawDistance();
+}
+
+- (void)setFogColor:(UIColor *)fogColor {
+  const mln::Color color = fogColor ? fogColor.mgl_color : mln::Color{0, 0, 0, 0};
+  _mbglMap->setFog(color, _mbglMap->getFogStart(), _mbglMap->getFogEnd());
+}
+
+- (UIColor *)fogColor {
+  const mln::Color color = _mbglMap->getFogColor();
+  return color.a > 0 ? [UIColor mgl_colorWithColor:color] : nil;
+}
+
+- (void)setFogStartDistance:(CLLocationDistance)fogStartDistance {
+  _mbglMap->setFog(_mbglMap->getFogColor(), fogStartDistance, _mbglMap->getFogEnd());
+}
+
+- (CLLocationDistance)fogStartDistance {
+  return _mbglMap->getFogStart();
+}
+
+- (void)setFogEndDistance:(CLLocationDistance)fogEndDistance {
+  _mbglMap->setFog(_mbglMap->getFogColor(), _mbglMap->getFogStart(), fogEndDistance);
+}
+
+- (CLLocationDistance)fogEndDistance {
+  return _mbglMap->getFogEnd();
+}
+
 - (void)setCenterClampedToGround:(BOOL)centerClampedToGround {
   _mbglMap->setCenterClampedToGround(centerClampedToGround);
 }
 
 - (BOOL)isCenterClampedToGround {
   return _mbglMap->getCenterClampedToGround();
+}
+
+- (void)anchorCenterOnTerrain {
+  _mbglMap->anchorCenterOnTerrain();
+}
+
+- (void)setTerrainLoadMode:(MLNTerrainLoadMode)terrainLoadMode {
+  switch (terrainLoadMode) {
+    case MLNTerrainLoadModeBalanced:
+      _mbglMap->setTerrainLoadMode(mln::TerrainLoadMode::Balanced);
+      break;
+    case MLNTerrainLoadModePerformance:
+      _mbglMap->setTerrainLoadMode(mln::TerrainLoadMode::Performance);
+      break;
+    default:
+      _mbglMap->setTerrainLoadMode(mln::TerrainLoadMode::Quality);
+      break;
+  }
+}
+
+- (MLNTerrainLoadMode)terrainLoadMode {
+  switch (_mbglMap->getTerrainLoadMode()) {
+    case mln::TerrainLoadMode::Balanced:
+      return MLNTerrainLoadModeBalanced;
+    case mln::TerrainLoadMode::Performance:
+      return MLNTerrainLoadModePerformance;
+    default:
+      return MLNTerrainLoadModeQuality;
+  }
 }
 
 // MARK: - Accessibility -
