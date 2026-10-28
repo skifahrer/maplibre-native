@@ -28,6 +28,7 @@ struct VertexStage {
 
 struct FragmentStage {
     float4 position [[position, invariant]];
+    float distance;
 };
 
 FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
@@ -48,15 +49,17 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
 
     // Skirt vertices drop below the surface by elevation_offset (gl-js u_ele_delta)
     const float ele_delta = (float(vertx.pos.z) == 1.0) ? props.elevation_offset : 0.0;
+    const float4 position = drawable.matrix * float4(pos.x, pos.y, elevation - ele_delta, 1.0);
     return {
-        .position = drawable.matrix * float4(pos.x, pos.y, elevation - ele_delta, 1.0),
+        .position = position,
+        .distance = position.w,
     };
 }
 
 half4 fragment fragmentMain(FragmentStage in [[stage_in]]) {
-    // Pack the fragment depth into RGBA8, matching the maplibre-gl-js
-    // terrain_depth shader; unpacked by unpack_depth() for calculate_visibility()
-    const float depth = in.position.z;
+    // Pack the camera distance / 2^24 into RGBA8, unpacked by unpack_distance(); the
+    // white clear colour unpacks as farther than any terrain
+    const float depth = in.distance / 16777216.0;
     const float4 bit_shift = float4(256.0 * 256.0 * 256.0, 256.0 * 256.0, 256.0, 1.0);
     const float4 bit_mask = float4(0.0, 1.0 / 256.0, 1.0 / 256.0, 1.0 / 256.0);
     float4 res = fract(depth * bit_shift);

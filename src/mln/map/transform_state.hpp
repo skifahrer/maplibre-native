@@ -3,6 +3,7 @@
 #include <mln/map/camera.hpp>
 #include <mln/map/mode.hpp>
 #include <mln/util/camera.hpp>
+#include <mln/util/color.hpp>
 #include <mln/util/constants.hpp>
 #include <mln/util/geo.hpp>
 #include <mln/util/geometry.hpp>
@@ -144,6 +145,13 @@ public:
     /// Metres from the camera beyond which nothing is drawn or loaded (Map::setDrawDistance).
     double getDrawDistance() const;
     void setDrawDistance(double metres);
+
+    /// The terrain's fog (Map::setFog): its colour, premultiplied, and where it starts and is
+    /// full, in metres from the camera.
+    Color getFogColor() const { return fogColor; }
+    double getFogStart() const { return fogStart; }
+    double getFogEnd() const { return fogEnd; }
+    void setFog(const Color& color, double startMetres, double endMetres);
 
     // North Orientation
     NorthOrientation getNorthOrientation() const;
@@ -295,6 +303,9 @@ private:
     Size size;
     EdgeInsets frustumOffset;
     double drawDistance = 0;
+    Color fogColor = Color{0.0f, 0.0f, 0.0f, 0.0f};
+    double fogStart = 0;
+    double fogEnd = 0;
 
     mat4 coordinatePointMatrix(const mat4& projMatrix) const;
     mat4 getPixelMatrix() const;

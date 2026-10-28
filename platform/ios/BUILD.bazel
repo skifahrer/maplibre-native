@@ -127,11 +127,7 @@ apple_static_xcframework(
     bundle_name = "MapLibre",
     infoplists = ["info_static_plist"],
     ios = {
-        "simulator": [
-            "x86_64",
-            "arm64",
-        ],
-        "device": ["arm64"],
+        "simulator": ["arm64"],
     },
     minimum_os_versions = {"ios": "15.5"},
     public_hdrs = public_hdrs,
