@@ -1,0 +1,40 @@
+diff --git a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
+index f1cd7e018ae..cc36889e1d9 100644
+--- a/platform/ios/src/MLNMapView.h
++++ b/platform/ios/src/MLNMapView.h
+@@ -536,6 +536,8 @@ MLN_EXPORT
+  A value larger than 1 increases the distance to the camera view point reducing LOD
+  Larger values may improve performance at the cost of quality (tiles away from camera
+  use lower Zoom levels)
++ In ``MLNTileLodModeAdaptive`` every tile goes log2(scale) zoom levels coarser, and none
++ goes finer than the zoom the view asks for.
+  */
+ @property (nonatomic, assign) double tileLodScale;
+ 
+diff --git a/src/mln/util/tile_cover.cpp b/src/mln/util/tile_cover.cpp
+index 9a59a8b0f99..4ee359b163f 100644
+--- a/src/mln/util/tile_cover.cpp
++++ b/src/mln/util/tile_cover.cpp
+@@ -199,7 +199,11 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+     const bool allowVariableZoom = adaptiveLod || transform.getPitch() > state.tileLodPitchThreshold;
+     const uint8_t minZoom = allowVariableZoom ? zoomRange.min : z;
+     const bool variableZoomMode = state.tileLodMode == TileLodMode::Distance || adaptiveLod;
+-    const uint8_t maxZoom = (variableZoomMode && allowVariableZoom) ? zoomRange.max : z;
++    // Adaptive never goes finer than the zoom the view asks for: under a steep pitch gl-js's
++    // function sends the ground at the camera to the source's max zoom, and a few hundred such
++    // tiles cost more than a tile budget allows. The near field gets the view's zoom, the far
++    // field less - where Default would give the near field less, as it measures from the centre.
++    const uint8_t maxZoom = (variableZoomMode && allowVariableZoom) ? (adaptiveLod ? z : zoomRange.max) : z;
+     const uint8_t overscaledZoom = std::max(overscaledZ.value_or(z), maxZoom);
+     const bool flippedY = transform.getViewportMode() == ViewportMode::FlippedY;
+ 
+@@ -328,7 +332,8 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+             const vec3 camToTile = node.aabb.distanceXYZ(cameraCoord);
+             const double distanceToTile2d = std::hypot(camToTile[0], camToTile[1]) / numTiles;
+             const double rawZoom = tileZoom(
+-                requestedCenterZoom, distanceToTile2d, distanceToCenterZ, distanceToCenter3d);
++                requestedCenterZoom, distanceToTile2d, distanceToCenterZ, distanceToCenter3d) -
++                                  std::log2(std::max(1.0, state.tileLodScale));
+             const double desiredZoom = state.roundZoom ? std::round(rawZoom) : std::floor(rawZoom);
+             shouldSplitTile = node.zoom < std::clamp(desiredZoom, 0.0, static_cast<double>(maxZoom));
+         } else if (state.tileLodMode == TileLodMode::Distance) {
