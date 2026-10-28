@@ -199,7 +199,11 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     const bool allowVariableZoom = adaptiveLod || transform.getPitch() > state.tileLodPitchThreshold;
     const uint8_t minZoom = allowVariableZoom ? zoomRange.min : z;
     const bool variableZoomMode = state.tileLodMode == TileLodMode::Distance || adaptiveLod;
-    const uint8_t maxZoom = (variableZoomMode && allowVariableZoom) ? zoomRange.max : z;
+    // Adaptive never goes finer than the zoom the view asks for: under a steep pitch gl-js's
+    // function sends the ground at the camera to the source's max zoom, and a few hundred such
+    // tiles cost more than a tile budget allows. The near field gets the view's zoom, the far
+    // field less - where Default would give the near field less, as it measures from the centre.
+    const uint8_t maxZoom = (variableZoomMode && allowVariableZoom) ? (adaptiveLod ? z : zoomRange.max) : z;
     const uint8_t overscaledZoom = std::max(overscaledZ.value_or(z), maxZoom);
     const bool flippedY = transform.getViewportMode() == ViewportMode::FlippedY;
 
@@ -328,7 +332,8 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
             const vec3 camToTile = node.aabb.distanceXYZ(cameraCoord);
             const double distanceToTile2d = std::hypot(camToTile[0], camToTile[1]) / numTiles;
             const double rawZoom = tileZoom(
-                requestedCenterZoom, distanceToTile2d, distanceToCenterZ, distanceToCenter3d);
+                requestedCenterZoom, distanceToTile2d, distanceToCenterZ, distanceToCenter3d) -
+                                  std::log2(std::max(1.0, state.tileLodScale));
             const double desiredZoom = state.roundZoom ? std::round(rawZoom) : std::floor(rawZoom);
             shouldSplitTile = node.zoom < std::clamp(desiredZoom, 0.0, static_cast<double>(maxZoom));
         } else if (state.tileLodMode == TileLodMode::Distance) {
