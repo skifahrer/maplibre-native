@@ -1,0 +1,45 @@
+diff --git a/include/mln/shaders/mtl/common.hpp b/include/mln/shaders/mtl/common.hpp
+index ccdb968..740197b 100644
+--- a/include/mln/shaders/mtl/common.hpp
++++ b/include/mln/shaders/mtl/common.hpp
+@@ -116,15 +116,29 @@ inline float unpack_distance(float4 rgba_depth) {
+ // at 1 unit, a ridge and the valley behind it differ in z by less than any fixed bias.
+ // Hidden from 3% farther than the terrain, fully at 10%: the mesh is coarser than the
+ // DEM a label or circle samples, and bridges the gullies they sit in.
++// Where no terrain is drawn (past the draw distance, or past the nearest tiles a load mode
++// keeps) the depth target holds its white clear colour: `sky` is the opacity there.
+ inline float depth_opacity(float4 pos,
+                            texture2d<float, access::sample> depth_texture,
+-                           sampler depth_sampler) {
++                           sampler depth_sampler,
++                           float sky) {
+     const float2 uv = pos.xy / pos.w * 0.5 + 0.5;
+     const float terrain = unpack_distance(depth_texture.sample(depth_sampler, float2(uv.x, 1.0 - uv.y)));
++    if (terrain >= 16777216.0) {
++        return sky;
++    }
+     const float behind = pos.w / terrain - 1.0;
+     return 1.0 - clamp((behind - 0.03) / 0.07, 0.0, 1.0);
+ }
+ 
++// A label or circle over no terrain stands on ground that is not drawn, so it would float in
++// the sky above the horizon: hidden.
++inline float depth_opacity(float4 pos,
++                           texture2d<float, access::sample> depth_texture,
++                           sampler depth_sampler) {
++    return depth_opacity(pos, depth_texture, depth_sampler, 0.0);
++}
++
+ // Whether a clip-space position is visible in front of the terrain, from the
+ // packed terrain depth texture, matching maplibre-gl-js calculate_visibility().
+ // Unlike gl-js (global terrain uniforms), the depth texture and enable flag are
+@@ -143,7 +157,8 @@ inline float calculate_visibility(float4 pos,
+     }
+     // if not, sample some pixels above: a label whose anchor is just behind a
+     // ridge still shows if its glyphs poke above it (maplibre-gl-js behaviour)
+-    return (d + depth_opacity(pos + float4(0.0, 0.01 * pos.w, 0.0, 0.0), depth_texture, depth_sampler)) / 2.0;
++    // Above a summit is open sky, which must not dim the summit's own label
++    return (d + depth_opacity(pos + float4(0.0, 0.01 * pos.w, 0.0, 0.0), depth_texture, depth_sampler, 1.0)) / 2.0;
+ }
+ 
+ template<class ForwardIt, class T>
