@@ -85,6 +85,10 @@ jobs:
         env:
           MAIN_SHA: ${{ needs.check.outputs.main_sha }}
         run: |
+          # Homebrew's git 2.56 lazily fetches an object no upstream ref reaches during the
+          # merge, which GitHub refuses ("not our ref"); Apple's git merges the same commits.
+          git() { /usr/bin/git "$@"; }
+          git --version
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch --no-tags --filter=blob:none origin "$MAIN_SHA"
