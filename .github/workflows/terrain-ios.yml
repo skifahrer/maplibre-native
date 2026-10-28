@@ -123,14 +123,34 @@ jobs:
           git diff --cached --quiet || git commit -q -m "Our patches"
           git log -1 --format='%H %s'
 
+      # Every compile the last build did; a patch or a moved main reuses all it did not touch.
+      - name: Restore the Bazel cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-ios-${{ needs.check.outputs.sha }}-${{ needs.check.outputs.main_sha }}-${{ github.run_id }}
+          restore-keys: |
+            bazel-ios-${{ needs.check.outputs.sha }}-${{ needs.check.outputs.main_sha }}-
+            bazel-ios-${{ needs.check.outputs.sha }}-
+            bazel-ios-
+
       # The same flags as upstream's ios-release, so the framework is as small as theirs.
       - name: Build the XCFramework
         run: |
-          bazel build --compilation_mode=opt --//:renderer=metal \
+          bazel build --disk_cache="$HOME/.cache/bazel-disk" --experimental_disk_cache_gc_max_size=6G \
+            --compilation_mode=opt --//:renderer=metal \
             --features=dead_strip,thin_lto --objc_enable_binary_stripping \
             --apple_generate_dsym --output_groups=+dsyms \
             //platform/ios:MapLibre.dynamic
           echo "BIN=$(bazel info --compilation_mode=opt bazel-bin)/platform/ios" >> "$GITHUB_ENV"
+
+      # Kept under 6 GB by Bazel, inside the repository's 10 GB of Actions cache.
+      - name: Save the Bazel cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-ios-${{ needs.check.outputs.sha }}-${{ needs.check.outputs.main_sha }}-${{ github.run_id }}
 
       # The zip carries ~570 MB of dSYMs; they go in a release asset of their own.
       - name: Package
