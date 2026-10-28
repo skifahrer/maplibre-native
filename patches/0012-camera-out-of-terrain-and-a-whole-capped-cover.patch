@@ -1,0 +1,559 @@
+diff --git a/include/mln/renderer/renderer_observer.hpp b/include/mln/renderer/renderer_observer.hpp
+index aecc8468d14..dcdb144acdb 100644
+--- a/include/mln/renderer/renderer_observer.hpp
++++ b/include/mln/renderer/renderer_observer.hpp
+@@ -75,6 +75,11 @@ public:
+     /// (Map::setCenterClampedToGround) learns of it here, one frame behind.
+     virtual void onTerrainCenterElevationChanged(double /*elevationMeters*/) {}
+ 
++    /// The steepest pitch, in radians, that keeps the camera and the ground just ahead of it
++    /// out of the rendered terrain; NaN when every pitch does. A map that keeps its camera out
++    /// of the ground (Map::setCenterClampedToGround) caps its pitch at it, one frame behind.
++    virtual void onTerrainPitchLimitChanged(double /*maxPitchRadians*/) {}
++
+     /// Style is missing an image
+     using StyleImageMissingCallback = std::function<void()>;
+     virtual void onStyleImageMissing(const std::string&, const StyleImageMissingCallback& done) { done(); }
+diff --git a/platform/android/MapLibreAndroid/src/cpp/android_renderer_frontend.cpp b/platform/android/MapLibreAndroid/src/cpp/android_renderer_frontend.cpp
+index da8251c4d48..a7f940599d8 100644
+--- a/platform/android/MapLibreAndroid/src/cpp/android_renderer_frontend.cpp
++++ b/platform/android/MapLibreAndroid/src/cpp/android_renderer_frontend.cpp
+@@ -66,6 +66,10 @@ public:
+         delegate.invoke(&RendererObserver::onTerrainCenterElevationChanged, elevationMeters);
+     }
+ 
++    void onTerrainPitchLimitChanged(double maxPitchRadians) override {
++        delegate.invoke(&RendererObserver::onTerrainPitchLimitChanged, maxPitchRadians);
++    }
++
+     void onStyleImageMissing(const std::string& id, const StyleImageMissingCallback& done) override {
+         delegate.invoke(&RendererObserver::onStyleImageMissing, id, done);
+     }
+diff --git a/src/mln/map/map.cpp b/src/mln/map/map.cpp
+index f2a68f8c1ee..32f4fff7af5 100644
+--- a/src/mln/map/map.cpp
++++ b/src/mln/map/map.cpp
+@@ -344,10 +344,14 @@ void Map::setBounds(const BoundOptions& options) {
+     }
+ 
+     if (options.maxPitch) {
+-        impl->transform.setMaxPitch(*options.maxPitch);
++        impl->appMaxPitch = *options.maxPitch;
++        const bool limited = impl->centerClampedToGround && impl->style->impl->getTerrain() &&
++                             !std::isnan(impl->terrainPitchLimit);
++        impl->transform.setMaxPitch(limited ? std::min(*options.maxPitch, util::rad2deg(impl->terrainPitchLimit))
++                                            : *options.maxPitch);
+         if (impl->transform.getPitch() > impl->transform.getState().getMaxPitch()) {
+             changeCamera = true;
+-            cameraOptions.withPitch(options.maxPitch);
++            cameraOptions.withPitch(util::rad2deg(impl->transform.getState().getMaxPitch()));
+         }
+     }
+ 
+@@ -370,7 +374,7 @@ BoundOptions Map::getBounds() const {
+         .withMinZoom(impl->transform.getState().getMinZoom())
+         .withMaxZoom(impl->transform.getState().getMaxZoom())
+         .withMinPitch(util::rad2deg(impl->transform.getState().getMinPitch()))
+-        .withMaxPitch(util::rad2deg(impl->transform.getState().getMaxPitch()));
++        .withMaxPitch(impl->appMaxPitch);
+ }
+ 
+ // MARK: - Map options
+@@ -666,6 +670,7 @@ bool Map::setCenterAltitudeKeepingView(double altitudeMeters) {
+ 
+ void Map::setCenterClampedToGround(bool clamped) {
+     impl->centerClampedToGround = clamped;
++    impl->applyMaxPitch();
+ }
+ 
+ bool Map::getCenterClampedToGround() const {
+diff --git a/src/mln/map/map_impl.cpp b/src/mln/map/map_impl.cpp
+index c04372faf3a..ab58b98a1af 100644
+--- a/src/mln/map/map_impl.cpp
++++ b/src/mln/map/map_impl.cpp
+@@ -134,6 +134,18 @@ void Map::Impl::onUpdate() {
+     // The clamp stood aside for a transition (onTerrainCenterElevationChanged); now that it
+     // is over, put the centre on the ground it arrived over. The reported height outlives a
+     // terrain removed during the transition, so only apply it while there is still terrain.
++    // A style reload drops the centre to sea level with the terrain, and the renderer reports
++    // the height under it only when that height changes, which it did not: put it back.
++    if (centerClampedToGround && style->impl->getTerrain() && !transform.inTransition() &&
++        transform.getState().getCenterAltitude() == 0.0 && !std::isnan(terrainCenterElevation) &&
++        std::abs(terrainCenterElevation) >= 0.5) {
++        clampCenterToTerrain(terrainCenterElevation);
++    }
++
++    if (pitchAwaitingTerrainLimit && !transform.inTransition()) {
++        applyMaxPitch();
++    }
++
+     if (centerAwaitingTerrainAnchor && !transform.inTransition()) {
+         centerAwaitingTerrainAnchor = false;
+         if (centerClampedToGround && style->impl->getTerrain() && !std::isnan(terrainCenterElevation)) {
+@@ -430,6 +442,10 @@ void Map::Impl::noteTerrainRemoval() {
+     } else if (hasTerrain) {
+         centerAwaitingSeaLevel = false;
+     }
++    if (hadTerrain && !hasTerrain) {
++        terrainPitchLimit = std::numeric_limits<double>::quiet_NaN();
++        pitchAwaitingTerrainLimit = true;
++    }
+     hadTerrain = hasTerrain;
+ }
+ 
+@@ -454,6 +470,11 @@ void Map::Impl::onTerrainCenterElevationChanged(double elevationMeters) {
+     // within a few kilometres of where it started. Let it finish; onUpdate applies the latest
+     // height once it has.
+     if (transform.inTransition()) {
++        // The camera would otherwise ride a stale height into the ground until the move ends.
++        if (std::abs(transform.getState().getCenterAltitude() - elevationMeters) >= 0.5) {
++            transform.setCenterAltitudeInTransition(elevationMeters);
++            onUpdate();
++        }
+         centerAwaitingTerrainAnchor = true;
+         return;
+     }
+@@ -462,6 +483,29 @@ void Map::Impl::onTerrainCenterElevationChanged(double elevationMeters) {
+     }
+ }
+ 
++void Map::Impl::onTerrainPitchLimitChanged(double maxPitchRadians) {
++    terrainPitchLimit = maxPitchRadians;
++    applyMaxPitch();
++}
++
++void Map::Impl::applyMaxPitch() {
++    const bool limited = centerClampedToGround && style->impl->getTerrain() && !std::isnan(terrainPitchLimit);
++    const double maxPitch = limited ? std::min(appMaxPitch, util::rad2deg(terrainPitchLimit)) : appMaxPitch;
++    transform.setMaxPitch(maxPitch);
++    // A running transition clamps its own pitch to the maximum each frame; jumping would end it.
++    if (transform.inTransition()) {
++        pitchAwaitingTerrainLimit = true;
++        onUpdate();
++        return;
++    }
++    pitchAwaitingTerrainLimit = false;
++    const double allowed = util::rad2deg(transform.getState().getMaxPitch());
++    if (util::rad2deg(transform.getPitch()) > allowed + 0.01) {
++        transform.jumpTo(CameraOptions().withPitch(allowed));
++        onUpdate();
++    }
++}
++
+ bool Map::Impl::clampCenterToTerrain(double elevationMeters) {
+     // Sub-metre differences are the terrain cover shifting under a camera that just moved,
+     // not the ground actually changing height; acting on them would chase itself.
+diff --git a/src/mln/map/map_impl.hpp b/src/mln/map/map_impl.hpp
+index f8e48eade70..3470f175911 100644
+--- a/src/mln/map/map_impl.hpp
++++ b/src/mln/map/map_impl.hpp
+@@ -14,6 +14,9 @@
+ #include <mln/util/size.hpp>
+ #include <mln/tile/tile_operation.hpp>
+ 
++#include <mln/math/angles.hpp>
++#include <mln/util/constants.hpp>
++
+ #include <limits>
+ #include <numbers>
+ 
+@@ -65,6 +68,7 @@ public:
+     void onWillStartRenderingMap() final;
+     void onDidFinishRenderingMap() final;
+     void onTerrainCenterElevationChanged(double elevationMeters) final;
++    void onTerrainPitchLimitChanged(double maxPitchRadians) final;
+     void onStyleImageMissing(const std::string&, const std::function<void()>&) final;
+     void onRemoveUnusedStyleImages(const std::vector<std::string>&) final;
+     void onRegisterShaders(gfx::ShaderRegistry&) final;
+@@ -153,6 +157,17 @@ public:
+     /// is under the sub-metre threshold.
+     bool clampCenterToTerrain(double elevationMeters);
+     bool debugAboveGroundLog = false;
++    /// The maximum pitch the app set (BoundOptions::maxPitch), in degrees; the transform holds
++    /// the lower of it and the terrain's limit while the centre rides the ground.
++    double appMaxPitch = util::rad2deg(util::DEFAULT_PITCH_MAX);
++    /// The steepest pitch keeping the camera and its line of sight out of the terrain, in
++    /// radians, as the renderer last reported it; NaN when nothing limits it.
++    double terrainPitchLimit = std::numeric_limits<double>::quiet_NaN();
++    /// A limit arrived while a camera transition was running; applied once it ends.
++    bool pitchAwaitingTerrainLimit = false;
++    /// Sets the transform's maximum pitch from appMaxPitch and terrainPitchLimit, lowering the
++    /// pitch to it when over. The terrain counts only while the centre rides the ground.
++    void applyMaxPitch();
+ };
+ 
+ // Forward declaration of this method is required for the MapProjection class
+diff --git a/src/mln/map/transform.cpp b/src/mln/map/transform.cpp
+index e90b63fc969..7c92514414e 100644
+--- a/src/mln/map/transform.cpp
++++ b/src/mln/map/transform.cpp
+@@ -183,7 +183,11 @@ void Transform::easeTo(const CameraOptions& inputCamera, const AnimationOptions&
+             LatLng frameLatLng = Projection::unproject(framePoint, state.zoomScale(startZoom));
+             double frameZoom = util::interpolate(startZoom, zoom, t);
+             state.setLatLngZoom(frameLatLng, frameZoom);
+-            state.setCenterAltitude(util::interpolate(startCenterAlt, centerAlt, t));
++            // Only a move that asked for a centre altitude sets one: otherwise it would hold the
++            // altitude it started with, and the centre could not follow the terrain until the end.
++            if (camera.centerAltitude) {
++                state.setCenterAltitude(util::interpolate(startCenterAlt, centerAlt, t));
++            }
+             if (bearing != startBearing) {
+                 state.setBearing(util::wrap(util::interpolate(startBearing, bearing, t), -pi, pi));
+             }
+@@ -196,7 +200,7 @@ void Transform::easeTo(const CameraOptions& inputCamera, const AnimationOptions&
+                                      util::interpolate(startEdgeInsets.right(), padding.right(), t)});
+             }
+             double maxPitch = getMaxPitchForEdgeInsets(state.getEdgeInsets());
+-            if (pitch != startPitch || maxPitch < startPitch) {
++            if (pitch != startPitch || maxPitch < state.getPitch()) {
+                 state.setPitch(std::min(maxPitch, util::interpolate(startPitch, pitch, t)));
+             }
+             if (roll != startRoll) {
+@@ -375,7 +379,9 @@ void Transform::flyTo(const CameraOptions& inputCamera,
+             // Convert to geographic coordinates and set the new viewpoint.
+             LatLng frameLatLng = Projection::unproject(framePoint, startScale);
+             state.setLatLngZoom(frameLatLng, frameZoom);
+-            state.setCenterAltitude(util::interpolate(startCenterAlt, centerAlt, us));
++            if (camera.centerAltitude) {
++                state.setCenterAltitude(util::interpolate(startCenterAlt, centerAlt, us));
++            }
+             if (bearing != startBearing) {
+                 state.setBearing(util::wrap(util::interpolate(startBearing, bearing, k), -pi, pi));
+             }
+@@ -388,8 +394,9 @@ void Transform::flyTo(const CameraOptions& inputCamera,
+                                      util::interpolate(startEdgeInsets.right(), padding.right(), k)});
+             }
+ 
+-            if (pitch != startPitch) {
+-                state.setPitch(util::interpolate(startPitch, pitch, k));
++            const double maxPitch = getMaxPitchForEdgeInsets(state.getEdgeInsets());
++            if (pitch != startPitch || maxPitch < state.getPitch()) {
++                state.setPitch(std::min(maxPitch, util::interpolate(startPitch, pitch, k)));
+             }
+             if (roll != startRoll) {
+                 state.setPitch(util::interpolate(startRoll, roll, k));
+@@ -672,6 +679,10 @@ void Transform::startTransition(const CameraOptions& camera,
+     }
+ }
+ 
++void Transform::setCenterAltitudeInTransition(double altitudeMeters) {
++    state.setCenterAltitude(altitudeMeters);
++}
++
+ bool Transform::inTransition() const {
+     return transitionFrameFn != nullptr;
+ }
+diff --git a/src/mln/map/transform.hpp b/src/mln/map/transform.hpp
+index 6c155b88b25..86f4d8e2e98 100644
+--- a/src/mln/map/transform.hpp
++++ b/src/mln/map/transform.hpp
+@@ -112,6 +112,9 @@ public:
+ 
+     // Transitions
+     bool inTransition() const;
++    /// Sets the centre altitude without cancelling the running transition, which leaves the
++    /// altitude alone unless its camera asked for one: the centre follows the terrain as it moves.
++    void setCenterAltitudeInTransition(double altitudeMeters);
+     void updateTransitions(const TimePoint& now);
+     TimePoint getTransitionStart() const { return transitionStart; }
+     Duration getTransitionDuration() const { return transitionDuration; }
+diff --git a/src/mln/renderer/layers/terrain_layer_tweaker.cpp b/src/mln/renderer/layers/terrain_layer_tweaker.cpp
+index ff008bc887c..98e10aa9262 100644
+--- a/src/mln/renderer/layers/terrain_layer_tweaker.cpp
++++ b/src/mln/renderer/layers/terrain_layer_tweaker.cpp
+@@ -49,6 +49,14 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
+     const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(parameters.state.getLatLng().latitude(),
+                                                                           parameters.state.getZoom());
+     const auto fogDepth = [&](double metres) { return static_cast<float>(metres / metresPerPixel); };
++    // Where the tile cap cut the cover short, the haze is full before the cut, so the terrain
++    // fades into the sky there instead of ending in a wall of skirts.
++    double fogStart = parameters.state.getFogStart();
++    double fogEnd = parameters.state.getFogEnd();
++    if (fogEnd > 0.0 && std::isfinite(terrain->getCoverReachMetres())) {
++        fogEnd = std::min(fogEnd, 0.9 * terrain->getCoverReachMetres());
++        fogStart = std::min(fogStart, 0.5 * fogEnd);
++    }
+ 
+     // Populate layer-level UBO with terrain properties
+     auto& layerUniforms = layerGroup.mutableUniformBuffers();
+@@ -58,8 +66,8 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
+                                                .pad1 = 0.0f,
+                                                .pad2 = 0.0f,
+                                                .fog_color = {fogColor.r, fogColor.g, fogColor.b, fogColor.a},
+-                                               .fog_start = fogDepth(parameters.state.getFogStart()),
+-                                               .fog_end = fogDepth(parameters.state.getFogEnd()),
++                                               .fog_start = fogDepth(fogStart),
++                                               .fog_end = fogDepth(fogEnd),
+                                                .pad3 = 0.0f,
+                                                .pad4 = 0.0f};
+     layerUniforms.createOrUpdate(idTerrainEvaluatedPropsUBO, &propsUBO, context);
+diff --git a/src/mln/renderer/render_terrain.cpp b/src/mln/renderer/render_terrain.cpp
+index 8186746266b..fab4aa2d25d 100644
+--- a/src/mln/renderer/render_terrain.cpp
++++ b/src/mln/renderer/render_terrain.cpp
+@@ -50,6 +50,7 @@
+ #include <mln/gfx/vertex_attribute.hpp> // VertexAttributeArray for the a_instance attribute
+ 
+ #include <algorithm>
++#include <limits>
+ #include <cmath>
+ #include <cstring>
+ #include <functional>
+@@ -175,13 +176,77 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
+     // 1024 px target per cover tile, so a cap on the mesh alone still allocated one for every
+     // tile it dropped.
+     if (updateParameters) {
+-        out = nearestMeshTiles(std::move(out),
+-                               terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles,
+-                               meshTileCapOrigin(state));
++        const auto origin = meshTileCapOrigin(state);
++        auto kept = nearestMeshTiles(out, terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles, origin);
++        // Where the first dropped tile begins, so the fog can be full before the cover ends.
++        double nearestDropped2 = std::numeric_limits<double>::infinity();
++        for (const auto& id : out) {
++            if (!kept.count(id)) {
++                nearestDropped2 = std::min(nearestDropped2, nearestPointDist2(id, origin));
++            }
++        }
++        double reach = std::numeric_limits<double>::infinity();
++        if (std::isfinite(nearestDropped2)) {
++            const double metresPerUnit = util::M2PI * util::EARTH_RADIUS_M *
++                                         std::cos(util::deg2rad(state.getLatLng().latitude()));
++            reach = std::sqrt(nearestDropped2) * metresPerUnit;
++        }
++        // Eased, as the tile set changes in steps: in fast, so nothing past it shows, out slowly.
++        if (!std::isfinite(reach) || !std::isfinite(coverReachMetres)) {
++            coverReachMetres = reach;
++        } else {
++            coverReachMetres = reach < coverReachMetres ? reach : coverReachMetres + 0.1 * (reach - coverReachMetres);
++        }
++        out = std::move(kept);
+     }
+     return out;
+ }
+ 
++double RenderTerrain::clearPitchLimit(const TransformState& state) const {
++    constexpr double noLimit = std::numeric_limits<double>::quiet_NaN();
++    const auto eye = state.getFreeCameraOptions().getLocation();
++    if (!demSource || !eye) {
++        return noLimit;
++    }
++    const LatLng centre = state.getLatLng();
++    const double centreAltitude = state.getCenterAltitude();
++    const double metresPerDegree = util::EARTH_RADIUS_M * M_PI / 180.0;
++    const double dLat = eye->location.latitude() - centre.latitude();
++    const double dLng = eye->location.longitude() - centre.longitude();
++    const double horizontal = std::hypot(dLat * metresPerDegree,
++                                         dLng * metresPerDegree * std::cos(util::deg2rad(centre.latitude())));
++    if (horizontal < 1.0) {
++        return noLimit; // looking straight down: nothing can stand between
++    }
++    // A centre under the ground (sea level, before the clamp has put it back) is the clamp's to
++    // fix; tilting down from there would flatten the view for good.
++    const double groundAtCentre = getElevationForLatLng(centre);
++    if (groundAtCentre != 0.0 && centreAltitude < groundAtCentre - kCameraClearanceM) {
++        return noLimit;
++    }
++    // Only the ground under the eye and just ahead of it: a ridge further along the line of
++    // sight hides what is behind it, as it would from any viewpoint, but ground this close goes
++    // through the near plane and shows the inside of the terrain. Ground h metres from the
++    // centre towards the eye clears the line at a pitch p when ground + margin - centreAltitude
++    // <= h * cot(p), which holds wherever the centre itself is.
++    constexpr int samples = 8;
++    double cotNeeded = 0.0;
++    for (int i = 0; i <= samples; ++i) {
++        const double back = std::min(kCameraLookAheadM, horizontal) * i / samples;
++        const double f = 1.0 - back / horizontal;
++        if (f <= 0.0) {
++            break;
++        }
++        const double ground = getElevationForLatLng(
++            LatLng(centre.latitude() + f * dLat, centre.longitude() + f * dLng));
++        if (ground == 0.0) {
++            continue; // no DEM loaded there: out of view
++        }
++        cotNeeded = std::max(cotNeeded, (ground + kCameraClearanceM - centreAltitude) / (f * horizontal));
++    }
++    return cotNeeded > 0.0 ? std::atan2(1.0, cotNeeded) : noLimit;
++}
++
+ std::array<double, 2> RenderTerrain::meshTileCapOrigin(const TransformState& state) {
+     // The ground under the camera in normalized web-mercator [0,1] (standard projection): the
+     // map centre, moved back along the view by the camera's horizontal distance from it.
+@@ -194,20 +259,26 @@ std::array<double, 2> RenderTerrain::meshTileCapOrigin(const TransformState& sta
+             0.5 - std::log(std::tan(M_PI / 4.0 + latRad / 2.0)) / (2.0 * M_PI) + back * std::cos(compass)};
+ }
+ 
++double RenderTerrain::nearestPointDist2(const UnwrappedTileID& id, const std::array<double, 2>& origin) {
++    const double scale = static_cast<double>(1u << id.canonical.z);
++    const double x0 = static_cast<double>(id.canonical.x) / scale + id.wrap;
++    const double y0 = static_cast<double>(id.canonical.y) / scale;
++    const double dx = std::max({0.0, x0 - origin[0], origin[0] - (x0 + 1.0 / scale)});
++    const double dy = std::max({0.0, y0 - origin[1], origin[1] - (y0 + 1.0 / scale)});
++    return dx * dx + dy * dy;
++}
++
+ std::set<UnwrappedTileID> RenderTerrain::nearestMeshTiles(std::set<UnwrappedTileID> tiles,
+                                                           size_t maxTiles,
+                                                           const std::array<double, 2>& origin) {
+     if (maxTiles == 0 || tiles.size() <= maxTiles) {
+         return tiles;
+     }
+-    const auto tileDist2 = [&](const UnwrappedTileID& id) {
+-        const double scale = static_cast<double>(1u << id.canonical.z);
+-        const double tx = (static_cast<double>(id.canonical.x) + 0.5) / scale + id.wrap;
+-        const double ty = (static_cast<double>(id.canonical.y) + 0.5) / scale;
+-        const double dx = tx - origin[0];
+-        const double dy = ty - origin[1];
+-        return dx * dx + dy * dy;
+-    };
++    // Ranked by the tile's nearest point, not its centre: every tile that begins within some
++    // distance is kept, so the ground is whole out to there and the cover grows outwards from
++    // the camera. By centre, a big far tile could outrank smaller ones in front of it, which
++    // left a hole with a ridge behind it.
++    const auto tileDist2 = [&](const UnwrappedTileID& id) { return nearestPointDist2(id, origin); };
+ 
+     // Ties go by tile ID, so the same view keeps the same tiles from one call to the next.
+     std::vector<UnwrappedTileID> sorted(tiles.begin(), tiles.end());
+diff --git a/src/mln/renderer/render_terrain.hpp b/src/mln/renderer/render_terrain.hpp
+index b77a71bf59d..0a60fb885cb 100644
+--- a/src/mln/renderer/render_terrain.hpp
++++ b/src/mln/renderer/render_terrain.hpp
+@@ -76,11 +76,24 @@ public:
+     std::set<UnwrappedTileID> computeMeshCover(const TransformState& state,
+                                                const std::shared_ptr<UpdateParameters>& updateParameters) const;
+ 
++    /// The steepest pitch, in radians, at which the camera and the first stretch of its line of
++    /// sight towards the centre stay a margin above the rendered terrain; NaN when every pitch
++    /// does or there is no DEM. Ground with no DEM loaded is out of view and does not count.
++    double clearPitchLimit(const TransformState& state) const;
++
+     /// The point the mesh-tile cap measures distance from, in normalized web-mercator [0, 1]:
+     /// the ground under the camera (the map centre when the map is not tilted).
+     static std::array<double, 2> meshTileCapOrigin(const TransformState& state);
+ 
+-    /// The `maxTiles` tiles whose centres lie nearest `origin` (normalized web-mercator), or all
++    /// How far from the ground under the camera, in metres, the capped mesh cover is whole: where
++    /// the first tile the cap dropped begins, eased over frames; infinity when it dropped none.
++    /// The fog is full by then.
++    double getCoverReachMetres() const { return coverReachMetres; }
++
++    /// Squared distance from `origin` (normalized web-mercator) to the nearest point of the tile.
++    static double nearestPointDist2(const UnwrappedTileID& id, const std::array<double, 2>& origin);
++
++    /// The `maxTiles` tiles whose nearest points lie nearest `origin` (normalized web-mercator), or all
+     /// of them when there are no more than that or `maxTiles` is 0. The mesh-tile cap
+     /// (TerrainLoadBudget::maxMeshTiles) that computeMeshCover applies.
+     static std::set<UnwrappedTileID> nearestMeshTiles(std::set<UnwrappedTileID> tiles,
+@@ -311,6 +324,13 @@ public:
+     Immutable<style::Terrain::Impl> impl;
+ 
+ private:
++    /// Metres the line of sight keeps above the terrain at the camera (clearPitchLimit).
++    static constexpr double kCameraClearanceM = 40.0;
++    /// computeMeshCover's last answer for getCoverReachMetres.
++    mutable double coverReachMetres = std::numeric_limits<double>::infinity();
++    /// How far ahead of the camera, in metres, clearPitchLimit looks for ground in the way.
++    static constexpr double kCameraLookAheadM = 400.0;
++
+     /**
+      * @brief Generate terrain mesh geometry
+      *
+diff --git a/src/mln/renderer/renderer_impl.cpp b/src/mln/renderer/renderer_impl.cpp
+index f9a06be815a..939fdce30b3 100644
+--- a/src/mln/renderer/renderer_impl.cpp
++++ b/src/mln/renderer/renderer_impl.cpp
+@@ -8,6 +8,7 @@
+ #include <mln/gfx/renderer_backend.hpp>
+ #include <mln/gfx/renderable.hpp>
+ #include <mln/gfx/upload_pass.hpp>
++#include <mln/math/angles.hpp>
+ #include <mln/renderer/paint_parameters.hpp>
+ #include <mln/renderer/pattern_atlas.hpp>
+ #include <mln/renderer/renderer_observer.hpp>
+@@ -751,6 +752,13 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
+             lastReportedCenterElevation = centerElevation;
+             observer->onTerrainCenterElevationChanged(centerElevation);
+         }
++        const double pitchLimit = terrain->clearPitchLimit(updateParameters->transformState);
++        const bool limitChanged = std::isnan(pitchLimit) != std::isnan(lastReportedPitchLimit) ||
++                                  std::abs(pitchLimit - lastReportedPitchLimit) > util::deg2rad(0.25);
++        if (limitChanged) {
++            lastReportedPitchLimit = pitchLimit;
++            observer->onTerrainPitchLimitChanged(pitchLimit);
++        }
+     }
+ 
+     auto stats = std::make_shared<gfx::RenderingStats>(context.threadSafeCopyRenderingStats());
+diff --git a/src/mln/renderer/renderer_impl.hpp b/src/mln/renderer/renderer_impl.hpp
+index bdeb9d76403..d7d087748fd 100644
+--- a/src/mln/renderer/renderer_impl.hpp
++++ b/src/mln/renderer/renderer_impl.hpp
+@@ -11,6 +11,7 @@
+ 
+ #include <map>
+ #include <memory>
++#include <limits>
+ #include <string>
+ #include <mln/tile/tile_id.hpp>
+ 
+@@ -108,6 +109,7 @@ private:
+     /// Last terrain height reported under the map centre, so an unchanged surface does not
+     /// post an observer message every frame.
+     double lastReportedCenterElevation = 0.0;
++    double lastReportedPitchLimit = std::numeric_limits<double>::quiet_NaN();
+ 
+     enum class RenderState {
+         Never,
+diff --git a/src/mln/util/tile_cover.cpp b/src/mln/util/tile_cover.cpp
+index 4ee359b163f..25bc52abddf 100644
+--- a/src/mln/util/tile_cover.cpp
++++ b/src/mln/util/tile_cover.cpp
+@@ -392,6 +392,28 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+     }
+ 
+     // Sort results by distance
++    // Over terrain, the tile under the map centre is covered even when it is out of view: a
++    // camera that sank below the ground looks past it, so its height never loaded and the
++    // centre could not be put back on the ground (Map::setCenterClampedToGround).
++    if (state.elevationProvider) {
++        const auto centre = TileCoordinate::fromLatLng(z, transform.getLatLng()).p;
++        const auto cx = static_cast<int64_t>(std::floor(centre.x));
++        const auto cy = static_cast<int64_t>(std::floor(centre.y));
++        const auto n = static_cast<int64_t>(numTiles);
++        if (cy >= 0 && cy < n) {
++            const auto wrap = static_cast<int16_t>(cx >= 0 ? cx / n : (cx - n + 1) / n);
++            const auto x = static_cast<uint32_t>(cx - wrap * n);
++            const auto y = static_cast<uint32_t>(cy);
++            const bool covered = std::any_of(result.begin(), result.end(), [&](const ResultTile& tile) {
++                const auto& c = tile.id.canonical;
++                return tile.id.wrap == wrap && c.z <= z && (x >> (z - c.z)) == c.x && (y >> (z - c.z)) == c.y;
++            });
++            if (!covered) {
++                result.push_back({OverscaledTileID{z, wrap, z, x, y}, 0.0});
++            }
++        }
++    }
++
+     std::sort(
+         result.begin(), result.end(), [](const ResultTile& a, const ResultTile& b) { return a.sqrDist < b.sqrDist; });
+ 
+diff --git a/test/renderer/terrain_mesh_cover.test.cpp b/test/renderer/terrain_mesh_cover.test.cpp
+index 95b96fbd754..eeb6acf7374 100644
+--- a/test/renderer/terrain_mesh_cover.test.cpp
++++ b/test/renderer/terrain_mesh_cover.test.cpp
+@@ -51,6 +51,14 @@ TEST(TerrainMeshCover, CapKeepsTheTilesNearestTheOrigin) {
+     EXPECT_EQ(middle, RenderTerrain::nearestMeshTiles(wholeZ2(), 4, worldCentre));
+ }
+ 
++TEST(TerrainMeshCover, CapKeepsTheTilesThatBeginNearest) {
++    // The z1 tile reaches the origin, though its centre is farther than the z3 tile's; ranked
++    // by centre it would be dropped and leave a hole between the origin and the z3 tile.
++    const UnwrappedTileID big(0, CanonicalTileID(1, 0, 0));
++    const UnwrappedTileID small(0, CanonicalTileID(3, 5, 4));
++    EXPECT_EQ(std::set<UnwrappedTileID>{big}, RenderTerrain::nearestMeshTiles({big, small}, 1, worldCentre));
++}
++
+ TEST(TerrainMeshCover, CapBreaksTiesByTileID) {
+     // Past the middle four, the eight edge tiles beside them lie equally far from the centre;
+     // the two with the lowest IDs stay, so the same view always keeps the same tiles.
