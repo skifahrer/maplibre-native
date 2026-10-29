@@ -1,0 +1,113 @@
+diff --git a/include/mln/renderer/terrain_cache_policy.hpp b/include/mln/renderer/terrain_cache_policy.hpp
+index 35b30da792f..e8b338408ee 100644
+--- a/include/mln/renderer/terrain_cache_policy.hpp
++++ b/include/mln/renderer/terrain_cache_policy.hpp
+@@ -1,5 +1,8 @@
+ #pragma once
+ 
++#include <algorithm>
++#include <array>
++#include <cmath>
+ #include <cstdint>
+ #include <vector>
+ 
+@@ -28,6 +31,23 @@ inline bool shouldRebind(const DEMBinding& current, const DEMBinding& available)
+     return available.tier == 1 && available.demZoom > current.demZoom;
+ }
+ 
++/// The RGB texel a DEM decodes to 0 m, for its unpack vector (r * x + g * y + b * z - w):
++/// (1, 134, 160) for Mapbox, (128, 0, 0) for Terrarium.
++inline std::array<uint8_t, 3> seaLevelTexel(const std::array<float, 4>& unpack) {
++    std::array<uint8_t, 3> texel{};
++    double rest = unpack[3];
++    for (std::size_t i = 0; i < 3; ++i) {
++        if (unpack[i] <= 0.0f) {
++            continue;
++        }
++        const double steps = i == 2 ? std::round(rest / unpack[i]) : std::floor(rest / unpack[i]);
++        const double value = std::clamp(steps, 0.0, 255.0);
++        texel[i] = static_cast<uint8_t>(value);
++        rest -= value * unpack[i];
++    }
++    return texel;
++}
++
+ /// How one draped layer group covers a drape target.
+ struct DrapeGroupFallback {
+     int32_t layerIndex = 0;
+diff --git a/src/mln/renderer/render_terrain.cpp b/src/mln/renderer/render_terrain.cpp
+index 4dbaabbc82b..befdc379967 100644
+--- a/src/mln/renderer/render_terrain.cpp
++++ b/src/mln/renderer/render_terrain.cpp
+@@ -333,11 +333,9 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
+         return;
+     }
+ 
+-    // Get tiles from the DEM source
++    // Get tiles from the DEM source. None in view still builds the mesh, flat on the
++    // placeholder, or nothing draped is drawn until a DEM tile arrives.
+     auto renderTiles = demSource->getRawRenderTiles();
+-    if (renderTiles->empty()) {
+-        return;
+-    }
+ 
+     // Cast to LayerGroup for addDrawable
+     auto* lg = static_cast<LayerGroup*>(layerGroup.get());
+@@ -830,15 +828,26 @@ std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const Un
+ }
+ 
+ const std::shared_ptr<gfx::Texture2D>& RenderTerrain::getPlaceholderDEMTexture(gfx::Context& context) {
++    // One texel that decodes to sea level in the source's encoding. An all-zero texel decodes
++    // to -10000 m (Mapbox) or -32768 m (Terrarium): the ground of every tile still waiting
++    // for its DEM, or outside the DEM's coverage, sank kilometres under the camera, past the
++    // far plane, and the map there showed only its labels.
+     if (!placeholderDEMTexture) {
+-        auto image = std::make_shared<PremultipliedImage>(Size{1, 1});
+-        std::memset(image->data.get(), 0, image->bytes());
+         placeholderDEMTexture = context.createTexture2D();
+-        placeholderDEMTexture->setImage(image);
+         placeholderDEMTexture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Nearest,
+                                                         .wrapU = gfx::TextureWrapType::Clamp,
+                                                         .wrapV = gfx::TextureWrapType::Clamp});
+     }
++    if (placeholderUnpack != demUnpackVector) {
++        placeholderUnpack = demUnpackVector;
++        const auto texel = terrain::seaLevelTexel(demUnpackVector);
++        auto image = std::make_shared<PremultipliedImage>(Size{1, 1});
++        image->data[0] = texel[0];
++        image->data[1] = texel[1];
++        image->data[2] = texel[2];
++        image->data[3] = 255;
++        placeholderDEMTexture->setImage(image);
++    }
+     return placeholderDEMTexture;
+ }
+ 
+diff --git a/src/mln/renderer/render_terrain.hpp b/src/mln/renderer/render_terrain.hpp
+index ec0783bfb90..cc0580fdce2 100644
+--- a/src/mln/renderer/render_terrain.hpp
++++ b/src/mln/renderer/render_terrain.hpp
+@@ -458,6 +458,7 @@ private:
+ 
+     // See getPlaceholderDEMTexture
+     std::shared_ptr<gfx::Texture2D> placeholderDEMTexture;
++    std::array<float, 4> placeholderUnpack{};
+ 
+     // Layer index (terrain renders early in 3D pass, use negative index)
+     static constexpr int32_t TERRAIN_LAYER_INDEX = -1000;
+diff --git a/test/renderer/terrain_cache_policy.test.cpp b/test/renderer/terrain_cache_policy.test.cpp
+index d53c7bef802..56c544d6c53 100644
+--- a/test/renderer/terrain_cache_policy.test.cpp
++++ b/test/renderer/terrain_cache_policy.test.cpp
+@@ -67,3 +67,11 @@ TEST(TerrainCachePolicy, DifferentGroupSetsAreNotComparable) {
+     renumbered[1].layerIndex = 7;
+     EXPECT_FALSE(drapeFallbackStrictlyWorse(renumbered, groups({0, 0})));
+ }
++
++TEST(TerrainCachePolicy, PlaceholderTexelIsSeaLevel) {
++    // An all-zero texel decoded to -10000 m and sank the ground of a tile with no DEM out of view.
++    const std::array<float, 4> mapbox{{6553.6f, 25.6f, 0.1f, 10000.0f}};
++    const std::array<float, 4> terrarium{{256.0f, 1.0f, 1.0f / 256.0f, 32768.0f}};
++    EXPECT_EQ(seaLevelTexel(mapbox), (std::array<uint8_t, 3>{{1, 134, 160}}));
++    EXPECT_EQ(seaLevelTexel(terrarium), (std::array<uint8_t, 3>{{128, 0, 0}}));
++}
