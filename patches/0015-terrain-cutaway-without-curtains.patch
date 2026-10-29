@@ -1,0 +1,108 @@
+diff --git a/include/mln/shaders/mtl/terrain.hpp b/include/mln/shaders/mtl/terrain.hpp
+index 94ab04d2a2b..5e5c4731f8d 100644
+--- a/include/mln/shaders/mtl/terrain.hpp
++++ b/include/mln/shaders/mtl/terrain.hpp
+@@ -72,6 +72,7 @@ struct FragmentStage {
+     float elevation;
+     float depth; // view depth, for the fog
+     float2 clip_yw; // clip y and w, for the cutaway in front of the centre
++    float skirt;    // 1 on the curtain below a tile edge
+ };
+ 
+ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+@@ -107,6 +108,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+         .elevation = elevation,
+         .depth     = position.w,
+         .clip_yw   = position.yw,
++        .skirt     = float(vertx.pos.z),
+     };
+ }
+ 
+@@ -126,7 +128,9 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
+     // swapped about the view). Sample uv.y directly on Metal.
+     // Terrain nearer than the centre and above it on screen stands between the camera and
+     // what it looks at: it is not drawn, so the view goes through the mountain in the way.
+-    if (props.cut_depth > 0.0 && in.depth < props.cut_depth && in.clip_yw.x / in.clip_yw.y > props.cut_ndc_y) {
++    // The curtains under the cut tiles' edges go with it, or they stand in the hole as streaks.
++    if (props.cut_depth > 0.0 && (in.depth < props.cut_depth || in.skirt > 0.5) &&
++        in.clip_yw.x / in.clip_yw.y > props.cut_ndc_y) {
+         discard_fragment();
+     }
+     float4 color = mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
+diff --git a/include/mln/shaders/mtl/terrain_depth.hpp b/include/mln/shaders/mtl/terrain_depth.hpp
+index 2bc6bffc3b1..0e629b06520 100644
+--- a/include/mln/shaders/mtl/terrain_depth.hpp
++++ b/include/mln/shaders/mtl/terrain_depth.hpp
+@@ -30,6 +30,7 @@ struct FragmentStage {
+     float4 position [[position, invariant]];
+     float distance;
+     float2 clip_yw;
++    float skirt;
+ };
+ 
+ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+@@ -55,13 +56,15 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+         .position = position,
+         .distance = position.w,
+         .clip_yw  = position.yw,
++        .skirt    = float(vertx.pos.z),
+     };
+ }
+ 
+ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
+                             device const TerrainEvaluatedPropsUBO& props [[buffer(idTerrainEvaluatedPropsUBO)]]) {
+     // The cutaway of the terrain shader, so labels behind the cut mountain show
+-    if (props.cut_depth > 0.0 && in.distance < props.cut_depth && in.clip_yw.x / in.clip_yw.y > props.cut_ndc_y) {
++    if (props.cut_depth > 0.0 && (in.distance < props.cut_depth || in.skirt > 0.5) &&
++        in.clip_yw.x / in.clip_yw.y > props.cut_ndc_y) {
+         discard_fragment();
+     }
+     // Pack the camera distance / 2^24 into RGBA8, unpacked by unpack_distance(); the
+diff --git a/src/mln/renderer/render_terrain.cpp b/src/mln/renderer/render_terrain.cpp
+index befdc379967..53f49e8cdca 100644
+--- a/src/mln/renderer/render_terrain.cpp
++++ b/src/mln/renderer/render_terrain.cpp
+@@ -206,6 +206,7 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
+ bool RenderTerrain::sightBlocked(const TransformState& state) const {
+     const auto eye = state.getFreeCameraOptions().getLocation();
+     if (!demSource || !eye) {
++        cutting = false;
+         return false;
+     }
+     const LatLng centre = state.getLatLng();
+@@ -214,14 +215,18 @@ bool RenderTerrain::sightBlocked(const TransformState& state) const {
+     const double dLng = eye->location.longitude() - centre.longitude();
+     // The last tenth before the centre is the slope it stands on, not a mountain in the way.
+     constexpr int samples = 32;
++    double highest = -std::numeric_limits<double>::infinity();
+     for (int i = 2; i < samples; ++i) {
+         const double f = static_cast<double>(i) / samples;
+         const double ground = getElevationForLatLng(LatLng(centre.latitude() + f * dLat, centre.longitude() + f * dLng));
+-        if (ground != 0.0 && ground > centreAltitude + f * (eye->altitude - centreAltitude)) {
+-            return true;
++        if (ground != 0.0) {
++            highest = std::max(highest, ground - (centreAltitude + f * (eye->altitude - centreAltitude)));
+         }
+     }
+-    return false;
++    // On once the ground rises above the line, off only once it is well clear: a ridge that
++    // grazes the line would otherwise switch the cut on and off from one frame to the next.
++    cutting = cutting ? highest > -kCutReleaseM : highest > 0.0;
++    return cutting;
+ }
+ 
+ std::array<double, 2> RenderTerrain::meshTileCapOrigin(const TransformState& state) {
+diff --git a/src/mln/renderer/render_terrain.hpp b/src/mln/renderer/render_terrain.hpp
+index cc0580fdce2..28d036fa660 100644
+--- a/src/mln/renderer/render_terrain.hpp
++++ b/src/mln/renderer/render_terrain.hpp
+@@ -325,6 +325,9 @@ public:
+ private:
+     /// computeMeshCover's last answer for getCoverReachMetres.
+     mutable double coverReachMetres = std::numeric_limits<double>::infinity();
++    /// sightBlocked's last answer, which it holds until the ground is kCutReleaseM below the line.
++    mutable bool cutting = false;
++    static constexpr double kCutReleaseM = 30.0;
+ 
+     /**
+      * @brief Generate terrain mesh geometry
