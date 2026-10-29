@@ -325,6 +325,9 @@ public:
 private:
     /// computeMeshCover's last answer for getCoverReachMetres.
     mutable double coverReachMetres = std::numeric_limits<double>::infinity();
+    /// sightBlocked's last answer, which it holds until the ground is kCutReleaseM below the line.
+    mutable bool cutting = false;
+    static constexpr double kCutReleaseM = 30.0;
 
     /**
      * @brief Generate terrain mesh geometry

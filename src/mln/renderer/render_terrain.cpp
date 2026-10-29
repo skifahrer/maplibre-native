@@ -206,6 +206,7 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
 bool RenderTerrain::sightBlocked(const TransformState& state) const {
     const auto eye = state.getFreeCameraOptions().getLocation();
     if (!demSource || !eye) {
+        cutting = false;
         return false;
     }
     const LatLng centre = state.getLatLng();
@@ -214,14 +215,18 @@ bool RenderTerrain::sightBlocked(const TransformState& state) const {
     const double dLng = eye->location.longitude() - centre.longitude();
     // The last tenth before the centre is the slope it stands on, not a mountain in the way.
     constexpr int samples = 32;
+    double highest = -std::numeric_limits<double>::infinity();
     for (int i = 2; i < samples; ++i) {
         const double f = static_cast<double>(i) / samples;
         const double ground = getElevationForLatLng(LatLng(centre.latitude() + f * dLat, centre.longitude() + f * dLng));
-        if (ground != 0.0 && ground > centreAltitude + f * (eye->altitude - centreAltitude)) {
-            return true;
+        if (ground != 0.0) {
+            highest = std::max(highest, ground - (centreAltitude + f * (eye->altitude - centreAltitude)));
         }
     }
-    return false;
+    // On once the ground rises above the line, off only once it is well clear: a ridge that
+    // grazes the line would otherwise switch the cut on and off from one frame to the next.
+    cutting = cutting ? highest > -kCutReleaseM : highest > 0.0;
+    return cutting;
 }
 
 std::array<double, 2> RenderTerrain::meshTileCapOrigin(const TransformState& state) {

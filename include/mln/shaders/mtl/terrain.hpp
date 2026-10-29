@@ -72,6 +72,7 @@ struct FragmentStage {
     float elevation;
     float depth; // view depth, for the fog
     float2 clip_yw; // clip y and w, for the cutaway in front of the centre
+    float skirt;    // 1 on the curtain below a tile edge
 };
 
 FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
@@ -107,6 +108,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
         .elevation = elevation,
         .depth     = position.w,
         .clip_yw   = position.yw,
+        .skirt     = float(vertx.pos.z),
     };
 }
 
@@ -126,7 +128,9 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     // swapped about the view). Sample uv.y directly on Metal.
     // Terrain nearer than the centre and above it on screen stands between the camera and
     // what it looks at: it is not drawn, so the view goes through the mountain in the way.
-    if (props.cut_depth > 0.0 && in.depth < props.cut_depth && in.clip_yw.x / in.clip_yw.y > props.cut_ndc_y) {
+    // The curtains under the cut tiles' edges go with it, or they stand in the hole as streaks.
+    if (props.cut_depth > 0.0 && (in.depth < props.cut_depth || in.skirt > 0.5) &&
+        in.clip_yw.x / in.clip_yw.y > props.cut_ndc_y) {
         discard_fragment();
     }
     float4 color = mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
