@@ -1,4 +1,5 @@
 #include <mln/renderer/render_terrain.hpp>
+#include <mln/gfx/cull_face_mode.hpp>
 #include <mln/renderer/update_parameters.hpp>
 #include <mln/renderer/render_source.hpp>
 #include <mln/renderer/render_tile.hpp>
@@ -202,49 +203,25 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     return out;
 }
 
-double RenderTerrain::clearPitchLimit(const TransformState& state) const {
-    constexpr double noLimit = std::numeric_limits<double>::quiet_NaN();
+bool RenderTerrain::sightBlocked(const TransformState& state) const {
     const auto eye = state.getFreeCameraOptions().getLocation();
     if (!demSource || !eye) {
-        return noLimit;
+        return false;
     }
     const LatLng centre = state.getLatLng();
     const double centreAltitude = state.getCenterAltitude();
-    const double metresPerDegree = util::EARTH_RADIUS_M * M_PI / 180.0;
     const double dLat = eye->location.latitude() - centre.latitude();
     const double dLng = eye->location.longitude() - centre.longitude();
-    const double horizontal = std::hypot(dLat * metresPerDegree,
-                                         dLng * metresPerDegree * std::cos(util::deg2rad(centre.latitude())));
-    if (horizontal < 1.0) {
-        return noLimit; // looking straight down: nothing can stand between
-    }
-    // A centre under the ground (sea level, before the clamp has put it back) is the clamp's to
-    // fix; tilting down from there would flatten the view for good.
-    const double groundAtCentre = getElevationForLatLng(centre);
-    if (groundAtCentre != 0.0 && centreAltitude < groundAtCentre - kCameraClearanceM) {
-        return noLimit;
-    }
-    // Only the ground under the eye and just ahead of it: a ridge further along the line of
-    // sight hides what is behind it, as it would from any viewpoint, but ground this close goes
-    // through the near plane and shows the inside of the terrain. Ground h metres from the
-    // centre towards the eye clears the line at a pitch p when ground + margin - centreAltitude
-    // <= h * cot(p), which holds wherever the centre itself is.
-    constexpr int samples = 8;
-    double cotNeeded = 0.0;
-    for (int i = 0; i <= samples; ++i) {
-        const double back = std::min(kCameraLookAheadM, horizontal) * i / samples;
-        const double f = 1.0 - back / horizontal;
-        if (f <= 0.0) {
-            break;
+    // The last tenth before the centre is the slope it stands on, not a mountain in the way.
+    constexpr int samples = 32;
+    for (int i = 2; i < samples; ++i) {
+        const double f = static_cast<double>(i) / samples;
+        const double ground = getElevationForLatLng(LatLng(centre.latitude() + f * dLat, centre.longitude() + f * dLng));
+        if (ground != 0.0 && ground > centreAltitude + f * (eye->altitude - centreAltitude)) {
+            return true;
         }
-        const double ground = getElevationForLatLng(
-            LatLng(centre.latitude() + f * dLat, centre.longitude() + f * dLng));
-        if (ground == 0.0) {
-            continue; // no DEM loaded there: out of view
-        }
-        cotNeeded = std::max(cotNeeded, (ground + kCameraClearanceM - centreAltitude) / (f * horizontal));
     }
-    return cotNeeded > 0.0 ? std::atan2(1.0, cotNeeded) : noLimit;
+    return false;
 }
 
 std::array<double, 2> RenderTerrain::meshTileCapOrigin(const TransformState& state) {
@@ -1153,6 +1130,8 @@ std::unique_ptr<gfx::Drawable> RenderTerrain::createDrawableForTile(gfx::Context
     // forward order (high index = front), unlike Opaque which renders reversed.
     builder->setShader(terrainShader);
     builder->setRenderPass(RenderPass::Translucent);
+    // Only the upper side of the surface: from inside a mountain the camera sees through it.
+    builder->setCullFaceMode(gfx::CullFaceMode::backCCW());
     if (depthPass) {
         // The depth pass renders packed depth with real depth testing so the
         // nearest surface wins, into the terrain depth target (renderDepth)
@@ -1400,8 +1379,8 @@ void RenderTerrain::updateInstancedDepthUBO(PaintParameters& parameters) {
                                                         .fog_color = {0.0f, 0.0f, 0.0f, 0.0f},
                                                         .fog_start = 0.0f,
                                                         .fog_end = 0.0f,
-                                                        .pad3 = 0.0f,
-                                                        .pad4 = 0.0f};
+                                                        .cut_depth = 0.0f,
+                                                        .cut_ndc_y = 0.0f};
 
     depthLg->visitDrawables([&](gfx::Drawable& drawable) {
         auto& u = drawable.mutableUniformBuffers();

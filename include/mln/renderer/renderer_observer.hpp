@@ -75,11 +75,6 @@ public:
     /// (Map::setCenterClampedToGround) learns of it here, one frame behind.
     virtual void onTerrainCenterElevationChanged(double /*elevationMeters*/) {}
 
-    /// The steepest pitch, in radians, that keeps the camera and the ground just ahead of it
-    /// out of the rendered terrain; NaN when every pitch does. A map that keeps its camera out
-    /// of the ground (Map::setCenterClampedToGround) caps its pitch at it, one frame behind.
-    virtual void onTerrainPitchLimitChanged(double /*maxPitchRadians*/) {}
-
     /// Style is missing an image
     using StyleImageMissingCallback = std::function<void()>;
     virtual void onStyleImageMissing(const std::string&, const StyleImageMissingCallback& done) { done(); }

@@ -14,8 +14,6 @@
 #include <mln/util/size.hpp>
 #include <mln/tile/tile_operation.hpp>
 
-#include <mln/math/angles.hpp>
-#include <mln/util/constants.hpp>
 
 #include <limits>
 #include <numbers>
@@ -68,7 +66,6 @@ public:
     void onWillStartRenderingMap() final;
     void onDidFinishRenderingMap() final;
     void onTerrainCenterElevationChanged(double elevationMeters) final;
-    void onTerrainPitchLimitChanged(double maxPitchRadians) final;
     void onStyleImageMissing(const std::string&, const std::function<void()>&) final;
     void onRemoveUnusedStyleImages(const std::vector<std::string>&) final;
     void onRegisterShaders(gfx::ShaderRegistry&) final;
@@ -157,17 +154,6 @@ public:
     /// is under the sub-metre threshold.
     bool clampCenterToTerrain(double elevationMeters);
     bool debugAboveGroundLog = false;
-    /// The maximum pitch the app set (BoundOptions::maxPitch), in degrees; the transform holds
-    /// the lower of it and the terrain's limit while the centre rides the ground.
-    double appMaxPitch = util::rad2deg(util::DEFAULT_PITCH_MAX);
-    /// The steepest pitch keeping the camera and its line of sight out of the terrain, in
-    /// radians, as the renderer last reported it; NaN when nothing limits it.
-    double terrainPitchLimit = std::numeric_limits<double>::quiet_NaN();
-    /// A limit arrived while a camera transition was running; applied once it ends.
-    bool pitchAwaitingTerrainLimit = false;
-    /// Sets the transform's maximum pitch from appMaxPitch and terrainPitchLimit, lowering the
-    /// pitch to it when over. The terrain counts only while the centre rides the ground.
-    void applyMaxPitch();
 };
 
 // Forward declaration of this method is required for the MapProjection class

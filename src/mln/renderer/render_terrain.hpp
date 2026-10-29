@@ -76,10 +76,9 @@ public:
     std::set<UnwrappedTileID> computeMeshCover(const TransformState& state,
                                                const std::shared_ptr<UpdateParameters>& updateParameters) const;
 
-    /// The steepest pitch, in radians, at which the camera and the first stretch of its line of
-    /// sight towards the centre stay a margin above the rendered terrain; NaN when every pitch
-    /// does or there is no DEM. Ground with no DEM loaded is out of view and does not count.
-    double clearPitchLimit(const TransformState& state) const;
+    /// Whether rendered terrain rises above the line from the camera to the map centre, so a
+    /// mountain stands between them. Ground with no DEM loaded is out of view and does not count.
+    bool sightBlocked(const TransformState& state) const;
 
     /// The point the mesh-tile cap measures distance from, in normalized web-mercator [0, 1]:
     /// the ground under the camera (the map centre when the map is not tilted).
@@ -324,12 +323,8 @@ public:
     Immutable<style::Terrain::Impl> impl;
 
 private:
-    /// Metres the line of sight keeps above the terrain at the camera (clearPitchLimit).
-    static constexpr double kCameraClearanceM = 40.0;
     /// computeMeshCover's last answer for getCoverReachMetres.
     mutable double coverReachMetres = std::numeric_limits<double>::infinity();
-    /// How far ahead of the camera, in metres, clearPitchLimit looks for ground in the way.
-    static constexpr double kCameraLookAheadM = 400.0;
 
     /**
      * @brief Generate terrain mesh geometry

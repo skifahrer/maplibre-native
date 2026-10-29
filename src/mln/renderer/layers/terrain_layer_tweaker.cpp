@@ -58,6 +58,17 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
         fogStart = std::min(fogStart, 0.5 * fogEnd);
     }
 
+    // The cutaway: while a mountain stands between the camera and the centre, terrain nearer
+    // than the centre and above it on screen is not drawn. A margin keeps the centre's slope.
+    const float cutDepth = terrain->sightBlocked(parameters.state)
+                               ? 0.9f * parameters.state.getCameraToCenterDistance()
+                               : 0.0f;
+    const auto size = parameters.state.getSize();
+    const float cutNdcY = size.height > 0
+                              ? static_cast<float>(-(parameters.state.getEdgeInsets().top() - parameters.state.getEdgeInsets().bottom()) /
+                                                   size.height)
+                              : 0.0f;
+
     // Populate layer-level UBO with terrain properties
     auto& layerUniforms = layerGroup.mutableUniformBuffers();
     const TerrainEvaluatedPropsUBO propsUBO = {.unpack = terrain->getDEMUnpackVector(),
@@ -68,8 +79,8 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
                                                .fog_color = {fogColor.r, fogColor.g, fogColor.b, fogColor.a},
                                                .fog_start = fogDepth(fogStart),
                                                .fog_end = fogDepth(fogEnd),
-                                               .pad3 = 0.0f,
-                                               .pad4 = 0.0f};
+                                               .cut_depth = cutDepth,
+                                               .cut_ndc_y = cutNdcY};
     layerUniforms.createOrUpdate(idTerrainEvaluatedPropsUBO, &propsUBO, context);
 
 #if MLN_UBO_CONSOLIDATION

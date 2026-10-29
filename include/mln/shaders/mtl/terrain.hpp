@@ -41,8 +41,8 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
     /* 32 */ float4 fog_color;
     /* 48 */ float fog_start;
     /* 52 */ float fog_end;
-    /* 56 */ float pad3;
-    /* 60 */ float pad4;
+    /* 56 */ float cut_depth;
+    /* 60 */ float cut_ndc_y;
     /* 64 */
 };
 static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64, "wrong size");
@@ -71,6 +71,7 @@ struct FragmentStage {
     float2 uv;
     float elevation;
     float depth; // view depth, for the fog
+    float2 clip_yw; // clip y and w, for the cutaway in front of the centre
 };
 
 FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
@@ -105,6 +106,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
         .uv        = uv,
         .elevation = elevation,
         .depth     = position.w,
+        .clip_yw   = position.yw,
     };
 }
 
@@ -122,6 +124,11 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     // 1.0 - uv.y. Metal's NDC is Y-up, so the RTT is stored upright and the V must NOT
     // be flipped here - sampling 1.0 - uv.y flips the draped map vertically (north/south
     // swapped about the view). Sample uv.y directly on Metal.
+    // Terrain nearer than the centre and above it on screen stands between the camera and
+    // what it looks at: it is not drawn, so the view goes through the mountain in the way.
+    if (props.cut_depth > 0.0 && in.depth < props.cut_depth && in.clip_yw.x / in.clip_yw.y > props.cut_ndc_y) {
+        discard_fragment();
+    }
     float4 color = mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
 
     // Fog: from fog_start to fog_end the surface fades into the fog colour, straight (not

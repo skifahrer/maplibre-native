@@ -142,10 +142,6 @@ void Map::Impl::onUpdate() {
         clampCenterToTerrain(terrainCenterElevation);
     }
 
-    if (pitchAwaitingTerrainLimit && !transform.inTransition()) {
-        applyMaxPitch();
-    }
-
     if (centerAwaitingTerrainAnchor && !transform.inTransition()) {
         centerAwaitingTerrainAnchor = false;
         if (centerClampedToGround && style->impl->getTerrain() && !std::isnan(terrainCenterElevation)) {
@@ -442,10 +438,6 @@ void Map::Impl::noteTerrainRemoval() {
     } else if (hasTerrain) {
         centerAwaitingSeaLevel = false;
     }
-    if (hadTerrain && !hasTerrain) {
-        terrainPitchLimit = std::numeric_limits<double>::quiet_NaN();
-        pitchAwaitingTerrainLimit = true;
-    }
     hadTerrain = hasTerrain;
 }
 
@@ -479,29 +471,6 @@ void Map::Impl::onTerrainCenterElevationChanged(double elevationMeters) {
         return;
     }
     if (clampCenterToTerrain(elevationMeters)) {
-        onUpdate();
-    }
-}
-
-void Map::Impl::onTerrainPitchLimitChanged(double maxPitchRadians) {
-    terrainPitchLimit = maxPitchRadians;
-    applyMaxPitch();
-}
-
-void Map::Impl::applyMaxPitch() {
-    const bool limited = centerClampedToGround && style->impl->getTerrain() && !std::isnan(terrainPitchLimit);
-    const double maxPitch = limited ? std::min(appMaxPitch, util::rad2deg(terrainPitchLimit)) : appMaxPitch;
-    transform.setMaxPitch(maxPitch);
-    // A running transition clamps its own pitch to the maximum each frame; jumping would end it.
-    if (transform.inTransition()) {
-        pitchAwaitingTerrainLimit = true;
-        onUpdate();
-        return;
-    }
-    pitchAwaitingTerrainLimit = false;
-    const double allowed = util::rad2deg(transform.getState().getMaxPitch());
-    if (util::rad2deg(transform.getPitch()) > allowed + 0.01) {
-        transform.jumpTo(CameraOptions().withPitch(allowed));
         onUpdate();
     }
 }

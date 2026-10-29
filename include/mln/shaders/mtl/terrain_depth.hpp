@@ -29,6 +29,7 @@ struct VertexStage {
 struct FragmentStage {
     float4 position [[position, invariant]];
     float distance;
+    float2 clip_yw;
 };
 
 FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
@@ -53,10 +54,16 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     return {
         .position = position,
         .distance = position.w,
+        .clip_yw  = position.yw,
     };
 }
 
-half4 fragment fragmentMain(FragmentStage in [[stage_in]]) {
+half4 fragment fragmentMain(FragmentStage in [[stage_in]],
+                            device const TerrainEvaluatedPropsUBO& props [[buffer(idTerrainEvaluatedPropsUBO)]]) {
+    // The cutaway of the terrain shader, so labels behind the cut mountain show
+    if (props.cut_depth > 0.0 && in.distance < props.cut_depth && in.clip_yw.x / in.clip_yw.y > props.cut_ndc_y) {
+        discard_fragment();
+    }
     // Pack the camera distance / 2^24 into RGBA8, unpacked by unpack_distance(); the
     // white clear colour unpacks as farther than any terrain
     const float depth = in.distance / 16777216.0;

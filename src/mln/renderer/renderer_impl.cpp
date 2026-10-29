@@ -752,13 +752,6 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             lastReportedCenterElevation = centerElevation;
             observer->onTerrainCenterElevationChanged(centerElevation);
         }
-        const double pitchLimit = terrain->clearPitchLimit(updateParameters->transformState);
-        const bool limitChanged = std::isnan(pitchLimit) != std::isnan(lastReportedPitchLimit) ||
-                                  std::abs(pitchLimit - lastReportedPitchLimit) > util::deg2rad(0.25);
-        if (limitChanged) {
-            lastReportedPitchLimit = pitchLimit;
-            observer->onTerrainPitchLimitChanged(pitchLimit);
-        }
     }
 
     auto stats = std::make_shared<gfx::RenderingStats>(context.threadSafeCopyRenderingStats());

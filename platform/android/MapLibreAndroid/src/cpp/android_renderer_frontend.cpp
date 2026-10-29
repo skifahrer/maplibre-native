@@ -66,10 +66,6 @@ public:
         delegate.invoke(&RendererObserver::onTerrainCenterElevationChanged, elevationMeters);
     }
 
-    void onTerrainPitchLimitChanged(double maxPitchRadians) override {
-        delegate.invoke(&RendererObserver::onTerrainPitchLimitChanged, maxPitchRadians);
-    }
-
     void onStyleImageMissing(const std::string& id, const StyleImageMissingCallback& done) override {
         delegate.invoke(&RendererObserver::onStyleImageMissing, id, done);
     }
