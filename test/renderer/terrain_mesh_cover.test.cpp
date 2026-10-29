@@ -51,6 +51,14 @@ TEST(TerrainMeshCover, CapKeepsTheTilesNearestTheOrigin) {
     EXPECT_EQ(middle, RenderTerrain::nearestMeshTiles(wholeZ2(), 4, worldCentre));
 }
 
+TEST(TerrainMeshCover, CapKeepsTheTilesThatBeginNearest) {
+    // The z1 tile reaches the origin, though its centre is farther than the z3 tile's; ranked
+    // by centre it would be dropped and leave a hole between the origin and the z3 tile.
+    const UnwrappedTileID big(0, CanonicalTileID(1, 0, 0));
+    const UnwrappedTileID small(0, CanonicalTileID(3, 5, 4));
+    EXPECT_EQ(std::set<UnwrappedTileID>{big}, RenderTerrain::nearestMeshTiles({big, small}, 1, worldCentre));
+}
+
 TEST(TerrainMeshCover, CapBreaksTiesByTileID) {
     // Past the middle four, the eight edge tiles beside them lie equally far from the centre;
     // the two with the lowest IDs stay, so the same view always keeps the same tiles.

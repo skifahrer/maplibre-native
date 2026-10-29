@@ -392,6 +392,28 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     }
 
     // Sort results by distance
+    // Over terrain, the tile under the map centre is covered even when it is out of view: a
+    // camera that sank below the ground looks past it, so its height never loaded and the
+    // centre could not be put back on the ground (Map::setCenterClampedToGround).
+    if (state.elevationProvider) {
+        const auto centre = TileCoordinate::fromLatLng(z, transform.getLatLng()).p;
+        const auto cx = static_cast<int64_t>(std::floor(centre.x));
+        const auto cy = static_cast<int64_t>(std::floor(centre.y));
+        const auto n = static_cast<int64_t>(numTiles);
+        if (cy >= 0 && cy < n) {
+            const auto wrap = static_cast<int16_t>(cx >= 0 ? cx / n : (cx - n + 1) / n);
+            const auto x = static_cast<uint32_t>(cx - wrap * n);
+            const auto y = static_cast<uint32_t>(cy);
+            const bool covered = std::any_of(result.begin(), result.end(), [&](const ResultTile& tile) {
+                const auto& c = tile.id.canonical;
+                return tile.id.wrap == wrap && c.z <= z && (x >> (z - c.z)) == c.x && (y >> (z - c.z)) == c.y;
+            });
+            if (!covered) {
+                result.push_back({OverscaledTileID{z, wrap, z, x, y}, 0.0});
+            }
+        }
+    }
+
     std::sort(
         result.begin(), result.end(), [](const ResultTile& a, const ResultTile& b) { return a.sqrDist < b.sqrDist; });
 

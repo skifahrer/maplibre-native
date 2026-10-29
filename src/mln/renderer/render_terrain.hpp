@@ -76,11 +76,24 @@ public:
     std::set<UnwrappedTileID> computeMeshCover(const TransformState& state,
                                                const std::shared_ptr<UpdateParameters>& updateParameters) const;
 
+    /// The steepest pitch, in radians, at which the camera and the first stretch of its line of
+    /// sight towards the centre stay a margin above the rendered terrain; NaN when every pitch
+    /// does or there is no DEM. Ground with no DEM loaded is out of view and does not count.
+    double clearPitchLimit(const TransformState& state) const;
+
     /// The point the mesh-tile cap measures distance from, in normalized web-mercator [0, 1]:
     /// the ground under the camera (the map centre when the map is not tilted).
     static std::array<double, 2> meshTileCapOrigin(const TransformState& state);
 
-    /// The `maxTiles` tiles whose centres lie nearest `origin` (normalized web-mercator), or all
+    /// How far from the ground under the camera, in metres, the capped mesh cover is whole: where
+    /// the first tile the cap dropped begins, eased over frames; infinity when it dropped none.
+    /// The fog is full by then.
+    double getCoverReachMetres() const { return coverReachMetres; }
+
+    /// Squared distance from `origin` (normalized web-mercator) to the nearest point of the tile.
+    static double nearestPointDist2(const UnwrappedTileID& id, const std::array<double, 2>& origin);
+
+    /// The `maxTiles` tiles whose nearest points lie nearest `origin` (normalized web-mercator), or all
     /// of them when there are no more than that or `maxTiles` is 0. The mesh-tile cap
     /// (TerrainLoadBudget::maxMeshTiles) that computeMeshCover applies.
     static std::set<UnwrappedTileID> nearestMeshTiles(std::set<UnwrappedTileID> tiles,
@@ -311,6 +324,13 @@ public:
     Immutable<style::Terrain::Impl> impl;
 
 private:
+    /// Metres the line of sight keeps above the terrain at the camera (clearPitchLimit).
+    static constexpr double kCameraClearanceM = 40.0;
+    /// computeMeshCover's last answer for getCoverReachMetres.
+    mutable double coverReachMetres = std::numeric_limits<double>::infinity();
+    /// How far ahead of the camera, in metres, clearPitchLimit looks for ground in the way.
+    static constexpr double kCameraLookAheadM = 400.0;
+
     /**
      * @brief Generate terrain mesh geometry
      *

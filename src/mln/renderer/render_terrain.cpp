@@ -50,6 +50,7 @@
 #include <mln/gfx/vertex_attribute.hpp> // VertexAttributeArray for the a_instance attribute
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -175,11 +176,75 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     // 1024 px target per cover tile, so a cap on the mesh alone still allocated one for every
     // tile it dropped.
     if (updateParameters) {
-        out = nearestMeshTiles(std::move(out),
-                               terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles,
-                               meshTileCapOrigin(state));
+        const auto origin = meshTileCapOrigin(state);
+        auto kept = nearestMeshTiles(out, terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles, origin);
+        // Where the first dropped tile begins, so the fog can be full before the cover ends.
+        double nearestDropped2 = std::numeric_limits<double>::infinity();
+        for (const auto& id : out) {
+            if (!kept.count(id)) {
+                nearestDropped2 = std::min(nearestDropped2, nearestPointDist2(id, origin));
+            }
+        }
+        double reach = std::numeric_limits<double>::infinity();
+        if (std::isfinite(nearestDropped2)) {
+            const double metresPerUnit = util::M2PI * util::EARTH_RADIUS_M *
+                                         std::cos(util::deg2rad(state.getLatLng().latitude()));
+            reach = std::sqrt(nearestDropped2) * metresPerUnit;
+        }
+        // Eased, as the tile set changes in steps: in fast, so nothing past it shows, out slowly.
+        if (!std::isfinite(reach) || !std::isfinite(coverReachMetres)) {
+            coverReachMetres = reach;
+        } else {
+            coverReachMetres = reach < coverReachMetres ? reach : coverReachMetres + 0.1 * (reach - coverReachMetres);
+        }
+        out = std::move(kept);
     }
     return out;
+}
+
+double RenderTerrain::clearPitchLimit(const TransformState& state) const {
+    constexpr double noLimit = std::numeric_limits<double>::quiet_NaN();
+    const auto eye = state.getFreeCameraOptions().getLocation();
+    if (!demSource || !eye) {
+        return noLimit;
+    }
+    const LatLng centre = state.getLatLng();
+    const double centreAltitude = state.getCenterAltitude();
+    const double metresPerDegree = util::EARTH_RADIUS_M * M_PI / 180.0;
+    const double dLat = eye->location.latitude() - centre.latitude();
+    const double dLng = eye->location.longitude() - centre.longitude();
+    const double horizontal = std::hypot(dLat * metresPerDegree,
+                                         dLng * metresPerDegree * std::cos(util::deg2rad(centre.latitude())));
+    if (horizontal < 1.0) {
+        return noLimit; // looking straight down: nothing can stand between
+    }
+    // A centre under the ground (sea level, before the clamp has put it back) is the clamp's to
+    // fix; tilting down from there would flatten the view for good.
+    const double groundAtCentre = getElevationForLatLng(centre);
+    if (groundAtCentre != 0.0 && centreAltitude < groundAtCentre - kCameraClearanceM) {
+        return noLimit;
+    }
+    // Only the ground under the eye and just ahead of it: a ridge further along the line of
+    // sight hides what is behind it, as it would from any viewpoint, but ground this close goes
+    // through the near plane and shows the inside of the terrain. Ground h metres from the
+    // centre towards the eye clears the line at a pitch p when ground + margin - centreAltitude
+    // <= h * cot(p), which holds wherever the centre itself is.
+    constexpr int samples = 8;
+    double cotNeeded = 0.0;
+    for (int i = 0; i <= samples; ++i) {
+        const double back = std::min(kCameraLookAheadM, horizontal) * i / samples;
+        const double f = 1.0 - back / horizontal;
+        if (f <= 0.0) {
+            break;
+        }
+        const double ground = getElevationForLatLng(
+            LatLng(centre.latitude() + f * dLat, centre.longitude() + f * dLng));
+        if (ground == 0.0) {
+            continue; // no DEM loaded there: out of view
+        }
+        cotNeeded = std::max(cotNeeded, (ground + kCameraClearanceM - centreAltitude) / (f * horizontal));
+    }
+    return cotNeeded > 0.0 ? std::atan2(1.0, cotNeeded) : noLimit;
 }
 
 std::array<double, 2> RenderTerrain::meshTileCapOrigin(const TransformState& state) {
@@ -194,20 +259,26 @@ std::array<double, 2> RenderTerrain::meshTileCapOrigin(const TransformState& sta
             0.5 - std::log(std::tan(M_PI / 4.0 + latRad / 2.0)) / (2.0 * M_PI) + back * std::cos(compass)};
 }
 
+double RenderTerrain::nearestPointDist2(const UnwrappedTileID& id, const std::array<double, 2>& origin) {
+    const double scale = static_cast<double>(1u << id.canonical.z);
+    const double x0 = static_cast<double>(id.canonical.x) / scale + id.wrap;
+    const double y0 = static_cast<double>(id.canonical.y) / scale;
+    const double dx = std::max({0.0, x0 - origin[0], origin[0] - (x0 + 1.0 / scale)});
+    const double dy = std::max({0.0, y0 - origin[1], origin[1] - (y0 + 1.0 / scale)});
+    return dx * dx + dy * dy;
+}
+
 std::set<UnwrappedTileID> RenderTerrain::nearestMeshTiles(std::set<UnwrappedTileID> tiles,
                                                           size_t maxTiles,
                                                           const std::array<double, 2>& origin) {
     if (maxTiles == 0 || tiles.size() <= maxTiles) {
         return tiles;
     }
-    const auto tileDist2 = [&](const UnwrappedTileID& id) {
-        const double scale = static_cast<double>(1u << id.canonical.z);
-        const double tx = (static_cast<double>(id.canonical.x) + 0.5) / scale + id.wrap;
-        const double ty = (static_cast<double>(id.canonical.y) + 0.5) / scale;
-        const double dx = tx - origin[0];
-        const double dy = ty - origin[1];
-        return dx * dx + dy * dy;
-    };
+    // Ranked by the tile's nearest point, not its centre: every tile that begins within some
+    // distance is kept, so the ground is whole out to there and the cover grows outwards from
+    // the camera. By centre, a big far tile could outrank smaller ones in front of it, which
+    // left a hole with a ridge behind it.
+    const auto tileDist2 = [&](const UnwrappedTileID& id) { return nearestPointDist2(id, origin); };
 
     // Ties go by tile ID, so the same view keeps the same tiles from one call to the next.
     std::vector<UnwrappedTileID> sorted(tiles.begin(), tiles.end());

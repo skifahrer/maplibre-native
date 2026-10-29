@@ -49,6 +49,14 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
     const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(parameters.state.getLatLng().latitude(),
                                                                           parameters.state.getZoom());
     const auto fogDepth = [&](double metres) { return static_cast<float>(metres / metresPerPixel); };
+    // Where the tile cap cut the cover short, the haze is full before the cut, so the terrain
+    // fades into the sky there instead of ending in a wall of skirts.
+    double fogStart = parameters.state.getFogStart();
+    double fogEnd = parameters.state.getFogEnd();
+    if (fogEnd > 0.0 && std::isfinite(terrain->getCoverReachMetres())) {
+        fogEnd = std::min(fogEnd, 0.9 * terrain->getCoverReachMetres());
+        fogStart = std::min(fogStart, 0.5 * fogEnd);
+    }
 
     // Populate layer-level UBO with terrain properties
     auto& layerUniforms = layerGroup.mutableUniformBuffers();
@@ -58,8 +66,8 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
                                                .pad1 = 0.0f,
                                                .pad2 = 0.0f,
                                                .fog_color = {fogColor.r, fogColor.g, fogColor.b, fogColor.a},
-                                               .fog_start = fogDepth(parameters.state.getFogStart()),
-                                               .fog_end = fogDepth(parameters.state.getFogEnd()),
+                                               .fog_start = fogDepth(fogStart),
+                                               .fog_end = fogDepth(fogEnd),
                                                .pad3 = 0.0f,
                                                .pad4 = 0.0f};
     layerUniforms.createOrUpdate(idTerrainEvaluatedPropsUBO, &propsUBO, context);

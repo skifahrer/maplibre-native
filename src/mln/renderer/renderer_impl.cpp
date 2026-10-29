@@ -8,6 +8,7 @@
 #include <mln/gfx/renderer_backend.hpp>
 #include <mln/gfx/renderable.hpp>
 #include <mln/gfx/upload_pass.hpp>
+#include <mln/math/angles.hpp>
 #include <mln/renderer/paint_parameters.hpp>
 #include <mln/renderer/pattern_atlas.hpp>
 #include <mln/renderer/renderer_observer.hpp>
@@ -750,6 +751,13 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         if (std::abs(centerElevation - lastReportedCenterElevation) > 0.25) {
             lastReportedCenterElevation = centerElevation;
             observer->onTerrainCenterElevationChanged(centerElevation);
+        }
+        const double pitchLimit = terrain->clearPitchLimit(updateParameters->transformState);
+        const bool limitChanged = std::isnan(pitchLimit) != std::isnan(lastReportedPitchLimit) ||
+                                  std::abs(pitchLimit - lastReportedPitchLimit) > util::deg2rad(0.25);
+        if (limitChanged) {
+            lastReportedPitchLimit = pitchLimit;
+            observer->onTerrainPitchLimitChanged(pitchLimit);
         }
     }
 

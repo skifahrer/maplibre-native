@@ -134,6 +134,18 @@ void Map::Impl::onUpdate() {
     // The clamp stood aside for a transition (onTerrainCenterElevationChanged); now that it
     // is over, put the centre on the ground it arrived over. The reported height outlives a
     // terrain removed during the transition, so only apply it while there is still terrain.
+    // A style reload drops the centre to sea level with the terrain, and the renderer reports
+    // the height under it only when that height changes, which it did not: put it back.
+    if (centerClampedToGround && style->impl->getTerrain() && !transform.inTransition() &&
+        transform.getState().getCenterAltitude() == 0.0 && !std::isnan(terrainCenterElevation) &&
+        std::abs(terrainCenterElevation) >= 0.5) {
+        clampCenterToTerrain(terrainCenterElevation);
+    }
+
+    if (pitchAwaitingTerrainLimit && !transform.inTransition()) {
+        applyMaxPitch();
+    }
+
     if (centerAwaitingTerrainAnchor && !transform.inTransition()) {
         centerAwaitingTerrainAnchor = false;
         if (centerClampedToGround && style->impl->getTerrain() && !std::isnan(terrainCenterElevation)) {
@@ -430,6 +442,10 @@ void Map::Impl::noteTerrainRemoval() {
     } else if (hasTerrain) {
         centerAwaitingSeaLevel = false;
     }
+    if (hadTerrain && !hasTerrain) {
+        terrainPitchLimit = std::numeric_limits<double>::quiet_NaN();
+        pitchAwaitingTerrainLimit = true;
+    }
     hadTerrain = hasTerrain;
 }
 
@@ -454,10 +470,38 @@ void Map::Impl::onTerrainCenterElevationChanged(double elevationMeters) {
     // within a few kilometres of where it started. Let it finish; onUpdate applies the latest
     // height once it has.
     if (transform.inTransition()) {
+        // The camera would otherwise ride a stale height into the ground until the move ends.
+        if (std::abs(transform.getState().getCenterAltitude() - elevationMeters) >= 0.5) {
+            transform.setCenterAltitudeInTransition(elevationMeters);
+            onUpdate();
+        }
         centerAwaitingTerrainAnchor = true;
         return;
     }
     if (clampCenterToTerrain(elevationMeters)) {
+        onUpdate();
+    }
+}
+
+void Map::Impl::onTerrainPitchLimitChanged(double maxPitchRadians) {
+    terrainPitchLimit = maxPitchRadians;
+    applyMaxPitch();
+}
+
+void Map::Impl::applyMaxPitch() {
+    const bool limited = centerClampedToGround && style->impl->getTerrain() && !std::isnan(terrainPitchLimit);
+    const double maxPitch = limited ? std::min(appMaxPitch, util::rad2deg(terrainPitchLimit)) : appMaxPitch;
+    transform.setMaxPitch(maxPitch);
+    // A running transition clamps its own pitch to the maximum each frame; jumping would end it.
+    if (transform.inTransition()) {
+        pitchAwaitingTerrainLimit = true;
+        onUpdate();
+        return;
+    }
+    pitchAwaitingTerrainLimit = false;
+    const double allowed = util::rad2deg(transform.getState().getMaxPitch());
+    if (util::rad2deg(transform.getPitch()) > allowed + 0.01) {
+        transform.jumpTo(CameraOptions().withPitch(allowed));
         onUpdate();
     }
 }

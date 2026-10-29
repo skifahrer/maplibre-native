@@ -183,7 +183,11 @@ void Transform::easeTo(const CameraOptions& inputCamera, const AnimationOptions&
             LatLng frameLatLng = Projection::unproject(framePoint, state.zoomScale(startZoom));
             double frameZoom = util::interpolate(startZoom, zoom, t);
             state.setLatLngZoom(frameLatLng, frameZoom);
-            state.setCenterAltitude(util::interpolate(startCenterAlt, centerAlt, t));
+            // Only a move that asked for a centre altitude sets one: otherwise it would hold the
+            // altitude it started with, and the centre could not follow the terrain until the end.
+            if (camera.centerAltitude) {
+                state.setCenterAltitude(util::interpolate(startCenterAlt, centerAlt, t));
+            }
             if (bearing != startBearing) {
                 state.setBearing(util::wrap(util::interpolate(startBearing, bearing, t), -pi, pi));
             }
@@ -196,7 +200,7 @@ void Transform::easeTo(const CameraOptions& inputCamera, const AnimationOptions&
                                      util::interpolate(startEdgeInsets.right(), padding.right(), t)});
             }
             double maxPitch = getMaxPitchForEdgeInsets(state.getEdgeInsets());
-            if (pitch != startPitch || maxPitch < startPitch) {
+            if (pitch != startPitch || maxPitch < state.getPitch()) {
                 state.setPitch(std::min(maxPitch, util::interpolate(startPitch, pitch, t)));
             }
             if (roll != startRoll) {
@@ -375,7 +379,9 @@ void Transform::flyTo(const CameraOptions& inputCamera,
             // Convert to geographic coordinates and set the new viewpoint.
             LatLng frameLatLng = Projection::unproject(framePoint, startScale);
             state.setLatLngZoom(frameLatLng, frameZoom);
-            state.setCenterAltitude(util::interpolate(startCenterAlt, centerAlt, us));
+            if (camera.centerAltitude) {
+                state.setCenterAltitude(util::interpolate(startCenterAlt, centerAlt, us));
+            }
             if (bearing != startBearing) {
                 state.setBearing(util::wrap(util::interpolate(startBearing, bearing, k), -pi, pi));
             }
@@ -388,8 +394,9 @@ void Transform::flyTo(const CameraOptions& inputCamera,
                                      util::interpolate(startEdgeInsets.right(), padding.right(), k)});
             }
 
-            if (pitch != startPitch) {
-                state.setPitch(util::interpolate(startPitch, pitch, k));
+            const double maxPitch = getMaxPitchForEdgeInsets(state.getEdgeInsets());
+            if (pitch != startPitch || maxPitch < state.getPitch()) {
+                state.setPitch(std::min(maxPitch, util::interpolate(startPitch, pitch, k)));
             }
             if (roll != startRoll) {
                 state.setPitch(util::interpolate(startRoll, roll, k));
@@ -670,6 +677,10 @@ void Transform::startTransition(const CameraOptions& camera,
         update(Clock::now());
         finish();
     }
+}
+
+void Transform::setCenterAltitudeInTransition(double altitudeMeters) {
+    state.setCenterAltitude(altitudeMeters);
 }
 
 bool Transform::inTransition() const {

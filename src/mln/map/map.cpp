@@ -344,10 +344,14 @@ void Map::setBounds(const BoundOptions& options) {
     }
 
     if (options.maxPitch) {
-        impl->transform.setMaxPitch(*options.maxPitch);
+        impl->appMaxPitch = *options.maxPitch;
+        const bool limited = impl->centerClampedToGround && impl->style->impl->getTerrain() &&
+                             !std::isnan(impl->terrainPitchLimit);
+        impl->transform.setMaxPitch(limited ? std::min(*options.maxPitch, util::rad2deg(impl->terrainPitchLimit))
+                                            : *options.maxPitch);
         if (impl->transform.getPitch() > impl->transform.getState().getMaxPitch()) {
             changeCamera = true;
-            cameraOptions.withPitch(options.maxPitch);
+            cameraOptions.withPitch(util::rad2deg(impl->transform.getState().getMaxPitch()));
         }
     }
 
@@ -370,7 +374,7 @@ BoundOptions Map::getBounds() const {
         .withMinZoom(impl->transform.getState().getMinZoom())
         .withMaxZoom(impl->transform.getState().getMaxZoom())
         .withMinPitch(util::rad2deg(impl->transform.getState().getMinPitch()))
-        .withMaxPitch(util::rad2deg(impl->transform.getState().getMaxPitch()));
+        .withMaxPitch(impl->appMaxPitch);
 }
 
 // MARK: - Map options
@@ -666,6 +670,7 @@ bool Map::setCenterAltitudeKeepingView(double altitudeMeters) {
 
 void Map::setCenterClampedToGround(bool clamped) {
     impl->centerClampedToGround = clamped;
+    impl->applyMaxPitch();
 }
 
 bool Map::getCenterClampedToGround() const {

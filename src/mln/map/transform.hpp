@@ -112,6 +112,9 @@ public:
 
     // Transitions
     bool inTransition() const;
+    /// Sets the centre altitude without cancelling the running transition, which leaves the
+    /// altitude alone unless its camera asked for one: the centre follows the terrain as it moves.
+    void setCenterAltitudeInTransition(double altitudeMeters);
     void updateTransitions(const TimePoint& now);
     TimePoint getTransitionStart() const { return transitionStart; }
     Duration getTransitionDuration() const { return transitionDuration; }
