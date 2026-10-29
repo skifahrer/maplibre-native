@@ -458,6 +458,7 @@ private:
 
     // See getPlaceholderDEMTexture
     std::shared_ptr<gfx::Texture2D> placeholderDEMTexture;
+    std::array<float, 4> placeholderUnpack{};
 
     // Layer index (terrain renders early in 3D pass, use negative index)
     static constexpr int32_t TERRAIN_LAYER_INDEX = -1000;

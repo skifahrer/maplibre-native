@@ -333,11 +333,9 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         return;
     }
 
-    // Get tiles from the DEM source
+    // Get tiles from the DEM source. None in view still builds the mesh, flat on the
+    // placeholder, or nothing draped is drawn until a DEM tile arrives.
     auto renderTiles = demSource->getRawRenderTiles();
-    if (renderTiles->empty()) {
-        return;
-    }
 
     // Cast to LayerGroup for addDrawable
     auto* lg = static_cast<LayerGroup*>(layerGroup.get());
@@ -830,14 +828,25 @@ std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const Un
 }
 
 const std::shared_ptr<gfx::Texture2D>& RenderTerrain::getPlaceholderDEMTexture(gfx::Context& context) {
+    // One texel that decodes to sea level in the source's encoding. An all-zero texel decodes
+    // to -10000 m (Mapbox) or -32768 m (Terrarium): the ground of every tile still waiting
+    // for its DEM, or outside the DEM's coverage, sank kilometres under the camera, past the
+    // far plane, and the map there showed only its labels.
     if (!placeholderDEMTexture) {
-        auto image = std::make_shared<PremultipliedImage>(Size{1, 1});
-        std::memset(image->data.get(), 0, image->bytes());
         placeholderDEMTexture = context.createTexture2D();
-        placeholderDEMTexture->setImage(image);
         placeholderDEMTexture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Nearest,
                                                         .wrapU = gfx::TextureWrapType::Clamp,
                                                         .wrapV = gfx::TextureWrapType::Clamp});
+    }
+    if (placeholderUnpack != demUnpackVector) {
+        placeholderUnpack = demUnpackVector;
+        const auto texel = terrain::seaLevelTexel(demUnpackVector);
+        auto image = std::make_shared<PremultipliedImage>(Size{1, 1});
+        image->data[0] = texel[0];
+        image->data[1] = texel[1];
+        image->data[2] = texel[2];
+        image->data[3] = 255;
+        placeholderDEMTexture->setImage(image);
     }
     return placeholderDEMTexture;
 }
