@@ -1,0 +1,436 @@
+diff --git a/include/mln/renderer/renderer_observer.hpp b/include/mln/renderer/renderer_observer.hpp
+index dcdb144acdb..aecc8468d14 100644
+--- a/include/mln/renderer/renderer_observer.hpp
++++ b/include/mln/renderer/renderer_observer.hpp
+@@ -75,11 +75,6 @@ public:
+     /// (Map::setCenterClampedToGround) learns of it here, one frame behind.
+     virtual void onTerrainCenterElevationChanged(double /*elevationMeters*/) {}
+ 
+-    /// The steepest pitch, in radians, that keeps the camera and the ground just ahead of it
+-    /// out of the rendered terrain; NaN when every pitch does. A map that keeps its camera out
+-    /// of the ground (Map::setCenterClampedToGround) caps its pitch at it, one frame behind.
+-    virtual void onTerrainPitchLimitChanged(double /*maxPitchRadians*/) {}
+-
+     /// Style is missing an image
+     using StyleImageMissingCallback = std::function<void()>;
+     virtual void onStyleImageMissing(const std::string&, const StyleImageMissingCallback& done) { done(); }
+diff --git a/include/mln/shaders/mtl/terrain.hpp b/include/mln/shaders/mtl/terrain.hpp
+index 127965af77b..94ab04d2a2b 100644
+--- a/include/mln/shaders/mtl/terrain.hpp
++++ b/include/mln/shaders/mtl/terrain.hpp
+@@ -41,8 +41,8 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
+     /* 32 */ float4 fog_color;
+     /* 48 */ float fog_start;
+     /* 52 */ float fog_end;
+-    /* 56 */ float pad3;
+-    /* 60 */ float pad4;
++    /* 56 */ float cut_depth;
++    /* 60 */ float cut_ndc_y;
+     /* 64 */
+ };
+ static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64, "wrong size");
+@@ -71,6 +71,7 @@ struct FragmentStage {
+     float2 uv;
+     float elevation;
+     float depth; // view depth, for the fog
++    float2 clip_yw; // clip y and w, for the cutaway in front of the centre
+ };
+ 
+ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+@@ -105,6 +106,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+         .uv        = uv,
+         .elevation = elevation,
+         .depth     = position.w,
++        .clip_yw   = position.yw,
+     };
+ }
+ 
+@@ -122,6 +124,11 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
+     // 1.0 - uv.y. Metal's NDC is Y-up, so the RTT is stored upright and the V must NOT
+     // be flipped here - sampling 1.0 - uv.y flips the draped map vertically (north/south
+     // swapped about the view). Sample uv.y directly on Metal.
++    // Terrain nearer than the centre and above it on screen stands between the camera and
++    // what it looks at: it is not drawn, so the view goes through the mountain in the way.
++    if (props.cut_depth > 0.0 && in.depth < props.cut_depth && in.clip_yw.x / in.clip_yw.y > props.cut_ndc_y) {
++        discard_fragment();
++    }
+     float4 color = mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
+ 
+     // Fog: from fog_start to fog_end the surface fades into the fog colour, straight (not
+diff --git a/include/mln/shaders/mtl/terrain_depth.hpp b/include/mln/shaders/mtl/terrain_depth.hpp
+index 32193cca8ae..2bc6bffc3b1 100644
+--- a/include/mln/shaders/mtl/terrain_depth.hpp
++++ b/include/mln/shaders/mtl/terrain_depth.hpp
+@@ -29,6 +29,7 @@ struct VertexStage {
+ struct FragmentStage {
+     float4 position [[position, invariant]];
+     float distance;
++    float2 clip_yw;
+ };
+ 
+ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+@@ -53,10 +54,16 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+     return {
+         .position = position,
+         .distance = position.w,
++        .clip_yw  = position.yw,
+     };
+ }
+ 
+-half4 fragment fragmentMain(FragmentStage in [[stage_in]]) {
++half4 fragment fragmentMain(FragmentStage in [[stage_in]],
++                            device const TerrainEvaluatedPropsUBO& props [[buffer(idTerrainEvaluatedPropsUBO)]]) {
++    // The cutaway of the terrain shader, so labels behind the cut mountain show
++    if (props.cut_depth > 0.0 && in.distance < props.cut_depth && in.clip_yw.x / in.clip_yw.y > props.cut_ndc_y) {
++        discard_fragment();
++    }
+     // Pack the camera distance / 2^24 into RGBA8, unpacked by unpack_distance(); the
+     // white clear colour unpacks as farther than any terrain
+     const float depth = in.distance / 16777216.0;
+diff --git a/include/mln/shaders/terrain_layer_ubo.hpp b/include/mln/shaders/terrain_layer_ubo.hpp
+index e6f796a7333..8a7c88f37f2 100644
+--- a/include/mln/shaders/terrain_layer_ubo.hpp
++++ b/include/mln/shaders/terrain_layer_ubo.hpp
+@@ -46,8 +46,8 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
+     /* 32 */ std::array<float, 4> fog_color; // premultiplied; alpha 0 = no fog
+     /* 48 */ float fog_start;                // view depth (world pixels) where the fog starts
+     /* 52 */ float fog_end;                  // and where it is full
+-    /* 56 */ float pad3;
+-    /* 60 */ float pad4;
++    /* 56 */ float cut_depth;              // view depth of the map centre; 0 = no cutaway
++    /* 60 */ float cut_ndc_y;              // the centre's NDC y: nearer terrain above it is cut
+     /* 64 */
+ };
+ static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64);
+diff --git a/platform/android/MapLibreAndroid/src/cpp/android_renderer_frontend.cpp b/platform/android/MapLibreAndroid/src/cpp/android_renderer_frontend.cpp
+index a7f940599d8..da8251c4d48 100644
+--- a/platform/android/MapLibreAndroid/src/cpp/android_renderer_frontend.cpp
++++ b/platform/android/MapLibreAndroid/src/cpp/android_renderer_frontend.cpp
+@@ -66,10 +66,6 @@ public:
+         delegate.invoke(&RendererObserver::onTerrainCenterElevationChanged, elevationMeters);
+     }
+ 
+-    void onTerrainPitchLimitChanged(double maxPitchRadians) override {
+-        delegate.invoke(&RendererObserver::onTerrainPitchLimitChanged, maxPitchRadians);
+-    }
+-
+     void onStyleImageMissing(const std::string& id, const StyleImageMissingCallback& done) override {
+         delegate.invoke(&RendererObserver::onStyleImageMissing, id, done);
+     }
+diff --git a/src/mln/map/map.cpp b/src/mln/map/map.cpp
+index 32f4fff7af5..f2a68f8c1ee 100644
+--- a/src/mln/map/map.cpp
++++ b/src/mln/map/map.cpp
+@@ -344,14 +344,10 @@ void Map::setBounds(const BoundOptions& options) {
+     }
+ 
+     if (options.maxPitch) {
+-        impl->appMaxPitch = *options.maxPitch;
+-        const bool limited = impl->centerClampedToGround && impl->style->impl->getTerrain() &&
+-                             !std::isnan(impl->terrainPitchLimit);
+-        impl->transform.setMaxPitch(limited ? std::min(*options.maxPitch, util::rad2deg(impl->terrainPitchLimit))
+-                                            : *options.maxPitch);
++        impl->transform.setMaxPitch(*options.maxPitch);
+         if (impl->transform.getPitch() > impl->transform.getState().getMaxPitch()) {
+             changeCamera = true;
+-            cameraOptions.withPitch(util::rad2deg(impl->transform.getState().getMaxPitch()));
++            cameraOptions.withPitch(options.maxPitch);
+         }
+     }
+ 
+@@ -374,7 +370,7 @@ BoundOptions Map::getBounds() const {
+         .withMinZoom(impl->transform.getState().getMinZoom())
+         .withMaxZoom(impl->transform.getState().getMaxZoom())
+         .withMinPitch(util::rad2deg(impl->transform.getState().getMinPitch()))
+-        .withMaxPitch(impl->appMaxPitch);
++        .withMaxPitch(util::rad2deg(impl->transform.getState().getMaxPitch()));
+ }
+ 
+ // MARK: - Map options
+@@ -670,7 +666,6 @@ bool Map::setCenterAltitudeKeepingView(double altitudeMeters) {
+ 
+ void Map::setCenterClampedToGround(bool clamped) {
+     impl->centerClampedToGround = clamped;
+-    impl->applyMaxPitch();
+ }
+ 
+ bool Map::getCenterClampedToGround() const {
+diff --git a/src/mln/map/map_impl.cpp b/src/mln/map/map_impl.cpp
+index ab58b98a1af..1b7dcd17509 100644
+--- a/src/mln/map/map_impl.cpp
++++ b/src/mln/map/map_impl.cpp
+@@ -142,10 +142,6 @@ void Map::Impl::onUpdate() {
+         clampCenterToTerrain(terrainCenterElevation);
+     }
+ 
+-    if (pitchAwaitingTerrainLimit && !transform.inTransition()) {
+-        applyMaxPitch();
+-    }
+-
+     if (centerAwaitingTerrainAnchor && !transform.inTransition()) {
+         centerAwaitingTerrainAnchor = false;
+         if (centerClampedToGround && style->impl->getTerrain() && !std::isnan(terrainCenterElevation)) {
+@@ -442,10 +438,6 @@ void Map::Impl::noteTerrainRemoval() {
+     } else if (hasTerrain) {
+         centerAwaitingSeaLevel = false;
+     }
+-    if (hadTerrain && !hasTerrain) {
+-        terrainPitchLimit = std::numeric_limits<double>::quiet_NaN();
+-        pitchAwaitingTerrainLimit = true;
+-    }
+     hadTerrain = hasTerrain;
+ }
+ 
+@@ -483,29 +475,6 @@ void Map::Impl::onTerrainCenterElevationChanged(double elevationMeters) {
+     }
+ }
+ 
+-void Map::Impl::onTerrainPitchLimitChanged(double maxPitchRadians) {
+-    terrainPitchLimit = maxPitchRadians;
+-    applyMaxPitch();
+-}
+-
+-void Map::Impl::applyMaxPitch() {
+-    const bool limited = centerClampedToGround && style->impl->getTerrain() && !std::isnan(terrainPitchLimit);
+-    const double maxPitch = limited ? std::min(appMaxPitch, util::rad2deg(terrainPitchLimit)) : appMaxPitch;
+-    transform.setMaxPitch(maxPitch);
+-    // A running transition clamps its own pitch to the maximum each frame; jumping would end it.
+-    if (transform.inTransition()) {
+-        pitchAwaitingTerrainLimit = true;
+-        onUpdate();
+-        return;
+-    }
+-    pitchAwaitingTerrainLimit = false;
+-    const double allowed = util::rad2deg(transform.getState().getMaxPitch());
+-    if (util::rad2deg(transform.getPitch()) > allowed + 0.01) {
+-        transform.jumpTo(CameraOptions().withPitch(allowed));
+-        onUpdate();
+-    }
+-}
+-
+ bool Map::Impl::clampCenterToTerrain(double elevationMeters) {
+     // Sub-metre differences are the terrain cover shifting under a camera that just moved,
+     // not the ground actually changing height; acting on them would chase itself.
+diff --git a/src/mln/map/map_impl.hpp b/src/mln/map/map_impl.hpp
+index 3470f175911..c5d419f08ed 100644
+--- a/src/mln/map/map_impl.hpp
++++ b/src/mln/map/map_impl.hpp
+@@ -14,8 +14,6 @@
+ #include <mln/util/size.hpp>
+ #include <mln/tile/tile_operation.hpp>
+ 
+-#include <mln/math/angles.hpp>
+-#include <mln/util/constants.hpp>
+ 
+ #include <limits>
+ #include <numbers>
+@@ -68,7 +66,6 @@ public:
+     void onWillStartRenderingMap() final;
+     void onDidFinishRenderingMap() final;
+     void onTerrainCenterElevationChanged(double elevationMeters) final;
+-    void onTerrainPitchLimitChanged(double maxPitchRadians) final;
+     void onStyleImageMissing(const std::string&, const std::function<void()>&) final;
+     void onRemoveUnusedStyleImages(const std::vector<std::string>&) final;
+     void onRegisterShaders(gfx::ShaderRegistry&) final;
+@@ -157,17 +154,6 @@ public:
+     /// is under the sub-metre threshold.
+     bool clampCenterToTerrain(double elevationMeters);
+     bool debugAboveGroundLog = false;
+-    /// The maximum pitch the app set (BoundOptions::maxPitch), in degrees; the transform holds
+-    /// the lower of it and the terrain's limit while the centre rides the ground.
+-    double appMaxPitch = util::rad2deg(util::DEFAULT_PITCH_MAX);
+-    /// The steepest pitch keeping the camera and its line of sight out of the terrain, in
+-    /// radians, as the renderer last reported it; NaN when nothing limits it.
+-    double terrainPitchLimit = std::numeric_limits<double>::quiet_NaN();
+-    /// A limit arrived while a camera transition was running; applied once it ends.
+-    bool pitchAwaitingTerrainLimit = false;
+-    /// Sets the transform's maximum pitch from appMaxPitch and terrainPitchLimit, lowering the
+-    /// pitch to it when over. The terrain counts only while the centre rides the ground.
+-    void applyMaxPitch();
+ };
+ 
+ // Forward declaration of this method is required for the MapProjection class
+diff --git a/src/mln/renderer/layers/terrain_layer_tweaker.cpp b/src/mln/renderer/layers/terrain_layer_tweaker.cpp
+index 98e10aa9262..104418513ca 100644
+--- a/src/mln/renderer/layers/terrain_layer_tweaker.cpp
++++ b/src/mln/renderer/layers/terrain_layer_tweaker.cpp
+@@ -58,6 +58,17 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
+         fogStart = std::min(fogStart, 0.5 * fogEnd);
+     }
+ 
++    // The cutaway: while a mountain stands between the camera and the centre, terrain nearer
++    // than the centre and above it on screen is not drawn. A margin keeps the centre's slope.
++    const float cutDepth = terrain->sightBlocked(parameters.state)
++                               ? 0.9f * parameters.state.getCameraToCenterDistance()
++                               : 0.0f;
++    const auto size = parameters.state.getSize();
++    const float cutNdcY = size.height > 0
++                              ? static_cast<float>(-(parameters.state.getEdgeInsets().top() - parameters.state.getEdgeInsets().bottom()) /
++                                                   size.height)
++                              : 0.0f;
++
+     // Populate layer-level UBO with terrain properties
+     auto& layerUniforms = layerGroup.mutableUniformBuffers();
+     const TerrainEvaluatedPropsUBO propsUBO = {.unpack = terrain->getDEMUnpackVector(),
+@@ -68,8 +79,8 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
+                                                .fog_color = {fogColor.r, fogColor.g, fogColor.b, fogColor.a},
+                                                .fog_start = fogDepth(fogStart),
+                                                .fog_end = fogDepth(fogEnd),
+-                                               .pad3 = 0.0f,
+-                                               .pad4 = 0.0f};
++                                               .cut_depth = cutDepth,
++                                               .cut_ndc_y = cutNdcY};
+     layerUniforms.createOrUpdate(idTerrainEvaluatedPropsUBO, &propsUBO, context);
+ 
+ #if MLN_UBO_CONSOLIDATION
+diff --git a/src/mln/renderer/render_terrain.cpp b/src/mln/renderer/render_terrain.cpp
+index fab4aa2d25d..4dbaabbc82b 100644
+--- a/src/mln/renderer/render_terrain.cpp
++++ b/src/mln/renderer/render_terrain.cpp
+@@ -1,4 +1,5 @@
+ #include <mln/renderer/render_terrain.hpp>
++#include <mln/gfx/cull_face_mode.hpp>
+ #include <mln/renderer/update_parameters.hpp>
+ #include <mln/renderer/render_source.hpp>
+ #include <mln/renderer/render_tile.hpp>
+@@ -202,49 +203,25 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
+     return out;
+ }
+ 
+-double RenderTerrain::clearPitchLimit(const TransformState& state) const {
+-    constexpr double noLimit = std::numeric_limits<double>::quiet_NaN();
++bool RenderTerrain::sightBlocked(const TransformState& state) const {
+     const auto eye = state.getFreeCameraOptions().getLocation();
+     if (!demSource || !eye) {
+-        return noLimit;
++        return false;
+     }
+     const LatLng centre = state.getLatLng();
+     const double centreAltitude = state.getCenterAltitude();
+-    const double metresPerDegree = util::EARTH_RADIUS_M * M_PI / 180.0;
+     const double dLat = eye->location.latitude() - centre.latitude();
+     const double dLng = eye->location.longitude() - centre.longitude();
+-    const double horizontal = std::hypot(dLat * metresPerDegree,
+-                                         dLng * metresPerDegree * std::cos(util::deg2rad(centre.latitude())));
+-    if (horizontal < 1.0) {
+-        return noLimit; // looking straight down: nothing can stand between
+-    }
+-    // A centre under the ground (sea level, before the clamp has put it back) is the clamp's to
+-    // fix; tilting down from there would flatten the view for good.
+-    const double groundAtCentre = getElevationForLatLng(centre);
+-    if (groundAtCentre != 0.0 && centreAltitude < groundAtCentre - kCameraClearanceM) {
+-        return noLimit;
+-    }
+-    // Only the ground under the eye and just ahead of it: a ridge further along the line of
+-    // sight hides what is behind it, as it would from any viewpoint, but ground this close goes
+-    // through the near plane and shows the inside of the terrain. Ground h metres from the
+-    // centre towards the eye clears the line at a pitch p when ground + margin - centreAltitude
+-    // <= h * cot(p), which holds wherever the centre itself is.
+-    constexpr int samples = 8;
+-    double cotNeeded = 0.0;
+-    for (int i = 0; i <= samples; ++i) {
+-        const double back = std::min(kCameraLookAheadM, horizontal) * i / samples;
+-        const double f = 1.0 - back / horizontal;
+-        if (f <= 0.0) {
+-            break;
+-        }
+-        const double ground = getElevationForLatLng(
+-            LatLng(centre.latitude() + f * dLat, centre.longitude() + f * dLng));
+-        if (ground == 0.0) {
+-            continue; // no DEM loaded there: out of view
++    // The last tenth before the centre is the slope it stands on, not a mountain in the way.
++    constexpr int samples = 32;
++    for (int i = 2; i < samples; ++i) {
++        const double f = static_cast<double>(i) / samples;
++        const double ground = getElevationForLatLng(LatLng(centre.latitude() + f * dLat, centre.longitude() + f * dLng));
++        if (ground != 0.0 && ground > centreAltitude + f * (eye->altitude - centreAltitude)) {
++            return true;
+         }
+-        cotNeeded = std::max(cotNeeded, (ground + kCameraClearanceM - centreAltitude) / (f * horizontal));
+     }
+-    return cotNeeded > 0.0 ? std::atan2(1.0, cotNeeded) : noLimit;
++    return false;
+ }
+ 
+ std::array<double, 2> RenderTerrain::meshTileCapOrigin(const TransformState& state) {
+@@ -1153,6 +1130,8 @@ std::unique_ptr<gfx::Drawable> RenderTerrain::createDrawableForTile(gfx::Context
+     // forward order (high index = front), unlike Opaque which renders reversed.
+     builder->setShader(terrainShader);
+     builder->setRenderPass(RenderPass::Translucent);
++    // Only the upper side of the surface: from inside a mountain the camera sees through it.
++    builder->setCullFaceMode(gfx::CullFaceMode::backCCW());
+     if (depthPass) {
+         // The depth pass renders packed depth with real depth testing so the
+         // nearest surface wins, into the terrain depth target (renderDepth)
+@@ -1400,8 +1379,8 @@ void RenderTerrain::updateInstancedDepthUBO(PaintParameters& parameters) {
+                                                         .fog_color = {0.0f, 0.0f, 0.0f, 0.0f},
+                                                         .fog_start = 0.0f,
+                                                         .fog_end = 0.0f,
+-                                                        .pad3 = 0.0f,
+-                                                        .pad4 = 0.0f};
++                                                        .cut_depth = 0.0f,
++                                                        .cut_ndc_y = 0.0f};
+ 
+     depthLg->visitDrawables([&](gfx::Drawable& drawable) {
+         auto& u = drawable.mutableUniformBuffers();
+diff --git a/src/mln/renderer/render_terrain.hpp b/src/mln/renderer/render_terrain.hpp
+index 0a60fb885cb..ec0783bfb90 100644
+--- a/src/mln/renderer/render_terrain.hpp
++++ b/src/mln/renderer/render_terrain.hpp
+@@ -76,10 +76,9 @@ public:
+     std::set<UnwrappedTileID> computeMeshCover(const TransformState& state,
+                                                const std::shared_ptr<UpdateParameters>& updateParameters) const;
+ 
+-    /// The steepest pitch, in radians, at which the camera and the first stretch of its line of
+-    /// sight towards the centre stay a margin above the rendered terrain; NaN when every pitch
+-    /// does or there is no DEM. Ground with no DEM loaded is out of view and does not count.
+-    double clearPitchLimit(const TransformState& state) const;
++    /// Whether rendered terrain rises above the line from the camera to the map centre, so a
++    /// mountain stands between them. Ground with no DEM loaded is out of view and does not count.
++    bool sightBlocked(const TransformState& state) const;
+ 
+     /// The point the mesh-tile cap measures distance from, in normalized web-mercator [0, 1]:
+     /// the ground under the camera (the map centre when the map is not tilted).
+@@ -324,12 +323,8 @@ public:
+     Immutable<style::Terrain::Impl> impl;
+ 
+ private:
+-    /// Metres the line of sight keeps above the terrain at the camera (clearPitchLimit).
+-    static constexpr double kCameraClearanceM = 40.0;
+     /// computeMeshCover's last answer for getCoverReachMetres.
+     mutable double coverReachMetres = std::numeric_limits<double>::infinity();
+-    /// How far ahead of the camera, in metres, clearPitchLimit looks for ground in the way.
+-    static constexpr double kCameraLookAheadM = 400.0;
+ 
+     /**
+      * @brief Generate terrain mesh geometry
+diff --git a/src/mln/renderer/renderer_impl.cpp b/src/mln/renderer/renderer_impl.cpp
+index 939fdce30b3..618214a976f 100644
+--- a/src/mln/renderer/renderer_impl.cpp
++++ b/src/mln/renderer/renderer_impl.cpp
+@@ -752,13 +752,6 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
+             lastReportedCenterElevation = centerElevation;
+             observer->onTerrainCenterElevationChanged(centerElevation);
+         }
+-        const double pitchLimit = terrain->clearPitchLimit(updateParameters->transformState);
+-        const bool limitChanged = std::isnan(pitchLimit) != std::isnan(lastReportedPitchLimit) ||
+-                                  std::abs(pitchLimit - lastReportedPitchLimit) > util::deg2rad(0.25);
+-        if (limitChanged) {
+-            lastReportedPitchLimit = pitchLimit;
+-            observer->onTerrainPitchLimitChanged(pitchLimit);
+-        }
+     }
+ 
+     auto stats = std::make_shared<gfx::RenderingStats>(context.threadSafeCopyRenderingStats());
+diff --git a/src/mln/renderer/renderer_impl.hpp b/src/mln/renderer/renderer_impl.hpp
+index d7d087748fd..d615b8d23be 100644
+--- a/src/mln/renderer/renderer_impl.hpp
++++ b/src/mln/renderer/renderer_impl.hpp
+@@ -109,7 +109,6 @@ private:
+     /// Last terrain height reported under the map centre, so an unchanged surface does not
+     /// post an observer message every frame.
+     double lastReportedCenterElevation = 0.0;
+-    double lastReportedPitchLimit = std::numeric_limits<double>::quiet_NaN();
+ 
+     enum class RenderState {
+         Never,
