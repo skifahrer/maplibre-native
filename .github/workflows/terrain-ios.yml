@@ -11,6 +11,14 @@ on:
         description: Rebuild even if this commit already has a release
         type: boolean
         default: false
+      branch_sha:
+        description: Build this commit of the terrain branch instead of its head (a pin while the patches are rebased)
+        type: string
+        default: ""
+      main_sha:
+        description: Merge this commit of main instead of its head
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -42,6 +50,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force || false }}
+          PIN_SHA: ${{ inputs.branch_sha || '' }}
+          PIN_MAIN: ${{ inputs.main_sha || '' }}
         run: |
           sha=$(git ls-remote "https://github.com/$UPSTREAM.git" "refs/heads/$BRANCH" | cut -f1)
           if [ -z "$sha" ]; then
@@ -50,6 +60,9 @@ jobs:
             exit 0
           fi
           main_sha=$(git ls-remote "https://github.com/$UPSTREAM.git" "refs/heads/$MAIN" | cut -f1)
+          # A pin builds an older upstream, for a patch that does not apply to the moved head yet.
+          [ -n "$PIN_SHA" ] && sha="$PIN_SHA"
+          [ -n "$PIN_MAIN" ] && main_sha="$PIN_MAIN"
           tag="terrain-${sha:0:7}-main-${main_sha:0:7}"
           if ls patches/*.patch > /dev/null 2>&1; then
             tag="$tag-p$(cat patches/*.patch | shasum | cut -c1-7)"
