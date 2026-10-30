@@ -394,6 +394,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
             depthDirty = true;
         }
         tilesWithDrawables.clear();
+        boundDrapes.clear();
     }
 
     // If we don't have a DEM source, we can't create terrain drawables
@@ -473,6 +474,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
     for (auto it = tilesWithDrawables.begin(); it != tilesWithDrawables.end();) {
         if (!currentTiles.contains(it->first)) {
             drawableDemCoords.erase(it->first);
+            boundDrapes.erase(it->first);
             it = tilesWithDrawables.erase(it);
         } else {
             ++it;
@@ -525,6 +527,20 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
     // Create terrain drawables for each mesh tile
     for (const auto& unwrapped : meshTiles) {
         const OverscaledTileID tileID(unwrapped.canonical.z, unwrapped.wrap, unwrapped.canonical);
+
+        // A drape target remade at another size leaves the drawable sampling the old texture.
+        if (const auto target = texturePool.getRenderTarget(unwrapped);
+            target && tilesWithDrawables.contains(tileID) && boundDrapes[tileID] != target->getTexture().get()) {
+            const auto ofTile = [&](gfx::Drawable& drawable) {
+                return drawable.getTileID() && *drawable.getTileID() == tileID;
+            };
+            lg->removeDrawablesIf(ofTile);
+            if (depthLg) {
+                depthLg->removeDrawablesIf(ofTile);
+                depthDirty = true;
+            }
+            tilesWithDrawables.erase(tileID);
+        }
 
         // Skip if the tile already has a drawable bound to its own DEM, but mark that DEM used:
         // this early-out is a tier-2 tile's only path, so the LRU could otherwise evict the
@@ -632,6 +648,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         if (drawable) {
             lg->addDrawable(std::move(drawable));
             tilesWithDrawables[tileID] = binding;
+            boundDrapes[tileID] = renderTarget->getTexture().get();
 #if !MLN_RENDER_BACKEND_OPENGL
             // Non-GL backends: one depth drawable per tile (no instancing path there).
             if (depthLg) {

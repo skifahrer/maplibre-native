@@ -1,5 +1,6 @@
 #include <mln/renderer/texture_pool.hpp>
 #include <mln/gfx/context.hpp>
+#include <mln/gfx/texture2d.hpp>
 #include <mln/util/logging.hpp>
 
 namespace mln {
@@ -8,18 +9,24 @@ TexturePool::TexturePool(uint32_t tilesize)
 
 TexturePool::~TexturePool() {}
 
-void TexturePool::createRenderTarget(gfx::Context& context, const UnwrappedTileID& id, const Color& backgroundColor) {
+void TexturePool::createRenderTarget(gfx::Context& context,
+                                     const UnwrappedTileID& id,
+                                     const Color& backgroundColor,
+                                     uint32_t size) {
+    const uint32_t side = size ? size : tileSize;
     // Keep an existing render target; recreating it every frame churns GL
     // texture memory and invalidates the texture bound to the terrain drawable
     if (auto it = renderTargets.find(id); it != renderTargets.end() && it->second) {
-        it->second->setClearColor(backgroundColor);
-        return;
+        if (it->second->getTexture()->getSize().width == side) {
+            it->second->setClearColor(backgroundColor);
+            return;
+        }
     }
     // Drape targets render several overlapping draped tiles (a parent standing in for missing
     // children beside already-loaded children); the stencil clips them against each other,
     // as maplibre-gl-js does for its render-to-texture framebuffer.
     auto renderTarget = context.createRenderTarget(
-        {tileSize, tileSize}, gfx::TextureChannelDataType::UnsignedByte, /*stencil=*/true);
+        {side, side}, gfx::TextureChannelDataType::UnsignedByte, /*stencil=*/true);
     renderTarget->setClearColor(backgroundColor);
     renderTarget->setDrapeTileID(id);
     renderTargets[id] = std::move(renderTarget);

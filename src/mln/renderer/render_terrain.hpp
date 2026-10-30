@@ -382,6 +382,8 @@ private:
     // whenever terrain::shouldRebind says a better DEM can be bound - a higher tier, or a
     // deeper ancestor within the fallback tier
     std::unordered_map<OverscaledTileID, terrain::DEMBinding> tilesWithDrawables;
+    /// The drape texture each tile's drawable samples: a target made at another size is new.
+    std::unordered_map<OverscaledTileID, const gfx::Texture2D*> boundDrapes;
 
     // Per-drawable scale/offset into the bound DEM texture ({1,0,0,0} unless
     // an ancestor tile's DEM is bound); read by the terrain layer tweaker

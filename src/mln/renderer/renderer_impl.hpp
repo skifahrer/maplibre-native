@@ -68,6 +68,9 @@ private:
     // back to 1 to save GPU memory on constrained devices (each step is 4x memory/target).
     static constexpr uint32_t drapeTileSize = 512;
     static constexpr uint32_t drapeQualityFactor = 2;
+    // On a screen of more pixels than that (3x), the tiles nearest the camera, the largest
+    // on it, drape at the screen's own density; the rest keep 1024 for memory.
+    static constexpr std::size_t denseDrapeTiles = 8;
     TexturePool texturePool{drapeTileSize * drapeQualityFactor};
 
     gfx::RendererBackend& backend;

@@ -1,5 +1,7 @@
 #include <mln/renderer/renderer_impl.hpp>
 
+#include <cmath>
+
 #include <mln/geometry/line_atlas.hpp>
 #include <mln/gfx/backend_scope.hpp>
 #include <mln/gfx/context.hpp>
@@ -265,8 +267,16 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // permanent blankness in single-frame still renders (the render tests).
         terrain->prepareSource(orchestrator);
         const std::set<UnwrappedTileID> demTileIDs = terrain->computeMeshCover(state, updateParameters);
+        const auto density = static_cast<uint32_t>(std::ceil(pixelRatio));
+        const auto dense = density > drapeQualityFactor
+                               ? RenderTerrain::nearestMeshTiles(
+                                     demTileIDs, denseDrapeTiles, RenderTerrain::meshTileCapOrigin(state))
+                               : std::set<UnwrappedTileID>{};
         for (const auto& id : demTileIDs) {
-            texturePool.createRenderTarget(context, id, renderTreeParameters.backgroundColor);
+            texturePool.createRenderTarget(context,
+                                           id,
+                                           renderTreeParameters.backgroundColor,
+                                           dense.contains(id) ? drapeTileSize * density : 0);
         }
         texturePool.removeStaleRenderTargets(demTileIDs);
         frameDrapeTargetCount = demTileIDs.size();
