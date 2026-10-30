@@ -1,0 +1,83 @@
+diff --git a/src/mln/renderer/tile_pyramid.cpp b/src/mln/renderer/tile_pyramid.cpp
+index 8c438156632..4279117f5ac 100644
+--- a/src/mln/renderer/tile_pyramid.cpp
++++ b/src/mln/renderer/tile_pyramid.cpp
+@@ -117,6 +117,7 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
+         .tileLodPitchThreshold = parameters.tileLodPitchThreshold,
+         .tileLodMode = parameters.tileLodMode,
+         .roundZoom = type == SourceType::Raster || type == SourceType::Video,
++        .nearDetail = type == SourceType::RasterDEM ? uint8_t{0} : util::nearDetailLevels(),
+         .elevationProvider = parameters.elevationProvider};
+ 
+     if (std::cmp_greater_equal(overscaledZoom, zoomRange.min)) {
+diff --git a/src/mln/util/tile_cover.cpp b/src/mln/util/tile_cover.cpp
+index 25bc52abddf..c33894404c2 100644
+--- a/src/mln/util/tile_cover.cpp
++++ b/src/mln/util/tile_cover.cpp
+@@ -149,6 +149,10 @@ std::vector<UnwrappedTileID> tileCover(const Point<double>& tl,
+ 
+ } // namespace
+ 
++uint8_t nearDetailLevels() noexcept {
++    return 2;
++}
++
+ int32_t coveringZoomLevel(double zoom, style::SourceType type, uint16_t size) noexcept {
+     zoom += util::log2(util::tileSize_D / size);
+     if (type == style::SourceType::Raster || type == style::SourceType::RasterDEM || type == style::SourceType::Video) {
+@@ -199,11 +203,13 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+     const bool allowVariableZoom = adaptiveLod || transform.getPitch() > state.tileLodPitchThreshold;
+     const uint8_t minZoom = allowVariableZoom ? zoomRange.min : z;
+     const bool variableZoomMode = state.tileLodMode == TileLodMode::Distance || adaptiveLod;
+-    // Adaptive never goes finer than the zoom the view asks for: under a steep pitch gl-js's
++    // Adaptive goes no finer than the zoom the view asks for: under a steep pitch gl-js's
+     // function sends the ground at the camera to the source's max zoom, and a few hundred such
+-    // tiles cost more than a tile budget allows. The near field gets the view's zoom, the far
+-    // field less - where Default would give the near field less, as it measures from the centre.
+-    const uint8_t maxZoom = (variableZoomMode && allowVariableZoom) ? (adaptiveLod ? z : zoomRange.max) : z;
++    // tiles cost more than a tile budget allows. Only the ground within kNearDetailMetres of the
++    // camera may go state.nearDetail levels finer.
++    constexpr double kNearDetailMetres = 1500.0;
++    const uint8_t adaptiveMax = std::min<uint8_t>(zoomRange.max, static_cast<uint8_t>(z + state.nearDetail));
++    const uint8_t maxZoom = (variableZoomMode && allowVariableZoom) ? (adaptiveLod ? adaptiveMax : zoomRange.max) : z;
+     const uint8_t overscaledZoom = std::max(overscaledZ.value_or(z), maxZoom);
+     const bool flippedY = transform.getViewportMode() == ViewportMode::FlippedY;
+ 
+@@ -335,7 +341,10 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+                 requestedCenterZoom, distanceToTile2d, distanceToCenterZ, distanceToCenter3d) -
+                                   std::log2(std::max(1.0, state.tileLodScale));
+             const double desiredZoom = state.roundZoom ? std::round(rawZoom) : std::floor(rawZoom);
+-            shouldSplitTile = node.zoom < std::clamp(desiredZoom, 0.0, static_cast<double>(maxZoom));
++            const double nearRadius = kNearDetailMetres / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
++                                                           util::M2PI * util::EARTH_RADIUS_M);
++            const uint8_t cap = distanceToTile2d < nearRadius ? maxZoom : std::min(maxZoom, z);
++            shouldSplitTile = node.zoom < std::clamp(desiredZoom, 0.0, static_cast<double>(cap));
+         } else if (state.tileLodMode == TileLodMode::Distance) {
+             const vec3 camToTileMercator = vec3Scale(node.aabb.distanceXYZ(cameraCoord), 1.0 / worldSize);
+             const double distanceToTileMercator = vec3Length(camToTileMercator);
+diff --git a/src/mln/util/tile_cover.hpp b/src/mln/util/tile_cover.hpp
+index 73c6aedd976..3466f0d3464 100644
+--- a/src/mln/util/tile_cover.hpp
++++ b/src/mln/util/tile_cover.hpp
+@@ -61,6 +61,10 @@ struct TileCoverParameters {
+     /// video sources. Only `TileLodMode::Adaptive` chooses a zoom per tile, so only it reads
+     /// this.
+     bool roundZoom = false;
++    /// Adaptive only: levels finer than the view's zoom the ground near the camera may go
++    /// (nearDetailLevels()). The DEM source and the terrain mesh keep 0: the mesh near the camera
++    /// is already finer than the view, and it is the draped sources that were stretched over it.
++    uint8_t nearDetail = 0;
+     /// Optional; when null the cover is computed against the flat ground plane, as
+     /// it was before terrain support.
+     const TileElevationProvider* elevationProvider = nullptr;
+@@ -68,6 +72,10 @@ struct TileCoverParameters {
+ 
+ int32_t coveringZoomLevel(double z, style::SourceType type, uint16_t tileSize) noexcept;
+ 
++/// The levels an adaptive cover's near field may go past the view's zoom: the slope just ahead of
++/// a tilted camera is magnified on screen, and drawn from tiles at the view's zoom it blurs.
++uint8_t nearDetailLevels() noexcept;
++
+ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+                                         uint8_t z,
+                                         const Range<uint8_t> zoomRange,
