@@ -92,7 +92,8 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
     handleWrapJump(static_cast<float>(parameters.transformState.getLatLng().longitude()));
 
     // Optionally shift the zoom level
-    double zoom = util::clamp<double>(parameters.transformState.getZoom() + parameters.tileLodZoomShift,
+    const double terrainShift = sourceImpl.type == SourceType::RasterDEM ? -double(util::terrainCoarsening()) : 0.0;
+    double zoom = util::clamp<double>(parameters.transformState.getZoom() + parameters.tileLodZoomShift + terrainShift,
                                       parameters.transformState.getMinZoom(),
                                       parameters.transformState.getMaxZoom());
 

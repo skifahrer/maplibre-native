@@ -76,6 +76,11 @@ int32_t coveringZoomLevel(double z, style::SourceType type, uint16_t tileSize) n
 /// a tilted camera is magnified on screen, and drawn from tiles at the view's zoom it blurs.
 uint8_t nearDetailLevels() noexcept;
 
+/// Levels coarser than the view the terrain's DEM source loads, so the mesh fits its tile budget.
+/// Set by RenderTerrain from the cover it measured; the DEM is asked first, the mesh follows.
+uint8_t terrainCoarsening() noexcept;
+void setTerrainCoarsening(uint8_t levels) noexcept;
+
 std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
                                         uint8_t z,
                                         const Range<uint8_t> zoomRange,

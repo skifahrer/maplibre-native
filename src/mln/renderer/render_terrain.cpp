@@ -86,50 +86,8 @@ RenderTerrain::RenderTerrain(Immutable<style::Terrain::Impl> impl_)
 
 RenderTerrain::~RenderTerrain() = default;
 
-std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
-    const TransformState& state, const std::shared_ptr<UpdateParameters>& updateParameters) const {
-    std::set<UnwrappedTileID> out;
-    if (!demSource) {
-        return out;
-    }
-
-    // Elevation-aware visibility: terrain leaning towards the camera occupies
-    // screen space its flat footprint does not, so the cover is tested against the
-    // DEM height rather than the z=0 plane (as util::tileCover / gl-js do).
-    DEMElevationProvider elevationProvider(demSource, getExaggeration());
-
-    // Cover at the tile size the DEM source selects tiles with, so the mesh lands on the zoom its
-    // DEM tiles are on. Meshing shallower than the DEM leaves its tiles descendants, which the
-    // per-tile lookup cannot match, so the mesh renders flat off the placeholder; it also
-    // undersamples the DEM, aliasing the relief into waves on the fixed 128x128 mesh. Still the
-    // elevation-aware ideal cover from the view, not the DEM's loaded tile set.
-    const uint16_t terrainCoverTileSize = demSource->getTileSize();
-    const Range<uint8_t> zoomRange{0, demSource->getMaxZoom()};
-
-    // LOD parameters from the frame drive the same near-high/far-low zoom
-    // selection every other source uses, so the near field drapes at a higher
-    // zoom (smaller ground area per 1024 target = sharper draped content).
-    util::TileCoverParameters coverParams{.transformState = state, .elevationProvider = &elevationProvider};
-    double zoomShift = 0.0;
-    if (updateParameters) {
-        coverParams.tileLodMinRadius = updateParameters->tileLodMinRadius;
-        coverParams.tileLodScale = updateParameters->tileLodScale;
-        coverParams.tileLodPitchThreshold = updateParameters->tileLodPitchThreshold;
-        coverParams.tileLodMode = updateParameters->tileLodMode;
-        zoomShift = updateParameters->tileLodZoomShift;
-    }
-
-    const double zoom = util::clamp<double>(state.getZoom() + zoomShift, state.getMinZoom(), state.getMaxZoom());
-    const int32_t overscaledZoom = util::coveringZoomLevel(zoom, style::SourceType::RasterDEM, terrainCoverTileSize);
-    if (overscaledZoom < static_cast<int32_t>(zoomRange.min)) {
-        return out;
-    }
-    const int32_t idealZoom = std::min<int32_t>(zoomRange.max, overscaledZoom);
-    for (const auto& id : util::tileCover(
-             coverParams, static_cast<uint8_t>(idealZoom), zoomRange, static_cast<uint8_t>(overscaledZoom))) {
-        out.insert(id.toUnwrapped());
-    }
-
+namespace {
+std::set<UnwrappedTileID> dilatedCover(const util::TileCoverParameters& coverParams, std::set<UnwrappedTileID> out) {
     // One-ring cover dilation. tileCover is a top-down DFS that only descends into tiles
     // whose (sea-level) ancestor intersects the frustum, so a frontier tile whose terrain
     // rises into view but whose flat ancestor was culled is never even visited - it stays
@@ -166,6 +124,94 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     if (dilated.size() != out.size()) {
         out = util::frustumCull(coverParams, dilated);
     }
+    return out;
+}
+} // namespace
+
+std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
+    const TransformState& state, const std::shared_ptr<UpdateParameters>& updateParameters) const {
+    std::set<UnwrappedTileID> out;
+    if (!demSource) {
+        return out;
+    }
+
+    // Elevation-aware visibility: terrain leaning towards the camera occupies
+    // screen space its flat footprint does not, so the cover is tested against the
+    // DEM height rather than the z=0 plane (as util::tileCover / gl-js do).
+    DEMElevationProvider elevationProvider(demSource, getExaggeration());
+
+    // Cover at the tile size the DEM source selects tiles with, so the mesh lands on the zoom its
+    // DEM tiles are on. Meshing shallower than the DEM leaves its tiles descendants, which the
+    // per-tile lookup cannot match, so the mesh renders flat off the placeholder; it also
+    // undersamples the DEM, aliasing the relief into waves on the fixed 128x128 mesh. Still the
+    // elevation-aware ideal cover from the view, not the DEM's loaded tile set.
+    const uint16_t terrainCoverTileSize = demSource->getTileSize();
+    const Range<uint8_t> zoomRange{0, demSource->getMaxZoom()};
+
+    // LOD parameters from the frame drive the same near-high/far-low zoom
+    // selection every other source uses, so the near field drapes at a higher
+    // zoom (smaller ground area per 1024 target = sharper draped content).
+    util::TileCoverParameters coverParams{.transformState = state, .elevationProvider = &elevationProvider};
+    double zoomShift = 0.0;
+    if (updateParameters) {
+        coverParams.tileLodMinRadius = updateParameters->tileLodMinRadius;
+        coverParams.tileLodScale = updateParameters->tileLodScale;
+        coverParams.tileLodPitchThreshold = updateParameters->tileLodPitchThreshold;
+        coverParams.tileLodMode = updateParameters->tileLodMode;
+        zoomShift = updateParameters->tileLodZoomShift;
+    }
+
+    const auto coverAt = [&](uint8_t coarsening) {
+        std::set<UnwrappedTileID> cover;
+        const double zoom = util::clamp<double>(
+            state.getZoom() + zoomShift - coarsening, state.getMinZoom(), state.getMaxZoom());
+        const int32_t overscaledZoom = util::coveringZoomLevel(zoom, style::SourceType::RasterDEM, terrainCoverTileSize);
+        if (overscaledZoom < static_cast<int32_t>(zoomRange.min)) {
+            return cover;
+        }
+        const int32_t idealZoom = std::min<int32_t>(zoomRange.max, overscaledZoom);
+        for (const auto& id : util::tileCover(
+                 coverParams, static_cast<uint8_t>(idealZoom), zoomRange, static_cast<uint8_t>(overscaledZoom))) {
+            cover.insert(id.toUnwrapped());
+        }
+        return dilatedCover(coverParams, std::move(cover));
+    };
+
+    out = coverAt(meshCoarsening);
+    if (updateParameters) {
+        const std::size_t cap = terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles;
+        // A quarter over the cap only loses far tiles in the haze; a level coarser loses detail.
+        const std::size_t overflow = cap + cap / 4;
+        // Finer is safe at once: the coarser DEM it leaves is the finer tiles' ancestor fallback.
+        if (meshCoarsening > 0) {
+            auto finer = coverAt(meshCoarsening - 1);
+            if (finer.size() <= cap) {
+                --meshCoarsening;
+                out = std::move(finer);
+            }
+        }
+        uint8_t wanted = meshCoarsening;
+        if (out.size() > overflow && meshCoarsening < kMaxCoarsening) {
+            wanted = meshCoarsening + 1;
+        }
+        util::setTerrainCoarsening(wanted);
+        coarseningPending = false;
+        if (wanted > meshCoarsening) {
+            // Coarser only once the DEM has loaded at that level (tiles past its coverage fail, not
+            // load): a mesh tile with no DEM of its own or above is drawn flat at sea level.
+            if ((++coarseningWaitFrames > 2 && demSource->isLoaded()) ||
+                coarseningWaitFrames > kCoarseningWaitFrames) {
+                meshCoarsening = wanted;
+                coarseningWaitFrames = 0;
+                out = coverAt(wanted);
+            } else {
+                coarseningPending = true;
+            }
+        } else {
+            coarseningWaitFrames = 0;
+        }
+    }
+
 
     // Cap the tile count: keep those nearest the camera, drop the farthest (the horizon tiles a
     // high tilt pulls in). Nearest the camera, not the map centre: at a steep tilt the centre is

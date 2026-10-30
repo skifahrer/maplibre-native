@@ -5,6 +5,8 @@
 #include <mln/util/interpolate.hpp>
 #include <mln/util/tile_coordinate.hpp>
 #include <mln/util/tile_cover.hpp>
+
+#include <atomic>
 #include <mln/util/tile_cover_impl.hpp>
 #include <mln/util/tile_lod.hpp>
 
@@ -151,6 +153,18 @@ std::vector<UnwrappedTileID> tileCover(const Point<double>& tl,
 
 uint8_t nearDetailLevels() noexcept {
     return 2;
+}
+
+namespace {
+std::atomic<uint8_t> terrainCoarseningLevels{0};
+} // namespace
+
+uint8_t terrainCoarsening() noexcept {
+    return terrainCoarseningLevels.load(std::memory_order_relaxed);
+}
+
+void setTerrainCoarsening(uint8_t levels) noexcept {
+    terrainCoarseningLevels.store(levels, std::memory_order_relaxed);
 }
 
 int32_t coveringZoomLevel(double zoom, style::SourceType type, uint16_t size) noexcept {

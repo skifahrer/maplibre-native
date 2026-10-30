@@ -88,6 +88,8 @@ public:
     /// the first tile the cap dropped begins, eased over frames; infinity when it dropped none.
     /// The fog is full by then.
     double getCoverReachMetres() const { return coverReachMetres; }
+    /// Whether the mesh waits on a coarser DEM, so the renderer asks for another frame.
+    bool isCoarseningPending() const { return coarseningPending; }
 
     /// Squared distance from `origin` (normalized web-mercator) to the nearest point of the tile.
     static double nearestPointDist2(const UnwrappedTileID& id, const std::array<double, 2>& origin);
@@ -325,6 +327,12 @@ public:
 private:
     /// computeMeshCover's last answer for getCoverReachMetres.
     mutable double coverReachMetres = std::numeric_limits<double>::infinity();
+    /// Levels coarser than the view the mesh is built at, so it fits the tile budget.
+    mutable uint8_t meshCoarsening = 0;
+    mutable bool coarseningPending = false;
+    mutable int coarseningWaitFrames = 0;
+    static constexpr uint8_t kMaxCoarsening = 4;
+    static constexpr int kCoarseningWaitFrames = 60;
     /// sightBlocked's last answer, which it holds until the ground is kCutReleaseM below the line.
     mutable bool cutting = false;
     static constexpr double kCutReleaseM = 30.0;
