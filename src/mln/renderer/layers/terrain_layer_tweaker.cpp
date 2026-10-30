@@ -59,11 +59,12 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
     }
 
     // The cutaway: while a mountain stands between the camera and the centre, terrain nearer
-    // than the centre and above it on screen is not drawn. A margin keeps the centre's slope.
-    const float cutDepth = terrain->sightBlocked(parameters.state)
-                               ? 0.9f * parameters.state.getCameraToCenterDistance()
-                               : 0.0f;
+    // than the centre is not drawn in a window over it. A margin keeps the centre's slope.
+    const float centreDistance = static_cast<float>(parameters.state.getCameraToCenterDistance());
+    const float cutDepth = terrain->sightBlocked(parameters.state) ? 0.9f * centreDistance : 0.0f;
     const auto size = parameters.state.getSize();
+    const auto& insets = parameters.state.getEdgeInsets();
+    const float cutNdcX = size.width > 0 ? static_cast<float>((insets.left() - insets.right()) / size.width) : 0.0f;
     const float cutNdcY = size.height > 0
                               ? static_cast<float>(-(parameters.state.getEdgeInsets().top() - parameters.state.getEdgeInsets().bottom()) /
                                                    size.height)
@@ -75,7 +76,7 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
                                                .exaggeration = exaggeration,
                                                .elevation_offset = elevationOffset,
                                                .pad1 = 0.0f,
-                                               .pad2 = 0.0f,
+                                               .cut_ndc_x = cutNdcX,
                                                .fog_color = {fogColor.r, fogColor.g, fogColor.b, fogColor.a},
                                                .fog_start = fogDepth(fogStart),
                                                .fog_end = fogDepth(fogEnd),

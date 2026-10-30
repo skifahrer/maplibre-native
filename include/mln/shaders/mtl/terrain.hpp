@@ -37,7 +37,7 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
     /* 16 */ float exaggeration;
     /* 20 */ float elevation_offset;
     /* 24 */ float pad1;
-    /* 28 */ float pad2;
+    /* 28 */ float cut_ndc_x;
     /* 32 */ float4 fog_color;
     /* 48 */ float fog_start;
     /* 52 */ float fog_end;
@@ -46,6 +46,19 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
     /* 64 */
 };
 static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64, "wrong size");
+
+// Terrain the camera must see through: what stands nearer than the centre in a window over it,
+// so the mountains to the sides stay. The curtains under the cut tiles' edges go with it.
+inline bool cut_away(device const TerrainEvaluatedPropsUBO& props, float3 clip_xyw, float depth, float skirt) {
+    if (props.cut_depth <= 0.0) {
+        return false;
+    }
+    // Deepest over the centre, none at the window's edge: the cut follows the ground, no seam.
+    const float2 ndc = clip_xyw.xy / clip_xyw.z;
+    const float2 off = (ndc - float2(props.cut_ndc_x, props.cut_ndc_y)) / float2(0.5, ndc.y > props.cut_ndc_y ? 1.0 : 0.3);
+    const float reach = 1.0 - dot(off, off);
+    return reach > 0.0 && (depth < props.cut_depth * reach || skirt > 0.5);
+}
 
 )";
 
@@ -71,7 +84,7 @@ struct FragmentStage {
     float2 uv;
     float elevation;
     float depth; // view depth, for the fog
-    float2 clip_yw; // clip y and w, for the cutaway in front of the centre
+    float3 clip_xyw; // clip y and w, for the cutaway in front of the centre
     float skirt;    // 1 on the curtain below a tile edge
 };
 
@@ -107,7 +120,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
         .uv        = uv,
         .elevation = elevation,
         .depth     = position.w,
-        .clip_yw   = position.yw,
+        .clip_xyw  = position.xyw,
         .skirt     = float(vertx.pos.z),
     };
 }
@@ -126,11 +139,7 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     // 1.0 - uv.y. Metal's NDC is Y-up, so the RTT is stored upright and the V must NOT
     // be flipped here - sampling 1.0 - uv.y flips the draped map vertically (north/south
     // swapped about the view). Sample uv.y directly on Metal.
-    // Terrain nearer than the centre and above it on screen stands between the camera and
-    // what it looks at: it is not drawn, so the view goes through the mountain in the way.
-    // The curtains under the cut tiles' edges go with it, or they stand in the hole as streaks.
-    if (props.cut_depth > 0.0 && (in.depth < props.cut_depth || in.skirt > 0.5) &&
-        in.clip_yw.x / in.clip_yw.y > props.cut_ndc_y) {
+    if (cut_away(props, in.clip_xyw, in.depth, in.skirt)) {
         discard_fragment();
     }
     float4 color = mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));

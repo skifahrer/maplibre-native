@@ -42,12 +42,12 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
     /* 16 */ float exaggeration;
     /* 20 */ float elevation_offset;
     /* 24 */ float pad1;
-    /* 28 */ float pad2;
+    /* 28 */ float cut_ndc_x;              // the centre's NDC x, the middle of the cut window
     /* 32 */ std::array<float, 4> fog_color; // premultiplied; alpha 0 = no fog
     /* 48 */ float fog_start;                // view depth (world pixels) where the fog starts
     /* 52 */ float fog_end;                  // and where it is full
     /* 56 */ float cut_depth;              // view depth of the map centre; 0 = no cutaway
-    /* 60 */ float cut_ndc_y;              // the centre's NDC y: nearer terrain above it is cut
+    /* 60 */ float cut_ndc_y;              // the centre's NDC y: the window opens above it
     /* 64 */
 };
 static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64);
