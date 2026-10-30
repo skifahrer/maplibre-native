@@ -28,6 +28,9 @@ public:
     RenderTiles getRenderTilesSortedByYPosition() const override;
     const Tile* getRenderedTile(const UnwrappedTileID&) const override;
     Immutable<std::vector<RenderTile>> getRawRenderTiles() const override { return renderTiles; }
+    /// Whether the tile was asked for and came back with nothing to draw, as past a sparse
+    /// pyramid's edge.
+    bool tileHasNoData(const UnwrappedTileID&) const;
 
     std::unordered_map<std::string, std::vector<Feature>> queryRenderedFeatures(
         const ScreenLineString& geometry,

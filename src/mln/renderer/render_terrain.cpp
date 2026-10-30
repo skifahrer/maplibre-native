@@ -2,6 +2,8 @@
 #include <mln/gfx/cull_face_mode.hpp>
 #include <mln/renderer/update_parameters.hpp>
 #include <mln/renderer/render_source.hpp>
+#include <mln/style/sources/tile_source_impl.hpp>
+#include <mln/renderer/sources/render_tile_source.hpp>
 #include <mln/renderer/render_tile.hpp>
 #include <mln/renderer/render_pass.hpp>
 #include <mln/renderer/render_tree.hpp>
@@ -161,6 +163,14 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
         zoomShift = updateParameters->tileLodZoomShift;
     }
 
+    std::optional<LatLngBounds> demBounds;
+    const RenderTileSource* demTiles = nullptr;
+    if (demSource->baseImpl->type == style::SourceType::RasterDEM) {
+        demTiles = static_cast<const RenderTileSource*>(demSource);
+        if (const auto& tileset = static_cast<const style::TileSource::Impl&>(*demSource->baseImpl).tileset) {
+            demBounds = tileset->bounds;
+        }
+    }
     const auto coverAt = [&](uint8_t coarsening) {
         std::set<UnwrappedTileID> cover;
         const double zoom = util::clamp<double>(
@@ -174,7 +184,14 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
                  coverParams, static_cast<uint8_t>(idealZoom), zoomRange, static_cast<uint8_t>(overscaledZoom))) {
             cover.insert(id.toUnwrapped());
         }
-        return dilatedCover(coverParams, std::move(cover));
+        cover = dilatedCover(coverParams, std::move(cover));
+        // The map ends where the height model does: past its bounds, or where a tile came back
+        // empty, there is no DEM to stand on, and sea level under it stood as a cliff.
+        std::erase_if(cover, [&](const UnwrappedTileID& id) {
+            return (demBounds && !demBounds->intersects(LatLngBounds(id.canonical))) ||
+                   (demTiles && demTiles->tileHasNoData(id));
+        });
+        return cover;
     };
 
     out = coverAt(meshCoarsening);
