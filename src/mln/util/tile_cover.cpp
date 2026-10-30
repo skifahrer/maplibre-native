@@ -149,6 +149,10 @@ std::vector<UnwrappedTileID> tileCover(const Point<double>& tl,
 
 } // namespace
 
+uint8_t nearDetailLevels() noexcept {
+    return 2;
+}
+
 int32_t coveringZoomLevel(double zoom, style::SourceType type, uint16_t size) noexcept {
     zoom += util::log2(util::tileSize_D / size);
     if (type == style::SourceType::Raster || type == style::SourceType::RasterDEM || type == style::SourceType::Video) {
@@ -199,11 +203,13 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     const bool allowVariableZoom = adaptiveLod || transform.getPitch() > state.tileLodPitchThreshold;
     const uint8_t minZoom = allowVariableZoom ? zoomRange.min : z;
     const bool variableZoomMode = state.tileLodMode == TileLodMode::Distance || adaptiveLod;
-    // Adaptive never goes finer than the zoom the view asks for: under a steep pitch gl-js's
+    // Adaptive goes no finer than the zoom the view asks for: under a steep pitch gl-js's
     // function sends the ground at the camera to the source's max zoom, and a few hundred such
-    // tiles cost more than a tile budget allows. The near field gets the view's zoom, the far
-    // field less - where Default would give the near field less, as it measures from the centre.
-    const uint8_t maxZoom = (variableZoomMode && allowVariableZoom) ? (adaptiveLod ? z : zoomRange.max) : z;
+    // tiles cost more than a tile budget allows. Only the ground within kNearDetailMetres of the
+    // camera may go state.nearDetail levels finer.
+    constexpr double kNearDetailMetres = 1500.0;
+    const uint8_t adaptiveMax = std::min<uint8_t>(zoomRange.max, static_cast<uint8_t>(z + state.nearDetail));
+    const uint8_t maxZoom = (variableZoomMode && allowVariableZoom) ? (adaptiveLod ? adaptiveMax : zoomRange.max) : z;
     const uint8_t overscaledZoom = std::max(overscaledZ.value_or(z), maxZoom);
     const bool flippedY = transform.getViewportMode() == ViewportMode::FlippedY;
 
@@ -335,7 +341,10 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
                 requestedCenterZoom, distanceToTile2d, distanceToCenterZ, distanceToCenter3d) -
                                   std::log2(std::max(1.0, state.tileLodScale));
             const double desiredZoom = state.roundZoom ? std::round(rawZoom) : std::floor(rawZoom);
-            shouldSplitTile = node.zoom < std::clamp(desiredZoom, 0.0, static_cast<double>(maxZoom));
+            const double nearRadius = kNearDetailMetres / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
+                                                           util::M2PI * util::EARTH_RADIUS_M);
+            const uint8_t cap = distanceToTile2d < nearRadius ? maxZoom : std::min(maxZoom, z);
+            shouldSplitTile = node.zoom < std::clamp(desiredZoom, 0.0, static_cast<double>(cap));
         } else if (state.tileLodMode == TileLodMode::Distance) {
             const vec3 camToTileMercator = vec3Scale(node.aabb.distanceXYZ(cameraCoord), 1.0 / worldSize);
             const double distanceToTileMercator = vec3Length(camToTileMercator);

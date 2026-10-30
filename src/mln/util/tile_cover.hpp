@@ -61,12 +61,20 @@ struct TileCoverParameters {
     /// video sources. Only `TileLodMode::Adaptive` chooses a zoom per tile, so only it reads
     /// this.
     bool roundZoom = false;
+    /// Adaptive only: levels finer than the view's zoom the ground near the camera may go
+    /// (nearDetailLevels()). The DEM source and the terrain mesh keep 0: the mesh near the camera
+    /// is already finer than the view, and it is the draped sources that were stretched over it.
+    uint8_t nearDetail = 0;
     /// Optional; when null the cover is computed against the flat ground plane, as
     /// it was before terrain support.
     const TileElevationProvider* elevationProvider = nullptr;
 };
 
 int32_t coveringZoomLevel(double z, style::SourceType type, uint16_t tileSize) noexcept;
+
+/// The levels an adaptive cover's near field may go past the view's zoom: the slope just ahead of
+/// a tilted camera is magnified on screen, and drawn from tiles at the view's zoom it blurs.
+uint8_t nearDetailLevels() noexcept;
 
 std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
                                         uint8_t z,
