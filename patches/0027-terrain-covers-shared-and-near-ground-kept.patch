@@ -1,0 +1,444 @@
+diff --git a/src/mln/renderer/dem_elevation_provider.cpp b/src/mln/renderer/dem_elevation_provider.cpp
+index a1b08808bda..dc3f27a94b8 100644
+--- a/src/mln/renderer/dem_elevation_provider.cpp
++++ b/src/mln/renderer/dem_elevation_provider.cpp
+@@ -19,6 +19,13 @@ std::optional<Range<double>> DEMElevationProvider::getTileElevationRange(const C
+     if (!demSource) {
+         return std::nullopt;
+     }
++    if (const auto known = answers.find(id); known != answers.end()) {
++        return known->second;
++    }
++    return answers.emplace(id, lookUp(id)).first->second;
++}
++
++std::optional<Range<double>> DEMElevationProvider::lookUp(const CanonicalTileID& id) const {
+ 
+     // The tile's own DEM, or failing that the deepest loaded ancestor's, or failing that the
+     // range of the loaded DEM nearest the tile (see the header).
+diff --git a/src/mln/renderer/dem_elevation_provider.hpp b/src/mln/renderer/dem_elevation_provider.hpp
+index a7f56b34f59..46fbe15f393 100644
+--- a/src/mln/renderer/dem_elevation_provider.hpp
++++ b/src/mln/renderer/dem_elevation_provider.hpp
+@@ -5,6 +5,7 @@
+ #include <mln/util/tile_cover.hpp>
+ 
+ #include <optional>
++#include <unordered_map>
+ 
+ namespace mln {
+ 
+@@ -46,9 +47,13 @@ public:
+     std::optional<Range<double>> getTileElevationRange(const CanonicalTileID&) const override;
+ 
+ private:
++    std::optional<Range<double>> lookUp(const CanonicalTileID&) const;
++
+     const RenderRasterDEMSource* demSource;
+     double exaggeration;
+     std::optional<float> plane;
++    /// Every source's cover asks about the same tiles in a frame, each an ancestor walk.
++    mutable std::unordered_map<CanonicalTileID, std::optional<Range<double>>> answers;
+ };
+ 
+ } // namespace mln
+diff --git a/src/mln/renderer/render_orchestrator.cpp b/src/mln/renderer/render_orchestrator.cpp
+index 23f426fc2a1..489d537bc52 100644
+--- a/src/mln/renderer/render_orchestrator.cpp
++++ b/src/mln/renderer/render_orchestrator.cpp
+@@ -297,6 +297,8 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
+         terrainEnabled ? renderTerrain->getExaggeration() : 1.0,
+         terrainEnabled ? renderTerrain->getPlane() : std::nullopt};
+     tileParameters.elevationProvider = terrainEnabled ? &elevationProvider : nullptr;
++    util::TileCoverCache coverCache;
++    tileParameters.coverCache = &coverCache;
+ 
+     // A source whose minzoom is deeper than the far field's zoom is covered at that minzoom out
+     // to the horizon: thousands of tiles at a steep pitch, each kept with its geometry for as
+diff --git a/src/mln/renderer/render_terrain.cpp b/src/mln/renderer/render_terrain.cpp
+index 2cc20d50bb9..6cc8be4d465 100644
+--- a/src/mln/renderer/render_terrain.cpp
++++ b/src/mln/renderer/render_terrain.cpp
+@@ -102,7 +102,8 @@ std::set<UnwrappedTileID> dilatedCover(const util::TileCoverParameters& coverPar
+     // this is correct for terrain above OR below sea level (bathymetry) without hardcoding
+     // a direction; the frustum trim stops it from tripling the cover like a blind ring
+     // would. Drop the frustumCull line to fall back to a pure uniform 1-ring dilation.
+-    std::set<UnwrappedTileID> dilated = out;
++    // The cover's own tiles passed tileCover's stricter test: only the new neighbours are culled.
++    std::set<UnwrappedTileID> neighbours;
+     for (const auto& id : out) {
+         const int32_t numTiles = 1 << id.canonical.z;
+         for (int dy = -1; dy <= 1; ++dy) {
+@@ -119,13 +120,18 @@ std::set<UnwrappedTileID> dilatedCover(const util::TileCoverParameters& coverPar
+                     nx -= numTiles;
+                     ++nwrap;
+                 }
+-                dilated.emplace(static_cast<int16_t>(nwrap),
+-                                CanonicalTileID(id.canonical.z, static_cast<uint32_t>(nx), static_cast<uint32_t>(ny)));
++                const UnwrappedTileID neighbour(
++                    static_cast<int16_t>(nwrap),
++                    CanonicalTileID(id.canonical.z, static_cast<uint32_t>(nx), static_cast<uint32_t>(ny)));
++                if (!out.contains(neighbour)) {
++                    neighbours.insert(neighbour);
++                }
+             }
+         }
+     }
+-    if (dilated.size() != out.size()) {
+-        out = util::frustumCull(coverParams, dilated);
++    if (!neighbours.empty()) {
++        const auto kept = util::frustumCull(coverParams, neighbours);
++        out.insert(kept.begin(), kept.end());
+     }
+     return out;
+ }
+diff --git a/src/mln/renderer/tile_parameters.hpp b/src/mln/renderer/tile_parameters.hpp
+index 83ba4bf7cdc..b9f2d8d395b 100644
+--- a/src/mln/renderer/tile_parameters.hpp
++++ b/src/mln/renderer/tile_parameters.hpp
+@@ -27,6 +27,7 @@ using DynamicTextureAtlasPtr = std::shared_ptr<gfx::DynamicTextureAtlas>;
+ 
+ namespace util {
+ class TileElevationProvider;
++class TileCoverCache;
+ } // namespace util
+ 
+ class TileParameters {
+@@ -51,6 +52,8 @@ public:
+     /// Terrain elevation for the tile cover; null when there is no terrain, which
+     /// leaves the cover flat. See util::TileElevationProvider.
+     const util::TileElevationProvider* elevationProvider = nullptr;
++    /// This frame's covers, shared across sources; null computes each source's own.
++    util::TileCoverCache* coverCache = nullptr;
+     bool isUpdateSynchronous = false;
+     bool captureRenderedFeatures = false;
+     /// With terrain on: the most tiles one source covers (ideal and prefetch covers each),
+diff --git a/src/mln/renderer/tile_pyramid.cpp b/src/mln/renderer/tile_pyramid.cpp
+index 2ee51397508..aca7eea7c52 100644
+--- a/src/mln/renderer/tile_pyramid.cpp
++++ b/src/mln/renderer/tile_pyramid.cpp
+@@ -120,6 +120,13 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
+         .nearDetail = type == SourceType::RasterDEM ? uint8_t{0} : util::nearDetailLevels(),
+         .elevationProvider = parameters.elevationProvider};
+ 
++    const auto cover = [&](int32_t z, const std::optional<uint8_t>& overscaledZ) {
++        const auto coverZ = static_cast<uint8_t>(z);
++        return parameters.coverCache
++                   ? parameters.coverCache->cover(tileCoverParameters, coverZ, zoomRange, overscaledZ)
++                   : util::tileCover(tileCoverParameters, coverZ, zoomRange, overscaledZ);
++    };
++
+     if (std::cmp_greater_equal(overscaledZoom, zoomRange.min)) {
+         int32_t idealZoom = std::min<int32_t>(zoomRange.max, overscaledZoom);
+ 
+@@ -140,11 +147,11 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
+             }
+ 
+             if (panZoom < idealZoom) {
+-                panTiles = util::tileCover(tileCoverParameters, panZoom, zoomRange);
++                panTiles = cover(panZoom, std::nullopt);
+             }
+         }
+ 
+-        idealTiles = util::tileCover(tileCoverParameters, idealZoom, zoomRange, tileZoom);
++        idealTiles = cover(idealZoom, tileZoom);
+         if (parameters.mode == MapMode::Tile && type != SourceType::Raster && type != SourceType::RasterDEM &&
+             idealTiles.size() > 1) {
+             mln::Log::Warning(mln::Event::General,
+diff --git a/src/mln/util/tile_cover.cpp b/src/mln/util/tile_cover.cpp
+index 2befbfcb434..1ff422efdea 100644
+--- a/src/mln/util/tile_cover.cpp
++++ b/src/mln/util/tile_cover.cpp
+@@ -11,6 +11,7 @@
+ #include <mln/util/tile_lod.hpp>
+ 
+ #include <algorithm>
++#include <optional>
+ #include <functional>
+ #include <list>
+ #include <mutex>
+@@ -318,6 +319,9 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+                 .fullyVisible = false};
+     };
+ 
++    const double nearRadius = kNearDetailMetres / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
++                                                   util::M2PI * util::EARTH_RADIUS_M);
++
+     // Perform depth-first traversal on tile tree to find visible tiles
+     std::vector<Node> stack;
+     std::vector<ResultTile> result;
+@@ -334,13 +338,19 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+     while (!stack.empty()) {
+         Node node = stack.back();
+         stack.pop_back();
++        // Both tests below read the same box: one elevation lookup per node, not two.
++        std::optional<AABB> nodeBox;
++        const auto boxOf = [&]() -> const AABB& {
++            if (!nodeBox) nodeBox = elevatedAABB(node);
++            return *nodeBox;
++        };
+ 
+         // Use cached visibility information of ancestor nodes
+         if (!node.fullyVisible) {
+             // The flat fast path (frustum.intersects) asserts a zero-elevation box, so
+             // an elevated node has to take the 3D path. Nodes stay flat, and keep the
+             // cheaper test, until a DEM gives them height via elevatedAABB.
+-            const AABB testAABB = elevatedAABB(node);
++            const AABB& testAABB = boxOf();
+             const bool elevated = testAABB.min[2] != 0.0 || testAABB.max[2] != 0.0;
+             const IntersectionResult intersection = elevated ? frustum.intersectsElevated(testAABB)
+                                                              : frustum.intersects(testAABB);
+@@ -361,8 +371,6 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+                 requestedCenterZoom, distanceToTile2d, distanceToCenterZ, distanceToCenter3d) -
+                                   std::log2(std::max(1.0, state.tileLodScale));
+             const double desiredZoom = state.roundZoom ? std::round(rawZoom) : std::floor(rawZoom);
+-            const double nearRadius = kNearDetailMetres / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
+-                                                           util::M2PI * util::EARTH_RADIUS_M);
+             const uint8_t cap = distanceToTile2d < nearRadius ? maxZoom : std::min(maxZoom, z);
+             shouldSplitTile = node.zoom < std::clamp(desiredZoom, 0.0, static_cast<double>(cap));
+         } else if (state.tileLodMode == TileLodMode::Distance) {
+@@ -397,14 +405,16 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+         if (node.zoom == maxZoom || (!shouldSplitTile && node.zoom >= minZoom)) {
+             // Perform precise intersection test between the frustum and aabb.
+             // This will cull < 1% false positives missed by the original test
+-            const AABB preciseAABB = elevatedAABB(node);
+-            const bool preciseElevated = preciseAABB.min[2] != 0.0 || preciseAABB.max[2] != 0.0;
+             // intersectsPrecise also flattens to z = 0; the 3D method already covers the
+             // elevated case precisely, so reuse it rather than run the flat edge tests.
+-            const bool visible = node.fullyVisible ||
+-                                 (preciseElevated
+-                                      ? frustum.intersectsElevated(preciseAABB) != IntersectionResult::Separate
+-                                      : frustum.intersectsPrecise(preciseAABB, true) != IntersectionResult::Separate);
++            const auto preciselyVisible = [&] {
++                const AABB& preciseAABB = boxOf();
++                const bool preciseElevated = preciseAABB.min[2] != 0.0 || preciseAABB.max[2] != 0.0;
++                return preciseElevated
++                           ? frustum.intersectsElevated(preciseAABB) != IntersectionResult::Separate
++                           : frustum.intersectsPrecise(preciseAABB, true) != IntersectionResult::Separate;
++            };
++            const bool visible = node.fullyVisible || preciselyVisible();
+             if (visible) {
+                 const OverscaledTileID id = {
+                     node.zoom == maxZoom ? overscaledZoom : node.zoom, node.wrap, node.zoom, node.x, node.y};
+@@ -499,6 +509,23 @@ std::set<UnwrappedTileID> frustumCull(const TileCoverParameters& state, const st
+     return result;
+ }
+ 
++std::vector<OverscaledTileID> TileCoverCache::cover(const TileCoverParameters& state,
++                                                    uint8_t z,
++                                                    Range<uint8_t> zoomRange,
++                                                    const std::optional<uint8_t>& overscaledZ) {
++    const Key key{z,
++                  zoomRange.min,
++                  zoomRange.max,
++                  overscaledZ ? int16_t{*overscaledZ} : int16_t{-1},
++                  state.roundZoom,
++                  state.nearDetail};
++    auto found = covers.find(key);
++    if (found == covers.end()) {
++        found = covers.emplace(key, tileCover(state, z, zoomRange, overscaledZ)).first;
++    }
++    return found->second;
++}
++
+ std::vector<UnwrappedTileID> tileCover(const LatLngBounds& bounds_, uint8_t z) {
+     if (bounds_.isEmpty() || bounds_.south() > util::LATITUDE_MAX || bounds_.north() < -util::LATITUDE_MAX) {
+         return {};
+@@ -639,6 +666,12 @@ void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
+             continue;
+         }
+         const OverscaledTileID parent = tile.scaledTo(tile.overscaledZ - 1);
++        // No parent wider than twice its distance: merging on swallowed the near ground, 1043
++        // tiles at 79° became two z11 tiles spanning the camera and the drape there drew nothing.
++        const double parentSize = 1.0 / static_cast<double>(1u << parent.canonical.z);
++        if (parentSize * parentSize > 4 * distance2(parent)) {
++            continue;
++        }
+         std::erase_if(alive, [&](const OverscaledTileID& id) { return id == parent || id.isChildOf(parent); });
+         alive.insert(parent);
+         farthest.emplace(distance2(parent), parent);
+diff --git a/src/mln/util/tile_cover.hpp b/src/mln/util/tile_cover.hpp
+index 867d6a74a63..21931fd7800 100644
+--- a/src/mln/util/tile_cover.hpp
++++ b/src/mln/util/tile_cover.hpp
+@@ -7,11 +7,13 @@
+ #include <mln/util/range.hpp>
+ 
+ #include <array>
++#include <map>
+ #include <vector>
+ #include <memory>
+ #include <numbers>
+ #include <optional>
+ #include <set>
++#include <tuple>
+ 
+ namespace mln {
+ 
+@@ -86,6 +88,21 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+                                         const Range<uint8_t> zoomRange,
+                                         const std::optional<uint8_t>& overscaledZ = std::nullopt);
+ 
++/// One frame's covers, shared by the sources asking for the same one. Every input but these
++/// is the frame's (camera, detail, elevation), so a source with the same zoom range, rounding
++/// and near detail gets the cover another one already walked the quadtree for.
++class TileCoverCache {
++public:
++    std::vector<OverscaledTileID> cover(const TileCoverParameters& state,
++                                        uint8_t z,
++                                        Range<uint8_t> zoomRange,
++                                        const std::optional<uint8_t>& overscaledZ = std::nullopt);
++
++private:
++    using Key = std::tuple<uint8_t, uint8_t, uint8_t, int16_t, bool, uint8_t>;
++    std::map<Key, std::vector<OverscaledTileID>> covers;
++};
++
+ /// Keep only the tiles whose (elevation-aware) bounds intersect the view frustum.
+ /// The terrain mesh is built by subdividing the DEM source's render tiles, which
+ /// include large low-zoom ancestors when the DEM is sparse; most of such a tile's
+@@ -106,8 +123,10 @@ double nearestPointDistance2(const CanonicalTileID& id, int16_t wrap, const std:
+ 
+ /// Merge the tiles farthest from `origin` into their parents until no more than `maxTiles` are
+ /// left: the far ground goes coarser and the cover stays whole out to the horizon, where
+-/// keepNearestTiles cuts it short. The nearest keep their level. Parents stop at `minZoom`; where
+-/// that is still too many, the nearest are kept. Ties go by tile ID, as in keepNearestTiles.
++/// keepNearestTiles cuts it short. The nearest keep their level: no parent is made wider than
++/// twice its distance from `origin`, so the ground near it is never coarsened.
++/// Parents stop at `minZoom`; where that is still too many, the nearest are kept. Ties go by tile
++/// ID, as in keepNearestTiles.
+ void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
+                         size_t maxTiles,
+                         const std::array<double, 2>& origin,
+diff --git a/src/mln/util/tile_lod.cpp b/src/mln/util/tile_lod.cpp
+index c8fd3c9d1d0..cc83a1c48f1 100644
+--- a/src/mln/util/tile_lod.cpp
++++ b/src/mln/util/tile_lod.cpp
+@@ -42,11 +42,16 @@ double TileZoomFunction::operator()(double requestedCenterZoom,
+                                     double distanceToTile2D,
+                                     double distanceToTileZ,
+                                     double distanceToCenter3D) const {
+-    const double centerPitch = std::acos(std::min(1.0, distanceToTileZ / distanceToCenter3D));
+-    const double highestPitch = std::min(deg2rad(maxMercatorHorizonAngleDegrees),
+-                                         centerPitch + deg2rad(cameraVerticalFOV / 2));
+-    const double lowestPitch = std::min(highestPitch, centerPitch - deg2rad(cameraVerticalFOV / 2));
+-    const double tileCount = integralOfCosXByP(pitchTileLoadingBehavior - 1, lowestPitch, highestPitch);
++    if (distanceToTileZ != lastTileZ || distanceToCenter3D != lastCenter3D) {
++        const double centerPitch = std::acos(std::min(1.0, distanceToTileZ / distanceToCenter3D));
++        const double highestPitch = std::min(deg2rad(maxMercatorHorizonAngleDegrees),
++                                             centerPitch + deg2rad(cameraVerticalFOV / 2));
++        const double lowestPitch = std::min(highestPitch, centerPitch - deg2rad(cameraVerticalFOV / 2));
++        lastTileCount = integralOfCosXByP(pitchTileLoadingBehavior - 1, lowestPitch, highestPitch);
++        lastTileZ = distanceToTileZ;
++        lastCenter3D = distanceToCenter3D;
++    }
++    const double tileCount = lastTileCount;
+     const double thisTilePitch = std::atan(distanceToTile2D / distanceToTileZ);
+     const double distanceToTile3D = std::hypot(distanceToTile2D, distanceToTileZ);
+     double desired = requestedCenterZoom;
+diff --git a/src/mln/util/tile_lod.hpp b/src/mln/util/tile_lod.hpp
+index ae3ec794bf4..2acb578f8cb 100644
+--- a/src/mln/util/tile_lod.hpp
++++ b/src/mln/util/tile_lod.hpp
+@@ -30,6 +30,10 @@ private:
+     double pitchTileLoadingBehavior;
+     double tileCountPitch0;
+     double tileCountMaxMinRatio;
++    // One cover asks with the same camera distances for every tile: the integral once.
++    mutable double lastTileZ = -1;
++    mutable double lastCenter3D = -1;
++    mutable double lastTileCount = 0;
+ };
+ 
+ /// Near the bottom of a steeply pitched view, tiles are culled with room for the tallest feature they might hold,
+diff --git a/test/renderer/terrain_mesh_cover.test.cpp b/test/renderer/terrain_mesh_cover.test.cpp
+index 896037fb314..47d0270e7e8 100644
+--- a/test/renderer/terrain_mesh_cover.test.cpp
++++ b/test/renderer/terrain_mesh_cover.test.cpp
+@@ -6,6 +6,7 @@
+ #include <mln/tile/tile_id.hpp>
+ #include <mln/util/tile_cover.hpp>
+ 
++#include <algorithm>
+ #include <set>
+ 
+ using namespace mln;
+@@ -113,6 +114,29 @@ TEST(TerrainMeshCover, MergingStopsAtTheMinzoom) {
+     }
+ }
+ 
++// A deep cover far over the budget merged its far tiles until the parents spanned the origin,
++// swallowing the near ground: a merged tile is never wider than twice its distance from it.
++TEST(TerrainMeshCover, MergingNeverCoarsensTheGroundAtTheOrigin) {
++    std::vector<OverscaledTileID> tiles;
++    for (uint32_t x = 0; x < 64; x++) {
++        for (uint32_t y = 0; y < 64; y++) {
++            tiles.emplace_back(6, 0, CanonicalTileID(6, x, y));
++        }
++    }
++    const std::array<double, 2> origin{{0.5 / 64, 0.5 / 64}};
++    util::mergeFarthestTiles(tiles, 40, origin, 0);
++    EXPECT_LE(tiles.size(), 40u);
++    const OverscaledTileID atOrigin{6, 0, CanonicalTileID(6, 0, 0)};
++    EXPECT_NE(std::find(tiles.begin(), tiles.end(), atOrigin), tiles.end());
++    for (const auto& id : tiles) {
++        const double size = 1.0 / (1 << id.canonical.z);
++        if (id.canonical.z < 6) {
++            EXPECT_LE(size * size, 4 * util::nearestPointDistance2(id.canonical, id.wrap, origin))
++                << util::toString(id);
++        }
++    }
++}
++
+ TEST(TerrainMeshCover, RoomToSpareMergesNothing) {
+     auto tiles = overscaled(wholeZ2());
+     util::mergeFarthestTiles(tiles, 16, {{0.1, 0.1}}, 0);
+diff --git a/test/util/tile_cover.test.cpp b/test/util/tile_cover.test.cpp
+index 7537097ff51..bbc5c90c19a 100644
+--- a/test/util/tile_cover.test.cpp
++++ b/test/util/tile_cover.test.cpp
+@@ -767,3 +767,22 @@ TEST(TileCover, KeepNearestTilesMeasuresAcrossZoomsAndWraps) {
+     ASSERT_EQ(tiles.size(), 1u);
+     EXPECT_EQ(tiles[0], OverscaledTileID(1, 0, {1, 1, 0}));
+ }
++
++TEST(TileCover, CacheSharesOnlyTheSameCover) {
++    Transform transform;
++    transform.resize({512, 512});
++    transform.jumpTo(CameraOptions().withCenter(LatLng{49.16, 20.01}).withZoom(12.5).withPitch(70.0));
++    util::TileCoverParameters params{transform.getState()};
++    params.tileLodMode = TileLodMode::Adaptive;
++    params.nearDetail = util::nearDetailLevels();
++
++    util::TileCoverCache cache;
++    EXPECT_EQ(util::tileCover(params, 12, zoomRange), cache.cover(params, 12, zoomRange));
++    EXPECT_EQ(util::tileCover(params, 12, zoomRange, 13), cache.cover(params, 12, zoomRange, 13));
++    EXPECT_EQ(util::tileCover(params, 10, zoomRange), cache.cover(params, 10, zoomRange));
++    EXPECT_EQ(util::tileCover(params, 12, {0, 12}), cache.cover(params, 12, {0, 12}));
++    params.roundZoom = true;
++    EXPECT_EQ(util::tileCover(params, 12, zoomRange), cache.cover(params, 12, zoomRange));
++    params.nearDetail = 0;
++    EXPECT_EQ(util::tileCover(params, 12, zoomRange), cache.cover(params, 12, zoomRange));
++}
+diff --git a/test/util/tile_lod.test.cpp b/test/util/tile_lod.test.cpp
+index a364a82c5f7..a14286103dd 100644
+--- a/test/util/tile_lod.test.cpp
++++ b/test/util/tile_lod.test.cpp
+@@ -34,6 +34,17 @@ TEST(TileLod, TileZoomParameters) {
+     EXPECT_NEAR(util::TileZoomFunction(fov, 10.0, 1.0)(12, 4, 0.5, 1), 8.1871079138584975, 1e-9);
+ }
+ 
++// One function serves a whole cover, so a camera that moves between two calls must not reuse
++// the first call's terms.
++TEST(TileLod, TileZoomFollowsTheCameraBetweenCalls) {
++    const util::TileZoomFunction tileZoom(fov);
++    const double pitched = tileZoom(12, 4, 0.5, 1);
++    const double steep = tileZoom(12, 4, std::cos(util::deg2rad(80.0)), 1);
++    EXPECT_DOUBLE_EQ(pitched, util::TileZoomFunction(fov)(12, 4, 0.5, 1));
++    EXPECT_DOUBLE_EQ(steep, util::TileZoomFunction(fov)(12, 4, std::cos(util::deg2rad(80.0)), 1));
++    EXPECT_DOUBLE_EQ(tileZoom(12, 4, 0.5, 1), pitched);
++}
++
+ // Oracle: GL JS `getElevationForTileCulling` on the same inputs.
+ TEST(TileLod, ElevationForTileCulling) {
+     EXPECT_DOUBLE_EQ(util::elevationForTileCulling(0, fov), 0.0);
