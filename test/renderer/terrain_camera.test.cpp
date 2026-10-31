@@ -527,6 +527,26 @@ TEST(TerrainCamera, AnchoringBeforeTheSightIsMeasuredSettlesOnIt) {
     test.expectEyeAt(before);
 }
 
+// The bump that stayed: anchored on the ground looked at, the clamp then followed the height
+// under the centre as it changed (finer terrain arriving after a pan, here the exaggeration),
+// moving the camera by the difference over the cosine of the pitch. The view keeps.
+TEST(TerrainCamera, GroundChangingUnderAnAnchoredCentreKeepsTheView) {
+    TerrainCameraTest test;
+    test.tile = makeSlopedDEMTile();
+    test.map.setCenterClampedToGround(false);
+    test.map.jumpTo(CameraOptions().withZoom(10.0));
+    ASSERT_NEAR(test.renderAndGetAltitude(8), 0.0, 0.001);
+    test.map.anchorCenterOnTerrain();
+    test.map.setCenterClampedToGround(true);
+    const double anchored = test.renderAndGetAltitude(8);
+    ASSERT_GT(anchored, 300.0);
+    const vec3 before = test.eye();
+
+    test.map.getStyle().getTerrain()->setExaggeration(1.2f);
+    EXPECT_GT(test.renderAndGetAltitude(8), anchored + 50.0);
+    test.expectEyeAt(before);
+}
+
 namespace {
 
 // A flat Terrain-RGB tile at `meters`, a multiple of 0.1 m.

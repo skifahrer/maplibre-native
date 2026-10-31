@@ -413,7 +413,7 @@ void Map::Impl::onTerrainSightGroundChanged(double latitude, double longitude, d
         sightAnchorPending = false; // no ground on the line: the clamp has the height under the centre
         return;
     }
-    if (!sightAnchorPending || !centerClampedToGround || transform.inTransition() || !sightGroundOnTheLine()) {
+    if (!centerClampedToGround || transform.inTransition() || !sightGroundOnTheLine()) {
         return;
     }
     sightAnchorPending = false;
@@ -547,6 +547,11 @@ bool Map::Impl::clampCenterToTerrain(double elevationMeters) {
     // Raised to the ground under the centre, the camera would jump; the sight anchor keeps it.
     if (sightAnchorPending) {
         return false;
+    }
+    // On the ground looked at, follow that ground keeping the view: raised to the height under it
+    // instead, at a steep pitch the camera moved several times the difference.
+    if (sightGroundOnTheLine()) {
+        return setCenterAltitudeKeepingView(sightGround[2]);
     }
     if (std::abs(transform.getState().getCenterAltitude() - elevationMeters) < minimumChangeMeters) {
         return false;
