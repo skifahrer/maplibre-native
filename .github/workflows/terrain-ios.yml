@@ -87,15 +87,15 @@ jobs:
         with:
           repository: ${{ env.UPSTREAM }}
           ref: ${{ needs.check.outputs.sha }}
-          submodules: recursive
           persist-credentials: false
-          # the merge base with main; blobs only for what the merge touches
-          fetch-depth: 0
+          # deepened to the merge base with main below; blobs only for what the merge touches
+          fetch-depth: 1
           filter: blob:none
 
       # main's fixes in; its changelog lines are the only conflict we resolve
       - name: Merge upstream main
         env:
+          SHA: ${{ needs.check.outputs.sha }}
           MAIN_SHA: ${{ needs.check.outputs.main_sha }}
         run: |
           # Homebrew's git 2.56 lazily fetches an object no upstream ref reaches during the
@@ -104,7 +104,13 @@ jobs:
           git --version
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch --no-tags --filter=blob:none origin "$MAIN_SHA"
+          git fetch --no-tags --filter=blob:none --depth=1 origin "$MAIN_SHA"
+          # Both histories only as deep as the commit they share, not all of upstream's
+          for _ in $(seq 1 40); do
+            git merge-base HEAD "$MAIN_SHA" > /dev/null 2>&1 && break
+            git fetch --no-tags --filter=blob:none --deepen=250 origin "$SHA" "$MAIN_SHA"
+          done
+          git merge-base HEAD "$MAIN_SHA" > /dev/null 2>&1 || git fetch --no-tags --filter=blob:none --unshallow origin "$SHA" "$MAIN_SHA"
           if ! git merge --no-edit -m "Merge $MAIN ${MAIN_SHA:0:7} into $BRANCH" "$MAIN_SHA"; then
             others=$(git diff --name-only --diff-filter=U | grep -v 'CHANGELOG\.md$' || true)
             if [ -n "$others" ]; then
@@ -115,7 +121,9 @@ jobs:
             git add -A
             git commit --no-edit
           fi
-          git submodule update --init --recursive
+          # Each submodule at its pinned commit only, all at once
+          git submodule update --init --recursive --depth 1 --jobs 8 ||
+            git submodule update --init --recursive --jobs 8
           git log -1 --format='%H %s'
 
       - uses: actions/checkout@v4
@@ -157,9 +165,10 @@ jobs:
             //platform/ios:MapLibre.dynamic
           echo "BIN=$(bazel info --compilation_mode=opt bazel-bin)/platform/ios" >> "$GITHUB_ENV"
 
-      # Kept under 6 GB by Bazel, inside the repository's 10 GB of Actions cache.
+      # Kept under 6 GB by Bazel, inside the repository's 10 GB of Actions cache. Only the
+      # nightly saves it: a manual run restores it, and 2 minutes of upload would not pay back.
       - name: Save the Bazel cache
-        if: always()
+        if: always() && github.event_name == 'schedule'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel-disk
@@ -184,7 +193,9 @@ jobs:
           ls -la out
           du -sh x/MapLibre.xcframework/ios-arm64/MapLibre.framework/MapLibre
 
+      # A run from another branch builds to try the workflow, and publishes nothing.
       - name: Release
+        if: github.ref == 'refs/heads/nightly'
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.check.outputs.sha }}
