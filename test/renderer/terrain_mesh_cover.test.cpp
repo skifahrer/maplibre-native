@@ -6,6 +6,7 @@
 #include <mln/tile/tile_id.hpp>
 #include <mln/util/tile_cover.hpp>
 
+#include <algorithm>
 #include <set>
 
 using namespace mln;
@@ -110,6 +111,29 @@ TEST(TerrainMeshCover, MergingStopsAtTheMinzoom) {
     EXPECT_EQ(tiles.size(), 7u);
     for (const auto& id : tiles) {
         EXPECT_EQ(id.overscaledZ, 2);
+    }
+}
+
+// A deep cover far over the budget merged its far tiles until the parents spanned the origin,
+// swallowing the near ground: a merged tile is never wider than twice its distance from it.
+TEST(TerrainMeshCover, MergingNeverCoarsensTheGroundAtTheOrigin) {
+    std::vector<OverscaledTileID> tiles;
+    for (uint32_t x = 0; x < 64; x++) {
+        for (uint32_t y = 0; y < 64; y++) {
+            tiles.emplace_back(6, 0, CanonicalTileID(6, x, y));
+        }
+    }
+    const std::array<double, 2> origin{{0.5 / 64, 0.5 / 64}};
+    util::mergeFarthestTiles(tiles, 40, origin, 0);
+    EXPECT_LE(tiles.size(), 40u);
+    const OverscaledTileID atOrigin{6, 0, CanonicalTileID(6, 0, 0)};
+    EXPECT_NE(std::find(tiles.begin(), tiles.end(), atOrigin), tiles.end());
+    for (const auto& id : tiles) {
+        const double size = 1.0 / (1 << id.canonical.z);
+        if (id.canonical.z < 6) {
+            EXPECT_LE(size * size, 4 * util::nearestPointDistance2(id.canonical, id.wrap, origin))
+                << util::toString(id);
+        }
     }
 }
 

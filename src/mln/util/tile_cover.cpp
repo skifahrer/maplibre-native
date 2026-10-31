@@ -11,6 +11,7 @@
 #include <mln/util/tile_lod.hpp>
 
 #include <algorithm>
+#include <optional>
 #include <functional>
 #include <list>
 #include <mutex>
@@ -318,6 +319,9 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
                 .fullyVisible = false};
     };
 
+    const double nearRadius = kNearDetailMetres / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
+                                                   util::M2PI * util::EARTH_RADIUS_M);
+
     // Perform depth-first traversal on tile tree to find visible tiles
     std::vector<Node> stack;
     std::vector<ResultTile> result;
@@ -334,13 +338,19 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     while (!stack.empty()) {
         Node node = stack.back();
         stack.pop_back();
+        // Both tests below read the same box: one elevation lookup per node, not two.
+        std::optional<AABB> nodeBox;
+        const auto boxOf = [&]() -> const AABB& {
+            if (!nodeBox) nodeBox = elevatedAABB(node);
+            return *nodeBox;
+        };
 
         // Use cached visibility information of ancestor nodes
         if (!node.fullyVisible) {
             // The flat fast path (frustum.intersects) asserts a zero-elevation box, so
             // an elevated node has to take the 3D path. Nodes stay flat, and keep the
             // cheaper test, until a DEM gives them height via elevatedAABB.
-            const AABB testAABB = elevatedAABB(node);
+            const AABB& testAABB = boxOf();
             const bool elevated = testAABB.min[2] != 0.0 || testAABB.max[2] != 0.0;
             const IntersectionResult intersection = elevated ? frustum.intersectsElevated(testAABB)
                                                              : frustum.intersects(testAABB);
@@ -361,8 +371,6 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
                 requestedCenterZoom, distanceToTile2d, distanceToCenterZ, distanceToCenter3d) -
                                   std::log2(std::max(1.0, state.tileLodScale));
             const double desiredZoom = state.roundZoom ? std::round(rawZoom) : std::floor(rawZoom);
-            const double nearRadius = kNearDetailMetres / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
-                                                           util::M2PI * util::EARTH_RADIUS_M);
             const uint8_t cap = distanceToTile2d < nearRadius ? maxZoom : std::min(maxZoom, z);
             shouldSplitTile = node.zoom < std::clamp(desiredZoom, 0.0, static_cast<double>(cap));
         } else if (state.tileLodMode == TileLodMode::Distance) {
@@ -397,14 +405,16 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
         if (node.zoom == maxZoom || (!shouldSplitTile && node.zoom >= minZoom)) {
             // Perform precise intersection test between the frustum and aabb.
             // This will cull < 1% false positives missed by the original test
-            const AABB preciseAABB = elevatedAABB(node);
-            const bool preciseElevated = preciseAABB.min[2] != 0.0 || preciseAABB.max[2] != 0.0;
             // intersectsPrecise also flattens to z = 0; the 3D method already covers the
             // elevated case precisely, so reuse it rather than run the flat edge tests.
-            const bool visible = node.fullyVisible ||
-                                 (preciseElevated
-                                      ? frustum.intersectsElevated(preciseAABB) != IntersectionResult::Separate
-                                      : frustum.intersectsPrecise(preciseAABB, true) != IntersectionResult::Separate);
+            const auto preciselyVisible = [&] {
+                const AABB& preciseAABB = boxOf();
+                const bool preciseElevated = preciseAABB.min[2] != 0.0 || preciseAABB.max[2] != 0.0;
+                return preciseElevated
+                           ? frustum.intersectsElevated(preciseAABB) != IntersectionResult::Separate
+                           : frustum.intersectsPrecise(preciseAABB, true) != IntersectionResult::Separate;
+            };
+            const bool visible = node.fullyVisible || preciselyVisible();
             if (visible) {
                 const OverscaledTileID id = {
                     node.zoom == maxZoom ? overscaledZoom : node.zoom, node.wrap, node.zoom, node.x, node.y};
@@ -497,6 +507,23 @@ std::set<UnwrappedTileID> frustumCull(const TileCoverParameters& state, const st
         }
     }
     return result;
+}
+
+std::vector<OverscaledTileID> TileCoverCache::cover(const TileCoverParameters& state,
+                                                    uint8_t z,
+                                                    Range<uint8_t> zoomRange,
+                                                    const std::optional<uint8_t>& overscaledZ) {
+    const Key key{z,
+                  zoomRange.min,
+                  zoomRange.max,
+                  overscaledZ ? int16_t{*overscaledZ} : int16_t{-1},
+                  state.roundZoom,
+                  state.nearDetail};
+    auto found = covers.find(key);
+    if (found == covers.end()) {
+        found = covers.emplace(key, tileCover(state, z, zoomRange, overscaledZ)).first;
+    }
+    return found->second;
 }
 
 std::vector<UnwrappedTileID> tileCover(const LatLngBounds& bounds_, uint8_t z) {
@@ -639,6 +666,12 @@ void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
             continue;
         }
         const OverscaledTileID parent = tile.scaledTo(tile.overscaledZ - 1);
+        // No parent wider than twice its distance: merging on swallowed the near ground, 1043
+        // tiles at 79° became two z11 tiles spanning the camera and the drape there drew nothing.
+        const double parentSize = 1.0 / static_cast<double>(1u << parent.canonical.z);
+        if (parentSize * parentSize > 4 * distance2(parent)) {
+            continue;
+        }
         std::erase_if(alive, [&](const OverscaledTileID& id) { return id == parent || id.isChildOf(parent); });
         alive.insert(parent);
         farthest.emplace(distance2(parent), parent);

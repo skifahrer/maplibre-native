@@ -7,11 +7,13 @@
 #include <mln/util/range.hpp>
 
 #include <array>
+#include <map>
 #include <vector>
 #include <memory>
 #include <numbers>
 #include <optional>
 #include <set>
+#include <tuple>
 
 namespace mln {
 
@@ -86,6 +88,21 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
                                         const Range<uint8_t> zoomRange,
                                         const std::optional<uint8_t>& overscaledZ = std::nullopt);
 
+/// One frame's covers, shared by the sources asking for the same one. Every input but these
+/// is the frame's (camera, detail, elevation), so a source with the same zoom range, rounding
+/// and near detail gets the cover another one already walked the quadtree for.
+class TileCoverCache {
+public:
+    std::vector<OverscaledTileID> cover(const TileCoverParameters& state,
+                                        uint8_t z,
+                                        Range<uint8_t> zoomRange,
+                                        const std::optional<uint8_t>& overscaledZ = std::nullopt);
+
+private:
+    using Key = std::tuple<uint8_t, uint8_t, uint8_t, int16_t, bool, uint8_t>;
+    std::map<Key, std::vector<OverscaledTileID>> covers;
+};
+
 /// Keep only the tiles whose (elevation-aware) bounds intersect the view frustum.
 /// The terrain mesh is built by subdividing the DEM source's render tiles, which
 /// include large low-zoom ancestors when the DEM is sparse; most of such a tile's
@@ -106,8 +123,10 @@ double nearestPointDistance2(const CanonicalTileID& id, int16_t wrap, const std:
 
 /// Merge the tiles farthest from `origin` into their parents until no more than `maxTiles` are
 /// left: the far ground goes coarser and the cover stays whole out to the horizon, where
-/// keepNearestTiles cuts it short. The nearest keep their level. Parents stop at `minZoom`; where
-/// that is still too many, the nearest are kept. Ties go by tile ID, as in keepNearestTiles.
+/// keepNearestTiles cuts it short. The nearest keep their level: no parent is made wider than
+/// twice its distance from `origin`, so the ground near it is never coarsened.
+/// Parents stop at `minZoom`; where that is still too many, the nearest are kept. Ties go by tile
+/// ID, as in keepNearestTiles.
 void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
                         size_t maxTiles,
                         const std::array<double, 2>& origin,

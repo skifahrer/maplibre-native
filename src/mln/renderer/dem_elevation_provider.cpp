@@ -19,6 +19,13 @@ std::optional<Range<double>> DEMElevationProvider::getTileElevationRange(const C
     if (!demSource) {
         return std::nullopt;
     }
+    if (const auto known = answers.find(id); known != answers.end()) {
+        return known->second;
+    }
+    return answers.emplace(id, lookUp(id)).first->second;
+}
+
+std::optional<Range<double>> DEMElevationProvider::lookUp(const CanonicalTileID& id) const {
 
     // The tile's own DEM, or failing that the deepest loaded ancestor's, or failing that the
     // range of the loaded DEM nearest the tile (see the header).

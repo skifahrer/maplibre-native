@@ -5,6 +5,7 @@
 #include <mln/util/tile_cover.hpp>
 
 #include <optional>
+#include <unordered_map>
 
 namespace mln {
 
@@ -46,9 +47,13 @@ public:
     std::optional<Range<double>> getTileElevationRange(const CanonicalTileID&) const override;
 
 private:
+    std::optional<Range<double>> lookUp(const CanonicalTileID&) const;
+
     const RenderRasterDEMSource* demSource;
     double exaggeration;
     std::optional<float> plane;
+    /// Every source's cover asks about the same tiles in a frame, each an ancestor walk.
+    mutable std::unordered_map<CanonicalTileID, std::optional<Range<double>>> answers;
 };
 
 } // namespace mln

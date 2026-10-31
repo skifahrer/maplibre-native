@@ -27,6 +27,7 @@ using DynamicTextureAtlasPtr = std::shared_ptr<gfx::DynamicTextureAtlas>;
 
 namespace util {
 class TileElevationProvider;
+class TileCoverCache;
 } // namespace util
 
 class TileParameters {
@@ -51,6 +52,8 @@ public:
     /// Terrain elevation for the tile cover; null when there is no terrain, which
     /// leaves the cover flat. See util::TileElevationProvider.
     const util::TileElevationProvider* elevationProvider = nullptr;
+    /// This frame's covers, shared across sources; null computes each source's own.
+    util::TileCoverCache* coverCache = nullptr;
     bool isUpdateSynchronous = false;
     bool captureRenderedFeatures = false;
     /// With terrain on: the most tiles one source covers (ideal and prefetch covers each),

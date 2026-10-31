@@ -102,7 +102,8 @@ std::set<UnwrappedTileID> dilatedCover(const util::TileCoverParameters& coverPar
     // this is correct for terrain above OR below sea level (bathymetry) without hardcoding
     // a direction; the frustum trim stops it from tripling the cover like a blind ring
     // would. Drop the frustumCull line to fall back to a pure uniform 1-ring dilation.
-    std::set<UnwrappedTileID> dilated = out;
+    // The cover's own tiles passed tileCover's stricter test: only the new neighbours are culled.
+    std::set<UnwrappedTileID> neighbours;
     for (const auto& id : out) {
         const int32_t numTiles = 1 << id.canonical.z;
         for (int dy = -1; dy <= 1; ++dy) {
@@ -119,13 +120,18 @@ std::set<UnwrappedTileID> dilatedCover(const util::TileCoverParameters& coverPar
                     nx -= numTiles;
                     ++nwrap;
                 }
-                dilated.emplace(static_cast<int16_t>(nwrap),
-                                CanonicalTileID(id.canonical.z, static_cast<uint32_t>(nx), static_cast<uint32_t>(ny)));
+                const UnwrappedTileID neighbour(
+                    static_cast<int16_t>(nwrap),
+                    CanonicalTileID(id.canonical.z, static_cast<uint32_t>(nx), static_cast<uint32_t>(ny)));
+                if (!out.contains(neighbour)) {
+                    neighbours.insert(neighbour);
+                }
             }
         }
     }
-    if (dilated.size() != out.size()) {
-        out = util::frustumCull(coverParams, dilated);
+    if (!neighbours.empty()) {
+        const auto kept = util::frustumCull(coverParams, neighbours);
+        out.insert(kept.begin(), kept.end());
     }
     return out;
 }

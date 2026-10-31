@@ -297,6 +297,8 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         terrainEnabled ? renderTerrain->getExaggeration() : 1.0,
         terrainEnabled ? renderTerrain->getPlane() : std::nullopt};
     tileParameters.elevationProvider = terrainEnabled ? &elevationProvider : nullptr;
+    util::TileCoverCache coverCache;
+    tileParameters.coverCache = &coverCache;
 
     // A source whose minzoom is deeper than the far field's zoom is covered at that minzoom out
     // to the horizon: thousands of tiles at a steep pitch, each kept with its geometry for as

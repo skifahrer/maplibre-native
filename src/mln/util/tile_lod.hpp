@@ -30,6 +30,10 @@ private:
     double pitchTileLoadingBehavior;
     double tileCountPitch0;
     double tileCountMaxMinRatio;
+    // One cover asks with the same camera distances for every tile: the integral once.
+    mutable double lastTileZ = -1;
+    mutable double lastCenter3D = -1;
+    mutable double lastTileCount = 0;
 };
 
 /// Near the bottom of a steeply pitched view, tiles are culled with room for the tallest feature they might hold,
