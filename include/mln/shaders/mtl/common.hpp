@@ -105,6 +105,75 @@ inline float get_elevation(float2 pos,
     return elevation * dem_exaggeration;
 }
 
+// Ground, unless the DEM's height there is the plane it writes where it has none: exact in
+// Terrarium's 1/256 m steps, and no real surface holds one height over the whole area.
+inline bool dem_has_ground(float height, float no_ground) {
+    return abs(height - no_ground) > 0.002;
+}
+
+// The elevation, and how much of the vertex stands on the model's ground (`ground`, 0 to 1).
+// Ground and no ground each give their own height, so both lie as they are; a triangle
+// joining them is the one the fragment shader drops, rather than a wall from one to the other.
+inline float get_ground_elevation(float2 pos,
+                                  texture2d<float, access::sample> dem,
+                                  float4 dem_coords,
+                                  float4 dem_unpack,
+                                  float dem_dim,
+                                  float dem_exaggeration,
+                                  float no_ground,
+                                  thread float& ground) {
+    const float2 coord = (pos * dem_coords.x + dem_coords.yz) * dem_dim + 2.0;
+    const float2 f = fract(coord);
+    const int2 c = int2(floor(coord));
+    const int2 hi = int2(dem.get_width(), dem.get_height()) - 1;
+    const int2 taps[4] = {c, c + int2(1, 0), c + int2(0, 1), c + int2(1, 1)};
+    const float weights[4] = {(1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y};
+    float on = 0.0;
+    float onWeight = 0.0;
+    float off = 0.0;
+    float offWeight = 0.0;
+    for (int i = 0; i < 4; i++) {
+        const float height = dem_texel(dem, clamp(taps[i], int2(0), hi), dem_unpack);
+        if (dem_has_ground(height, no_ground)) {
+            on += weights[i] * height;
+            onWeight += weights[i];
+        } else {
+            off += weights[i] * height;
+            offWeight += weights[i];
+        }
+    }
+    ground = onWeight / max(onWeight + offWeight, 1e-6);
+    const float elevation = onWeight > 0.0 ? on / onWeight : off / max(offWeight, 1e-6);
+    return elevation * dem_exaggeration;
+}
+
+// A fragment between ground and none: its triangle joins the two, and stands as a wall.
+inline bool joins_ground_and_none(float ground) {
+    return ground > 0.001 && ground < 0.999;
+}
+
+// Whether the tile has ground throughout, on a 9 by 9 grid. A tile edge's curtain hangs only
+// in such a tile: one that reaches the model's edge has a neighbour without ground, at another
+// zoom too (whose heights never reach this tile's border), and its curtain stood as a wall.
+inline bool ground_throughout(texture2d<float, access::sample> dem, float4 dem_coords, float dem_dim,
+                              float4 dem_unpack, float no_ground) {
+    // The 1x1 placeholder: no DEM here, past the model's tiles, so nothing for a curtain to join
+    if (dem.get_width() < 2) {
+        return false;
+    }
+    const int2 hi = int2(dem.get_width(), dem.get_height()) - 1;
+    for (int y = 0; y <= 8; y++) {
+        for (int x = 0; x <= 8; x++) {
+            const float2 pos = float2(x, y) * 1024.0;
+            const int2 c = int2(floor((pos * dem_coords.x + dem_coords.yz) * dem_dim + 2.0));
+            if (!dem_has_ground(dem_texel(dem, clamp(c, int2(0), hi), dem_unpack), no_ground)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 // The camera distance (clip w) the terrain depth pass packed (mtl/terrain_depth.hpp)
 inline float unpack_distance(float4 rgba_depth) {
     const float4 bit_shift = float4(1.0 / (256.0 * 256.0 * 256.0), 1.0 / (256.0 * 256.0), 1.0 / 256.0, 1.0);

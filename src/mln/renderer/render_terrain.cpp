@@ -1468,7 +1468,7 @@ void RenderTerrain::updateInstancedDepthUBO(PaintParameters& parameters) {
     const shaders::TerrainEvaluatedPropsUBO propsUBO = {.unpack = getDEMUnpackVector(),
                                                         .exaggeration = getExaggeration(),
                                                         .elevation_offset = elevationOffset,
-                                                        .pad1 = 0.0f,
+                                                        .no_ground = getPlane().value_or(-1.0e9f),
                                                         .cut_ndc_x = 0.0f,
                                                         .fog_color = {0.0f, 0.0f, 0.0f, 0.0f},
                                                         .fog_start = 0.0f,

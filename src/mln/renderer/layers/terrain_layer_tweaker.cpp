@@ -73,7 +73,7 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
     const TerrainEvaluatedPropsUBO propsUBO = {.unpack = terrain->getDEMUnpackVector(),
                                                .exaggeration = exaggeration,
                                                .elevation_offset = elevationOffset,
-                                               .pad1 = 0.0f,
+                                               .no_ground = terrain->getPlane().value_or(-1.0e9f),
                                                .cut_ndc_x = cutNdcX,
                                                .fog_color = {fogColor.r, fogColor.g, fogColor.b, fogColor.a},
                                                .fog_start = fogDepth(fogStart),

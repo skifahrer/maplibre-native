@@ -31,6 +31,7 @@ struct FragmentStage {
     float distance;
     float3 clip_xyw;
     float skirt;
+    float ground;
 };
 
 FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
@@ -46,8 +47,13 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     // rendering only depth for the symbol occlusion pass
     const float2 pos = float2(vertx.pos.xy);
 
-    const float elevation = get_elevation(pos, demTexture, demSampler, drawable.dem_coords, props.unpack,
-                                          drawable.dem_coords.w, props.exaggeration, 1.0);
+    float ground = 1.0;
+    const float elevation = get_ground_elevation(pos, demTexture, drawable.dem_coords, props.unpack,
+                                                 drawable.dem_coords.w, props.exaggeration, props.no_ground, ground);
+    if (vertx.pos.z == 1 && !ground_throughout(demTexture, drawable.dem_coords, drawable.dem_coords.w,
+                                                props.unpack, props.no_ground)) {
+        ground = 0.0;
+    }
 
     // Skirt vertices drop below the surface by elevation_offset (gl-js u_ele_delta)
     const float ele_delta = (float(vertx.pos.z) == 1.0) ? props.elevation_offset : 0.0;
@@ -57,6 +63,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
         .distance = position.w,
         .clip_xyw = position.xyw,
         .skirt    = float(vertx.pos.z),
+        .ground   = ground,
     };
 }
 
@@ -64,6 +71,10 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
                             device const TerrainEvaluatedPropsUBO& props [[buffer(idTerrainEvaluatedPropsUBO)]]) {
     // The cutaway of the terrain shader, so labels behind the cut mountain show
     if (cut_away(props, in.clip_xyw, in.distance, in.skirt)) {
+        discard_fragment();
+    }
+    // Between ground and none, and the curtains under ground the model does not have
+    if (joins_ground_and_none(in.ground) || (in.skirt > 0.5 && in.ground < 0.999)) {
         discard_fragment();
     }
     // Pack the camera distance / 2^24 into RGBA8, unpacked by unpack_distance(); the

@@ -36,7 +36,7 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
     /*  0 */ float4 unpack; // DEM unpack vector for the source's encoding
     /* 16 */ float exaggeration;
     /* 20 */ float elevation_offset;
-    /* 24 */ float pad1;
+    /* 24 */ float no_ground;
     /* 28 */ float cut_ndc_x;
     /* 32 */ float4 fog_color;
     /* 48 */ float fog_start;
@@ -86,6 +86,7 @@ struct FragmentStage {
     float depth; // view depth, for the fog
     float3 clip_xyw; // clip y and w, for the cutaway in front of the centre
     float skirt;    // 1 on the curtain below a tile edge
+    float ground;   // 1 where the height model has ground, 0 where it has none
 };
 
 FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
@@ -106,8 +107,13 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     // NEAREST and interpolated after decoding, matching maplibre-gl-js and the
     // elevated layers). Map into the bound DEM tile; an ancestor tile is bound as
     // a fallback while this tile's own DEM loads. dem_coords.w = DEM dimension.
-    float elevation = get_elevation(pos, demTexture, demSampler, drawable.dem_coords, props.unpack,
-                                    drawable.dem_coords.w, props.exaggeration, 1.0);
+    float ground = 1.0;
+    float elevation = get_ground_elevation(pos, demTexture, drawable.dem_coords, props.unpack,
+                                           drawable.dem_coords.w, props.exaggeration, props.no_ground, ground);
+    if (vertx.pos.z == 1 && !ground_throughout(demTexture, drawable.dem_coords, drawable.dem_coords.w,
+                                                props.unpack, props.no_ground)) {
+        ground = 0.0;
+    }
 
     // Skirt vertices hang below the surface by elevation_offset, forming a curtain
     // that hides the cracks between neighbouring tiles at different zoom levels
@@ -122,6 +128,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
         .depth     = position.w,
         .clip_xyw  = position.xyw,
         .skirt     = float(vertx.pos.z),
+        .ground    = ground,
     };
 }
 
@@ -140,6 +147,10 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     // be flipped here - sampling 1.0 - uv.y flips the draped map vertically (north/south
     // swapped about the view). Sample uv.y directly on Metal.
     if (cut_away(props, in.clip_xyw, in.depth, in.skirt)) {
+        discard_fragment();
+    }
+    // Between ground and none, and the curtains under ground the model does not have
+    if (joins_ground_and_none(in.ground) || (in.skirt > 0.5 && in.ground < 0.999)) {
         discard_fragment();
     }
     float4 color = mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));

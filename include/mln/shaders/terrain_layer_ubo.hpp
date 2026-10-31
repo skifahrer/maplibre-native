@@ -41,7 +41,7 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
     /*  0 */ std::array<float, 4> unpack; // DEM unpack vector for the source's encoding
     /* 16 */ float exaggeration;
     /* 20 */ float elevation_offset;
-    /* 24 */ float pad1;
+    /* 24 */ float no_ground;              // the DEM's height where it has no ground; -1e9 for none
     /* 28 */ float cut_ndc_x;              // the centre's NDC x, the middle of the cut window
     /* 32 */ std::array<float, 4> fog_color; // premultiplied; alpha 0 = no fog
     /* 48 */ float fog_start;                // view depth (world pixels) where the fog starts

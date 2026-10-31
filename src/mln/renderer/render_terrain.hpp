@@ -196,6 +196,11 @@ public:
     float getExaggeration() const;
 
     /**
+     * @brief The height the DEM writes where it has no ground, if it writes one
+     */
+    std::optional<float> getPlane() const { return impl->plane; }
+
+    /**
      * @brief Get the source ID providing DEM data
      */
     const std::string& getSourceID() const;
