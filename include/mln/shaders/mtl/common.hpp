@@ -82,6 +82,16 @@ inline float dem_texel(texture2d<float, access::sample> dem, int2 texel, float4 
     return dot(data, dem_unpack);
 }
 
+inline float get_ground_elevation(float2 pos,
+                                  texture2d<float, access::sample> dem,
+                                  float4 dem_coords,
+                                  float4 dem_unpack,
+                                  float dem_dim,
+                                  float dem_exaggeration,
+                                  float no_ground,
+                                  thread float& ground);
+
+// Where the model has no ground (dem_coords.w, its plane), at sea level, as the terrain draws it
 inline float get_elevation(float2 pos,
                            texture2d<float, access::sample> dem,
                            sampler dem_sampler,
@@ -93,16 +103,8 @@ inline float get_elevation(float2 pos,
     if (dem_enabled == 0.0) {
         return 0.0;
     }
-    const float2 coord = (pos * dem_coords.x + dem_coords.yz) * dem_dim + 2.0;
-    const float2 f = fract(coord);
-    const int2 c = int2(floor(coord));
-    const int2 hi = int2(dem.get_width(), dem.get_height()) - 1;
-    const float tl = dem_texel(dem, clamp(c, int2(0), hi), dem_unpack);
-    const float tr = dem_texel(dem, clamp(c + int2(1, 0), int2(0), hi), dem_unpack);
-    const float bl = dem_texel(dem, clamp(c + int2(0, 1), int2(0), hi), dem_unpack);
-    const float br = dem_texel(dem, clamp(c + int2(1, 1), int2(0), hi), dem_unpack);
-    const float elevation = mix(mix(tl, tr, f.x), mix(bl, br, f.x), f.y);
-    return elevation * dem_exaggeration;
+    float ground = 1.0;
+    return get_ground_elevation(pos, dem, dem_coords, dem_unpack, dem_dim, dem_exaggeration, dem_coords.w, ground);
 }
 
 // Ground, unless the DEM's height there is the plane it writes where it has none: exact in
@@ -112,8 +114,7 @@ inline bool dem_has_ground(float height, float no_ground) {
 }
 
 // The elevation, and how much of the vertex stands on the model's ground (`ground`, 0 to 1).
-// Ground and no ground each give their own height, so both lie as they are; a triangle
-// joining them is the one the fragment shader drops, rather than a wall from one to the other.
+// No ground lies at sea level: a triangle joining it to ground is the clay face of the model.
 inline float get_ground_elevation(float2 pos,
                                   texture2d<float, access::sample> dem,
                                   float4 dem_coords,
@@ -130,7 +131,6 @@ inline float get_ground_elevation(float2 pos,
     const float weights[4] = {(1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y};
     float on = 0.0;
     float onWeight = 0.0;
-    float off = 0.0;
     float offWeight = 0.0;
     for (int i = 0; i < 4; i++) {
         const float height = dem_texel(dem, clamp(taps[i], int2(0), hi), dem_unpack);
@@ -138,18 +138,22 @@ inline float get_ground_elevation(float2 pos,
             on += weights[i] * height;
             onWeight += weights[i];
         } else {
-            off += weights[i] * height;
             offWeight += weights[i];
         }
     }
     ground = onWeight / max(onWeight + offWeight, 1e-6);
-    const float elevation = onWeight > 0.0 ? on / onWeight : off / max(offWeight, 1e-6);
+    const float elevation = onWeight > 0.0 ? on / onWeight : 0.0;
     return elevation * dem_exaggeration;
 }
 
-// A fragment between ground and none: its triangle joins the two, and stands as a wall.
-inline bool joins_ground_and_none(float ground) {
-    return ground > 0.001 && ground < 0.999;
+// A fragment of a triangle from ground down to none (`none` is 1 at a vertex with no ground)
+inline bool on_clay_face(float none) {
+    return none > 0.001 && none < 0.999;
+}
+
+// Clay grey, darker toward the table it stands on
+inline float4 clay_color(float elevation) {
+    return float4(float3(0.58, 0.56, 0.53) * mix(0.62, 1.0, saturate(elevation / 1500.0)), 1.0);
 }
 
 // Whether the tile has ground throughout, on a 9 by 9 grid. A tile edge's curtain hangs only

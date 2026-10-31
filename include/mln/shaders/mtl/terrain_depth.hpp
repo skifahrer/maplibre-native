@@ -73,8 +73,8 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     if (cut_away(props, in.clip_xyw, in.distance, in.skirt)) {
         discard_fragment();
     }
-    // Between ground and none, and the curtains under ground the model does not have
-    if (joins_ground_and_none(in.ground) || (in.skirt > 0.5 && in.ground < 0.999)) {
+    // The curtains under ground the model does not have
+    if (in.skirt > 0.5 && in.ground < 0.999) {
         discard_fragment();
     }
     // Pack the camera distance / 2^24 into RGBA8, unpacked by unpack_distance(); the

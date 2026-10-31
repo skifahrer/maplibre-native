@@ -204,6 +204,16 @@ TEST(TerrainCamera, CentreElevationSettlesWithoutDrift) {
     EXPECT_NEAR(*atEnd.zoom, *afterSettling.zoom, 1e-6);
 }
 
+// Where the DEM holds only its plane (no ground), the terrain lies at sea level, and so does
+// the centre: it does not hover over the table at the plane's height.
+TEST(TerrainCamera, CentreRestsAtSeaLevelWhereTheModelHasNoGround) {
+    TerrainCameraTest test;
+    test.map.getStyle().getTerrain()->setPlane(static_cast<float>(plateauMeters));
+    test.map.setCenterClampedToGround(true);
+
+    EXPECT_NEAR(test.renderAndGetAltitude(8), 0.0, 0.001);
+}
+
 // Turning it off leaves the camera where the caller put it.
 TEST(TerrainCamera, ClampingCanBeTurnedOff) {
     TerrainCameraTest test;

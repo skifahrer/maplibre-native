@@ -87,6 +87,7 @@ struct FragmentStage {
     float3 clip_xyw; // clip y and w, for the cutaway in front of the centre
     float skirt;    // 1 on the curtain below a tile edge
     float ground;   // 1 where the height model has ground, 0 where it has none
+    float none;     // 1 at a vertex with no ground under it at all
 };
 
 FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
@@ -129,6 +130,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
         .clip_xyw  = position.xyw,
         .skirt     = float(vertx.pos.z),
         .ground    = ground,
+        .none      = ground < 0.001 ? 1.0 : 0.0,
     };
 }
 
@@ -149,11 +151,12 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     if (cut_away(props, in.clip_xyw, in.depth, in.skirt)) {
         discard_fragment();
     }
-    // Between ground and none, and the curtains under ground the model does not have
-    if (joins_ground_and_none(in.ground) || (in.skirt > 0.5 && in.ground < 0.999)) {
+    // The curtains under ground the model does not have
+    if (in.skirt > 0.5 && in.ground < 0.999) {
         discard_fragment();
     }
-    float4 color = mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
+    float4 color = on_clay_face(in.none) ? clay_color(in.elevation)
+                                         : mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
 
     // Fog: from fog_start to fog_end the surface fades into the fog colour, straight (not
     // premultiplied) and opaque, by as much as the colour's alpha.

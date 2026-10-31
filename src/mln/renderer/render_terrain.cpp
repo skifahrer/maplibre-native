@@ -53,6 +53,7 @@
 #include <mln/gfx/vertex_attribute.hpp> // VertexAttributeArray for the a_instance attribute
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <cmath>
 #include <cstring>
@@ -140,7 +141,7 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     // Elevation-aware visibility: terrain leaning towards the camera occupies
     // screen space its flat footprint does not, so the cover is tested against the
     // DEM height rather than the z=0 plane (as util::tileCover / gl-js do).
-    DEMElevationProvider elevationProvider(demSource, getExaggeration());
+    DEMElevationProvider elevationProvider(demSource, getExaggeration(), getPlane());
 
     // Cover at the tile size the DEM source selects tiles with, so the mesh lands on the zoom its
     // DEM tiles are on. Meshing shallower than the DEM leaves its tiles descendants, which the
@@ -849,13 +850,23 @@ float RenderTerrain::getElevation(const UnwrappedTileID& tileID_, float x, float
     const auto y0 = static_cast<int32_t>(std::floor(py));
     const float fx = px - static_cast<float>(x0);
     const float fy = py - static_cast<float>(y0);
-    const float tl = static_cast<float>(demData.get(x0, y0));
-    const float tr = static_cast<float>(demData.get(x0 + 1, y0));
-    const float bl = static_cast<float>(demData.get(x0, y0 + 1));
-    const float br = static_cast<float>(demData.get(x0 + 1, y0 + 1));
-    const float top = tl + (tr - tl) * fx;
-    const float bottom = bl + (br - bl) * fx;
-    return top + (bottom - top) * fy;
+    // As the terrain shader: the ground texels alone, and sea level where there are none
+    const auto plane = getPlane();
+    const std::array<float, 4> heights{static_cast<float>(demData.get(x0, y0)),
+                                       static_cast<float>(demData.get(x0 + 1, y0)),
+                                       static_cast<float>(demData.get(x0, y0 + 1)),
+                                       static_cast<float>(demData.get(x0 + 1, y0 + 1))};
+    const std::array<float, 4> weights{
+        (1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy};
+    float sum = 0;
+    float weight = 0;
+    for (std::size_t i = 0; i < heights.size(); ++i) {
+        if (!plane || heights[i] != std::trunc(*plane)) {
+            sum += weights[i] * heights[i];
+            weight += weights[i];
+        }
+    }
+    return weight > 0 ? sum / weight : 0.0f;
 }
 
 float RenderTerrain::getElevationWithExaggeration(const UnwrappedTileID& tileID, float x, float y) const {
@@ -977,7 +988,10 @@ std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const Un
 
     return TerrainData{
         .demTexture = entry->texture,
-        .demCoords = {{1.0f / (util::EXTENT * off.scale), off.dx / off.scale, off.dy / off.scale, 0.0f}},
+        .demCoords = {{1.0f / (util::EXTENT * off.scale),
+                       off.dx / off.scale,
+                       off.dy / off.scale,
+                       getPlane().value_or(-1.0e9f)}},
         .demDim = static_cast<float>(entry->dim),
     };
 }

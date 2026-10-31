@@ -294,7 +294,8 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
     const bool terrainEnabled = renderTerrain && renderTerrain->isEnabled();
     const DEMElevationProvider elevationProvider{
         terrainEnabled ? getRenderSource(renderTerrain->getSourceID()) : nullptr,
-        terrainEnabled ? renderTerrain->getExaggeration() : 1.0};
+        terrainEnabled ? renderTerrain->getExaggeration() : 1.0,
+        terrainEnabled ? renderTerrain->getPlane() : std::nullopt};
     tileParameters.elevationProvider = terrainEnabled ? &elevationProvider : nullptr;
 
     // A source whose minzoom is deeper than the far field's zoom is covered at that minzoom out
