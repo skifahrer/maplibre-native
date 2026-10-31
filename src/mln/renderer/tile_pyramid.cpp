@@ -92,8 +92,7 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
     handleWrapJump(static_cast<float>(parameters.transformState.getLatLng().longitude()));
 
     // Optionally shift the zoom level
-    const double terrainShift = sourceImpl.type == SourceType::RasterDEM ? -double(util::terrainCoarsening()) : 0.0;
-    double zoom = util::clamp<double>(parameters.transformState.getZoom() + parameters.tileLodZoomShift + terrainShift,
+    double zoom = util::clamp<double>(parameters.transformState.getZoom() + parameters.tileLodZoomShift,
                                       parameters.transformState.getMinZoom(),
                                       parameters.transformState.getMaxZoom());
 
@@ -156,8 +155,16 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
     }
 
     if (parameters.coverTileLimit > 0) {
-        util::keepNearestTiles(idealTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin);
+        util::mergeFarthestTiles(
+            idealTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin, zoomRange.min);
         util::keepNearestTiles(panTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin);
+    }
+    // The terrain's DEM loads the tiles its mesh is drawn on, far ones merged to fit the budget.
+    if (!parameters.terrainMeshCover.empty()) {
+        idealTiles.clear();
+        for (const auto& id : parameters.terrainMeshCover) {
+            idealTiles.emplace_back(id.canonical.z, id.wrap, id.canonical);
+        }
     }
 
     // Stores a list of all the tiles that we're definitely going to retain.

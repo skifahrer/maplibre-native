@@ -13,6 +13,9 @@
 #include <algorithm>
 #include <functional>
 #include <list>
+#include <mutex>
+#include <queue>
+#include <set>
 
 using namespace std::numbers;
 
@@ -156,15 +159,18 @@ uint8_t nearDetailLevels() noexcept {
 }
 
 namespace {
-std::atomic<uint8_t> terrainCoarseningLevels{0};
+std::mutex terrainMeshCoverMutex;
+std::vector<UnwrappedTileID> lastTerrainMeshCover;
 } // namespace
 
-uint8_t terrainCoarsening() noexcept {
-    return terrainCoarseningLevels.load(std::memory_order_relaxed);
+std::vector<UnwrappedTileID> terrainMeshCover() {
+    std::lock_guard<std::mutex> lock(terrainMeshCoverMutex);
+    return lastTerrainMeshCover;
 }
 
-void setTerrainCoarsening(uint8_t levels) noexcept {
-    terrainCoarseningLevels.store(levels, std::memory_order_relaxed);
+void setTerrainMeshCover(std::vector<UnwrappedTileID> cover) {
+    std::lock_guard<std::mutex> lock(terrainMeshCoverMutex);
+    lastTerrainMeshCover = std::move(cover);
 }
 
 int32_t coveringZoomLevel(double zoom, style::SourceType type, uint16_t size) noexcept {
@@ -596,6 +602,49 @@ void keepNearestTiles(std::vector<OverscaledTileID>& tiles, size_t maxTiles, con
         return da < db || (da == db && a < b);
     });
     tiles.erase(keep, tiles.end());
+}
+
+double nearestPointDistance2(const CanonicalTileID& id, int16_t wrap, const std::array<double, 2>& origin) {
+    const double scale = static_cast<double>(1u << id.z);
+    const double x0 = static_cast<double>(id.x) / scale + wrap;
+    const double y0 = static_cast<double>(id.y) / scale;
+    const double dx = std::max({0.0, x0 - origin[0], origin[0] - (x0 + 1.0 / scale)});
+    const double dy = std::max({0.0, y0 - origin[1], origin[1] - (y0 + 1.0 / scale)});
+    return dx * dx + dy * dy;
+}
+
+void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
+                        size_t maxTiles,
+                        const std::array<double, 2>& origin,
+                        uint8_t minZoom) {
+    if (maxTiles == 0 || tiles.size() <= maxTiles) {
+        return;
+    }
+    // Thousands of tiles at a source's deep minzoom cannot merge past it; the nearest are enough.
+    keepNearestTiles(tiles, maxTiles * 4, origin);
+    std::set<OverscaledTileID> alive(tiles.begin(), tiles.end());
+    const auto distance2 = [&](const OverscaledTileID& id) {
+        return nearestPointDistance2(id.canonical, id.wrap, origin);
+    };
+    // Farthest first; a parent goes back in at its own, nearer distance.
+    using Entry = std::pair<double, OverscaledTileID>;
+    std::priority_queue<Entry> farthest;
+    for (const auto& id : alive) {
+        farthest.emplace(distance2(id), id);
+    }
+    while (alive.size() > maxTiles && !farthest.empty()) {
+        const OverscaledTileID tile = farthest.top().second;
+        farthest.pop();
+        if (!alive.contains(tile) || tile.overscaledZ <= minZoom) {
+            continue;
+        }
+        const OverscaledTileID parent = tile.scaledTo(tile.overscaledZ - 1);
+        std::erase_if(alive, [&](const OverscaledTileID& id) { return id == parent || id.isChildOf(parent); });
+        alive.insert(parent);
+        farthest.emplace(distance2(parent), parent);
+    }
+    tiles.assign(alive.begin(), alive.end());
+    keepNearestTiles(tiles, maxTiles, origin);
 }
 
 } // namespace util

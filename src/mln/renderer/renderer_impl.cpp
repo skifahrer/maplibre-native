@@ -282,7 +282,10 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         frameDrapeTargetCount = demTileIDs.size();
         // Hand the exact cover to RenderTerrain so its mesh matches this pool
         terrain->setFrameMeshCover(demTileIDs);
+        // ...and to the DEM source, which loads the levels the mesh is drawn at.
+        util::setTerrainMeshCover({demTileIDs.begin(), demTileIDs.end()});
     } else {
+        util::setTerrainMeshCover({});
         // The pool persists across frames, so release the drape targets when
         // terrain is disabled instead of holding their textures indefinitely
         texturePool.removeStaleRenderTargets({});
@@ -789,8 +792,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // budget deferred any new tile, so deferred drapes/tiles catch up progressively even
         // after the interaction stops.
         renderTreeParameters.needsRepaint || drapeWorkDeferred || context.newTileBuildWasDeferred() ||
-            terrainCoverPending ||
-            (orchestrator.getRenderTerrain() && orchestrator.getRenderTerrain()->isCoarseningPending()),
+            terrainCoverPending,
         renderTreeParameters.placementChanged,
         std::move(stats));
 

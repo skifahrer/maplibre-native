@@ -76,10 +76,10 @@ int32_t coveringZoomLevel(double z, style::SourceType type, uint16_t tileSize) n
 /// a tilted camera is magnified on screen, and drawn from tiles at the view's zoom it blurs.
 uint8_t nearDetailLevels() noexcept;
 
-/// Levels coarser than the view the terrain's DEM source loads, so the mesh fits its tile budget.
-/// Set by RenderTerrain from the cover it measured; the DEM is asked first, the mesh follows.
-uint8_t terrainCoarsening() noexcept;
-void setTerrainCoarsening(uint8_t levels) noexcept;
+/// The terrain mesh's last cover, which its DEM source loads instead of a cover of its own: a mesh
+/// tile merged to fit the tile budget needs the DEM tile at its own level. Empty without terrain.
+std::vector<UnwrappedTileID> terrainMeshCover();
+void setTerrainMeshCover(std::vector<UnwrappedTileID> cover);
 
 std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
                                         uint8_t z,
@@ -100,6 +100,18 @@ std::set<UnwrappedTileID> frustumCull(const TileCoverParameters& state, const st
 /// the order tileCover returned them in. Ties go by tile ID, so the same view keeps the same
 /// tiles from one call to the next.
 void keepNearestTiles(std::vector<OverscaledTileID>& tiles, size_t maxTiles, const std::array<double, 2>& origin);
+
+/// Squared distance from `origin` (normalized web-mercator) to the nearest point of the tile.
+double nearestPointDistance2(const CanonicalTileID& id, int16_t wrap, const std::array<double, 2>& origin);
+
+/// Merge the tiles farthest from `origin` into their parents until no more than `maxTiles` are
+/// left: the far ground goes coarser and the cover stays whole out to the horizon, where
+/// keepNearestTiles cuts it short. The nearest keep their level. Parents stop at `minZoom`; where
+/// that is still too many, the nearest are kept. Ties go by tile ID, as in keepNearestTiles.
+void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
+                        size_t maxTiles,
+                        const std::array<double, 2>& origin,
+                        uint8_t minZoom);
 std::vector<UnwrappedTileID> tileCover(const LatLngBounds&, uint8_t z);
 std::vector<UnwrappedTileID> tileCover(const Geometry<double>&, uint8_t z);
 

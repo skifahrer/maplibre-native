@@ -194,44 +194,29 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
         return cover;
     };
 
-    out = coverAt(meshCoarsening);
+    out = coverAt(0);
+    // Over the budget, the farthest tiles merge into their parents until it fits: the ground
+    // reaches the horizon, coarser the farther it is, and the near ground keeps its detail. The
+    // whole mesh one level coarser blurred the ground in front of the camera, and dropping the
+    // far tiles pulled the haze in front of the cut; both snapped as a zoom crossed the budget.
     if (updateParameters) {
-        const std::size_t cap = terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles;
-        // A quarter over the cap only loses far tiles in the haze; a level coarser loses detail.
-        const std::size_t overflow = cap + cap / 4;
-        // Finer is safe at once: the coarser DEM it leaves is the finer tiles' ancestor fallback.
-        if (meshCoarsening > 0) {
-            auto finer = coverAt(meshCoarsening - 1);
-            if (finer.size() <= cap) {
-                --meshCoarsening;
-                out = std::move(finer);
-            }
+        std::vector<OverscaledTileID> merged;
+        merged.reserve(out.size());
+        for (const auto& id : out) {
+            merged.emplace_back(id.canonical.z, id.wrap, id.canonical);
         }
-        uint8_t wanted = meshCoarsening;
-        if (out.size() > overflow && meshCoarsening < kMaxCoarsening) {
-            wanted = meshCoarsening + 1;
-        }
-        util::setTerrainCoarsening(wanted);
-        coarseningPending = false;
-        if (wanted > meshCoarsening) {
-            // Coarser only once the DEM has loaded at that level (tiles past its coverage fail, not
-            // load): a mesh tile with no DEM of its own or above is drawn flat at sea level.
-            if ((++coarseningWaitFrames > 2 && demSource->isLoaded()) ||
-                coarseningWaitFrames > kCoarseningWaitFrames) {
-                meshCoarsening = wanted;
-                coarseningWaitFrames = 0;
-                out = coverAt(wanted);
-            } else {
-                coarseningPending = true;
-            }
-        } else {
-            coarseningWaitFrames = 0;
+        util::mergeFarthestTiles(merged,
+                                 terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles,
+                                 meshTileCapOrigin(state),
+                                 zoomRange.min);
+        out.clear();
+        for (const auto& id : merged) {
+            out.insert(id.toUnwrapped());
         }
     }
 
-
-    // Cap the tile count: keep those nearest the camera, drop the farthest (the horizon tiles a
-    // high tilt pulls in). Nearest the camera, not the map centre: at a steep tilt the centre is
+    // Whatever the merge could not fit (parents stop at the DEM's minzoom): keep those nearest the
+    // camera, drop the farthest (the horizon tiles a high tilt pulls in). Nearest the camera, not the map centre: at a steep tilt the centre is
     // far ahead, and the tiles right under the camera - the bottom corners of the screen, the
     // biggest on it - would rank as far and be dropped, showing the skirts of the tiles behind
     // them as streaks. Per-mode cap (TerrainLoadBudget::maxMeshTiles): Quality keeps

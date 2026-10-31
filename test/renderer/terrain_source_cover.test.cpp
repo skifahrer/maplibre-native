@@ -248,15 +248,26 @@ TEST(TerrainSourceCover, TheCapFollowsTheTerrainLoadMode) {
     expectOnlyTheTilesNearestTheCamera({.mode = TerrainLoadMode::Performance});
 }
 
-// The terrain draws from its DEM source, so the DEM keeps its own cover rather than the cap.
-// Here the DEM is as deep as the vector source, so its cover holds far more tiles than the cap
-// allows. A capped DEM would stay within a few tiles of the limit: the tiles it asks for before
-// it has loaded and after differ by a handful.
-TEST(TerrainSourceCover, TheDEMSourceKeepsItsOwnCover) {
-    TerrainSourceCoverTest test({.demMinZoom = 13, .demMaxZoom = 13, .mode = TerrainLoadMode::Performance});
+// The DEM loads the tiles the mesh is drawn on, far ones merged to fit the mesh-tile cap, not a
+// cover of its own: a mesh tile merged to a coarser level needs the DEM tile at that level, and
+// the DEM's own cover here holds far more tiles than the cap.
+TEST(TerrainSourceCover, TheDEMSourceLoadsTheMeshCover) {
+    TerrainSourceCoverTest test({.demMinZoom = 0, .demMaxZoom = 13, .mode = TerrainLoadMode::Performance});
     test.settleDEM();
+    const size_t cap = terrainLoadBudget(TerrainLoadMode::Performance).maxMeshTiles;
+    const auto cover = util::terrainMeshCover();
+    ASSERT_FALSE(cover.empty());
+    EXPECT_LE(cover.size(), cap);
 
-    EXPECT_GT(test.demTiles.size(), 2 * test.sourceTileLimit());
+    test.demTiles.clear();
+    test.map.jumpTo(CameraOptions().withBearing(40.0));
+    test.settleDEM();
+    const auto turned = util::terrainMeshCover();
+    for (const auto& id : test.demTiles) {
+        EXPECT_TRUE(std::any_of(turned.begin(), turned.end(), [&](const UnwrappedTileID& tile) {
+            return tile.canonical == id;
+        })) << int(id.z) << "/" << id.x << "/" << id.y;
+    }
 }
 
 // Without terrain there is no mesh to size the cap from, and the source keeps its whole cover.

@@ -4,6 +4,7 @@
 #include <mln/map/transform.hpp>
 #include <mln/renderer/render_terrain.hpp>
 #include <mln/tile/tile_id.hpp>
+#include <mln/util/tile_cover.hpp>
 
 #include <set>
 
@@ -70,6 +71,52 @@ TEST(TerrainMeshCover, NoCapOrRoomToSpareKeepsEveryTile) {
     EXPECT_EQ(wholeZ2(), RenderTerrain::nearestMeshTiles(wholeZ2(), 0, worldCentre));
     EXPECT_EQ(wholeZ2(), RenderTerrain::nearestMeshTiles(wholeZ2(), 16, worldCentre));
     EXPECT_EQ(wholeZ2(), RenderTerrain::nearestMeshTiles(wholeZ2(), 64, worldCentre));
+}
+
+namespace {
+std::vector<OverscaledTileID> overscaled(const std::set<UnwrappedTileID>& tiles) {
+    std::vector<OverscaledTileID> out;
+    for (const auto& id : tiles) {
+        out.emplace_back(id.canonical.z, id.wrap, id.canonical);
+    }
+    return out;
+}
+
+OverscaledTileID z1(uint32_t x, uint32_t y) {
+    return {1, 0, CanonicalTileID(1, x, y)};
+}
+
+OverscaledTileID z2o(uint32_t x, uint32_t y) {
+    return {2, 0, CanonicalTileID(2, x, y)};
+}
+} // namespace
+
+// Over the budget the far tiles go coarser rather than missing: the ground stays whole to the
+// edge, the tiles nearest the origin keep their level. Here the origin is in the top-left tile,
+// and the three far quarters each become one z1 tile.
+TEST(TerrainMeshCover, OverTheBudgetTheFarTilesMergeIntoTheirParents) {
+    auto tiles = overscaled(wholeZ2());
+    util::mergeFarthestTiles(tiles, 7, {{0.1, 0.1}}, 0);
+    const std::set<OverscaledTileID> merged(tiles.begin(), tiles.end());
+    const std::set<OverscaledTileID> expected{
+        z2o(0, 0), z2o(1, 0), z2o(0, 1), z2o(1, 1), z1(1, 0), z1(0, 1), z1(1, 1)};
+    EXPECT_EQ(expected, merged);
+}
+
+// A source cannot go coarser than its minzoom: there the nearest are kept, as before.
+TEST(TerrainMeshCover, MergingStopsAtTheMinzoom) {
+    auto tiles = overscaled(wholeZ2());
+    util::mergeFarthestTiles(tiles, 7, {{0.1, 0.1}}, 2);
+    EXPECT_EQ(tiles.size(), 7u);
+    for (const auto& id : tiles) {
+        EXPECT_EQ(id.overscaledZ, 2);
+    }
+}
+
+TEST(TerrainMeshCover, RoomToSpareMergesNothing) {
+    auto tiles = overscaled(wholeZ2());
+    util::mergeFarthestTiles(tiles, 16, {{0.1, 0.1}}, 0);
+    EXPECT_EQ(tiles.size(), 16u);
 }
 
 TEST(TerrainMeshCover, CapOriginWithoutTiltIsTheMapCentre) {

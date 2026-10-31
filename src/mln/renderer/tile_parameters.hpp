@@ -3,10 +3,12 @@
 #include <mln/map/mode.hpp>
 #include <mln/actor/scheduler.hpp>
 #include <mln/util/feature.hpp>
+#include <mln/tile/tile_id.hpp>
 
 #include <array>
 #include <memory>
 #include <numbers>
+#include <vector>
 
 #include <mapbox/std/weak.hpp>
 
@@ -59,6 +61,8 @@ public:
     /// Where coverTileLimit measures from (normalized web-mercator): the ground under the
     /// camera, RenderTerrain::meshTileCapOrigin, the same point the mesh-tile cap uses.
     std::array<double, 2> coverTileLimitOrigin{{0.0, 0.0}};
+    /// For the terrain's DEM source: the mesh's last cover, loaded instead of the DEM's own.
+    std::vector<UnwrappedTileID> terrainMeshCover;
 };
 
 } // namespace mln

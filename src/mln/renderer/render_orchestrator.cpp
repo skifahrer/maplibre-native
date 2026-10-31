@@ -3,6 +3,7 @@
 #include <mln/annotation/annotation_manager.hpp>
 #include <mln/layermanager/layer_manager.hpp>
 #include <mln/renderer/change_request.hpp>
+#include <mln/util/tile_cover.hpp>
 #include <mln/renderer/renderer_observer.hpp>
 #include <mln/renderer/render_source.hpp>
 #include <mln/renderer/render_layer.hpp>
@@ -534,6 +535,7 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
             sourceNeedsRendering = true;
         }
         tileParameters.coverTileLimit = isDemSource ? 0 : coverTileLimit;
+        tileParameters.terrainMeshCover = isDemSource ? util::terrainMeshCover() : std::vector<UnwrappedTileID>{};
 
         tileParameters.isUpdateSynchronous = sourceImpl->isUpdateSynchronous();
         source->update(sourceImpl, filteredLayersForSource, sourceNeedsRendering, sourceNeedsRelayout, tileParameters);
