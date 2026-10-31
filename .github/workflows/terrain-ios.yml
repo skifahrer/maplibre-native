@@ -165,10 +165,9 @@ jobs:
             //platform/ios:MapLibre.dynamic
           echo "BIN=$(bazel info --compilation_mode=opt bazel-bin)/platform/ios" >> "$GITHUB_ENV"
 
-      # Kept under 6 GB by Bazel, inside the repository's 10 GB of Actions cache. Only the
-      # nightly saves it: a manual run restores it, and 2 minutes of upload would not pay back.
+      # Kept under 6 GB by Bazel, inside the repository's 10 GB of Actions cache.
       - name: Save the Bazel cache
-        if: always() && github.event_name == 'schedule'
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel-disk
