@@ -364,27 +364,78 @@ void Map::Impl::anchorCenterOnTerrain() {
     if (!style->impl->getTerrain() || std::isnan(terrainCenterElevation)) {
         return;
     }
-    if (setCenterAltitudeKeepingView(terrainCenterElevation)) {
+    // The ground under the centre is not the ground looked at: on a slope the clamp that follows
+    // would move the camera by the difference. Anchor where the line of sight meets the terrain.
+    if (sightGroundOnTheLine()) {
+        sightAnchorPending = false;
+        if (setCenterAltitudeKeepingView(sightGround[2])) {
+            onUpdate();
+        }
+        return;
+    }
+    // Not yet measured for this camera: the height under the centre now, the sight once reported.
+    sightAnchorPending = true;
+    setCenterAltitudeKeepingView(terrainCenterElevation);
+    onUpdate();
+}
+
+double Map::Impl::getSightGroundDistance() const {
+    if (std::isnan(sightGround[2])) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    const auto eye = transform.getState().getFreeCameraOptions().position;
+    if (!eye) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    // Normalized Mercator, in which a metre is 1/(2πR·cos(latitude)) here.
+    const double metre = 1.0 / (util::M2PI * util::EARTH_RADIUS_M * std::cos(util::deg2rad(sightGround[0])));
+    const LatLng point{sightGround[0], sightGround[1]};
+    const Point<double> ground = Projection::project(point, 1.0);
+    const double dx = (*eye)[0] - ground.x / util::tileSize_D;
+    const double dy = (*eye)[1] - ground.y / util::tileSize_D;
+    const double dz = (*eye)[2] - sightGround[2] * metre;
+    return std::sqrt(dx * dx + dy * dy + dz * dz) / metre;
+}
+
+bool Map::Impl::sightGroundOnTheLine() const {
+    if (std::isnan(sightGround[2])) {
+        return false;
+    }
+    const auto camera = cameraKeepingView(sightGround[2]);
+    // Reported for an earlier camera, it is not on this one's line of sight.
+    return camera && std::abs(camera->center->latitude() - sightGround[0]) < 1e-6 &&
+           std::abs(util::wrap(camera->center->longitude() - sightGround[1], -180.0, 180.0)) < 1e-6;
+}
+
+void Map::Impl::onTerrainSightGroundChanged(double latitude, double longitude, double elevationMeters) {
+    sightGround = {{latitude, longitude, elevationMeters}};
+    if (sightAnchorPending && std::isnan(elevationMeters)) {
+        sightAnchorPending = false; // no ground on the line: the clamp has the height under the centre
+        return;
+    }
+    if (!sightAnchorPending || !centerClampedToGround || transform.inTransition() || !sightGroundOnTheLine()) {
+        return;
+    }
+    sightAnchorPending = false;
+    if (setCenterAltitudeKeepingView(elevationMeters)) {
+        cameraMutated = true;
         onUpdate();
     }
 }
 
-bool Map::Impl::setCenterAltitudeKeepingView(double altitudeMeters) {
+std::optional<CameraOptions> Map::Impl::cameraKeepingView(double altitudeMeters) const {
     const TransformState& state = transform.getState();
     const double rise = altitudeMeters - state.getCenterAltitude();
-    if (std::abs(rise) < 1.0) {
-        return false;
-    }
     const CameraOptions camera = transform.getCameraOptions(std::nullopt);
     if (!camera.center || !camera.zoom) {
-        return false;
+        return std::nullopt;
     }
     const double pitch = util::deg2rad(camera.pitch.value_or(0.0));
     // Near grazing, the line of sight runs almost along the plane: the centre would slide off
     // towards the horizon, past a pole close to 90 degrees. gl-js stops at the same angle
     // (_distanceToCenterFromAltElevationPitch).
     if (std::cos(pitch) < 0.1) {
-        return false;
+        return std::nullopt;
     }
     const double bearing = util::deg2rad(camera.bearing.value_or(0.0));
     // In pixels at the current zoom, the unit of the camera-to-centre distance along the line
@@ -396,7 +447,7 @@ bool Map::Impl::setCenterAltitudeKeepingView(double altitudeMeters) {
     // camera, rise·tan(pitch) nearer it on the ground.
     const double remaining = distance - risePixels / std::cos(pitch);
     if (remaining < distance * 0.05) {
-        return false; // the ground is (nearly) at the camera: leave it
+        return std::nullopt; // the ground is (nearly) at the camera: leave it
     }
     const double shift = risePixels * std::tan(pitch);
     // Towards the camera, which sits opposite the bearing; y grows southwards.
@@ -405,7 +456,21 @@ bool Map::Impl::setCenterAltitudeKeepingView(double altitudeMeters) {
     const LatLng anchored = Projection::unproject(
         {center.x - shift * std::sin(bearing), center.y + shift * std::cos(bearing)}, scale);
     const double zoom = *camera.zoom + std::log2(distance / remaining);
-    const auto keepingView = CameraOptions().withCenter(anchored).withZoom(zoom).withCenterAltitude(altitudeMeters);
+    return CameraOptions().withCenter(anchored).withZoom(zoom).withCenterAltitude(altitudeMeters);
+}
+
+bool Map::Impl::setCenterAltitudeKeepingView(double altitudeMeters) {
+    if (std::abs(altitudeMeters - transform.getState().getCenterAltitude()) < 1.0) {
+        return false;
+    }
+    const auto camera = cameraKeepingView(altitudeMeters);
+    if (!camera) {
+        return false;
+    }
+    const TransformState& state = transform.getState();
+    const CameraOptions& keepingView = *camera;
+    const LatLng anchored = *keepingView.center;
+    const double zoom = *keepingView.zoom;
 
     // The zoom limits, the bounds and the constrain mode cut off whatever part of a move they
     // don't allow, and a move cut short shifts the view (gl-js's moveCenterOntoTerrain undoes one
@@ -479,6 +544,10 @@ bool Map::Impl::clampCenterToTerrain(double elevationMeters) {
     // Sub-metre differences are the terrain cover shifting under a camera that just moved,
     // not the ground actually changing height; acting on them would chase itself.
     constexpr double minimumChangeMeters = 0.5;
+    // Raised to the ground under the centre, the camera would jump; the sight anchor keeps it.
+    if (sightAnchorPending) {
+        return false;
+    }
     if (std::abs(transform.getState().getCenterAltitude() - elevationMeters) < minimumChangeMeters) {
         return false;
     }

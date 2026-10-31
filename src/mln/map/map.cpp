@@ -664,6 +664,10 @@ bool Map::setCenterAltitudeKeepingView(double altitudeMeters) {
     return moved;
 }
 
+double Map::getSightGroundDistance() const {
+    return impl->getSightGroundDistance();
+}
+
 void Map::setCenterClampedToGround(bool clamped) {
     impl->centerClampedToGround = clamped;
 }

@@ -658,6 +658,20 @@ MLN_EXPORT
  */
 - (void)anchorCenterOnTerrain;
 
+/**
+ The distance in meters from the camera to the 3D terrain at the centre of the
+ view, where the line of sight meets the ground.
+
+ While a gesture runs the map centre stays at the height the gesture started
+ on, so the camera's ``MLNMapCamera/viewingDistance`` is to a point above or
+ below the ground looked at; this is to the ground. Measured as the map
+ renders, a frame behind a moving camera. `NaN` when terrain is not enabled or
+ the line of sight meets no ground.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic, readonly) CLLocationDistance sightGroundDistance;
+
 // MARK: Displaying the User’s Location
 
 /**

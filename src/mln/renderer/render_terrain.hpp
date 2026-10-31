@@ -190,6 +190,18 @@ public:
      */
     double getElevationForLatLng(const LatLng& latLng) const;
 
+    /// Where the line of sight through the map centre first meets the drawn terrain, coming from
+    /// the camera: the point and its height in metres (exaggeration applied). Moving the centre
+    /// there keeping the view puts it on the ground actually looked at, so a clamp that follows
+    /// has nothing left to move. Empty with no DEM, at a grazing pitch, or when the line meets no
+    /// ground before passing three times the camera's distance beyond the centre.
+    struct SightGround {
+        double latitude;
+        double longitude;
+        double elevation;
+    };
+    std::optional<SightGround> getSightGround(const TransformState& state) const;
+
     /**
      * @brief Get the terrain exaggeration multiplier
      */
@@ -330,6 +342,10 @@ public:
     Immutable<style::Terrain::Impl> impl;
 
 private:
+    /// The finest DEM zoom loaded, which elevationAt samples at; -1 with none.
+    int elevationSampleZoom() const;
+    double elevationAt(const LatLng& latLng, int sampleZoom) const;
+
     /// computeMeshCover's last answer for getCoverReachMetres.
     mutable double coverReachMetres = std::numeric_limits<double>::infinity();
     /// Levels coarser than the view the mesh is built at, so it fits the tile budget.

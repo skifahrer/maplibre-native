@@ -3316,6 +3316,10 @@ static void *windowScreenContext = &windowScreenContext;
   _mbglMap->anchorCenterOnTerrain();
 }
 
+- (CLLocationDistance)sightGroundDistance {
+  return _mbglMap->getSightGroundDistance();
+}
+
 - (void)setTerrainLoadMode:(MLNTerrainLoadMode)terrainLoadMode {
   switch (terrainLoadMode) {
     case MLNTerrainLoadModeBalanced:

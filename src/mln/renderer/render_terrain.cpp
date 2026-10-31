@@ -848,9 +848,9 @@ float RenderTerrain::getElevationWithExaggeration(const UnwrappedTileID& tileID,
     return getElevation(tileID, x, y) * getExaggeration();
 }
 
-double RenderTerrain::getElevationForLatLng(const LatLng& latLng) const {
+int RenderTerrain::elevationSampleZoom() const {
     if (!demSource) {
-        return 0.0;
+        return -1;
     }
 
     // Sample as deep as the finest DEM tile loaded: getElevation walks up to the closest
@@ -862,6 +862,14 @@ double RenderTerrain::getElevationForLatLng(const LatLng& latLng) const {
             sampleZoom = std::max(sampleZoom, static_cast<int>(renderTile.id.canonical.z));
         }
     }
+    return sampleZoom;
+}
+
+double RenderTerrain::getElevationForLatLng(const LatLng& latLng) const {
+    return elevationAt(latLng, elevationSampleZoom());
+}
+
+double RenderTerrain::elevationAt(const LatLng& latLng, int sampleZoom) const {
     if (sampleZoom < 0) {
         return 0.0;
     }
@@ -882,6 +890,54 @@ double RenderTerrain::getElevationForLatLng(const LatLng& latLng) const {
     const auto localX = static_cast<float>((fx - static_cast<double>(tx)) * util::EXTENT);
     const auto localY = static_cast<float>((fy - static_cast<double>(ty)) * util::EXTENT);
     return getElevationWithExaggeration(sampleTile, localX, localY);
+}
+
+std::optional<RenderTerrain::SightGround> RenderTerrain::getSightGround(const TransformState& state) const {
+    const int sampleZoom = elevationSampleZoom();
+    const double pitch = state.getPitch();
+    // Near grazing the line runs along the ground; Map::Impl does not anchor there either.
+    if (sampleZoom < 0 || std::cos(pitch) < 0.1) {
+        return std::nullopt;
+    }
+    const LatLng centre = state.getLatLng();
+    const double centreAltitude = state.getCenterAltitude();
+    const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(centre.latitude(), state.getZoom());
+    const double sight = state.getCameraToCenterDistance() * metresPerPixel;
+    // Towards the camera, which sits opposite the bearing; y grows southwards.
+    const double bearing = -state.getBearing();
+    const double scale = state.getScale();
+    const Point<double> projected = Projection::project(centre, scale);
+    // The point of the line at `altitude`, which lies (altitude - centre)·tan(pitch) nearer the camera.
+    const auto pointAt = [&](double altitude) {
+        const double shift = (altitude - centreAltitude) * std::tan(pitch) / metresPerPixel;
+        return Projection::unproject(
+            {projected.x - shift * std::sin(bearing), projected.y + shift * std::cos(bearing)}, scale);
+    };
+    const auto above = [&](double altitude) { return altitude - elevationAt(pointAt(altitude), sampleZoom); };
+
+    // From just under the camera down to as far beyond the centre as the camera is before it.
+    const double top = centreAltitude + 0.95 * sight * std::cos(pitch);
+    const double bottom = centreAltitude - 3.0 * sight * std::cos(pitch);
+    if (above(top) <= 0.0) {
+        return std::nullopt; // the camera is in the ground
+    }
+    // Steps of 1/64 of the height down to the centre; halving then finds the crossing.
+    constexpr int stepsToCentre = 64;
+    const double step = (top - centreAltitude) / stepsToCentre;
+    double high = top;
+    for (double low = top - step; low >= bottom; low -= step) {
+        if (above(low) <= 0.0) {
+            for (int i = 0; i < 24; ++i) {
+                const double middle = 0.5 * (high + low);
+                (above(middle) > 0.0 ? high : low) = middle;
+            }
+            const double elevation = 0.5 * (high + low);
+            const LatLng point = pointAt(elevation);
+            return SightGround{point.latitude(), point.longitude(), elevation};
+        }
+        high = low;
+    }
+    return std::nullopt;
 }
 
 std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const UnwrappedTileID& tileID) const {

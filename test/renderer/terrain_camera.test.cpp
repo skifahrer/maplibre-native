@@ -13,6 +13,7 @@
 #include <mln/util/image.hpp>
 #include <mln/util/run_loop.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <thread>
@@ -459,6 +460,61 @@ TEST(TerrainCamera, CameraSetBeforeTheNextStillRenderIsKept) {
     EXPECT_NEAR(*camera.zoom, 12.0, 1e-9);
     EXPECT_NEAR(camera.center->latitude(), target.latitude(), 1e-9);
     EXPECT_NEAR(camera.center->longitude(), target.longitude(), 1e-9);
+}
+
+// Rising southwards, 1000 m a pixel from sea level on pixel 25 of a z2 tile (the centre's is 25.6),
+// none north of it: the centre's line of sight meets the slope nearer the camera than the
+// ground under the centre.
+std::string makeSlopedDEMTile() {
+    PremultipliedImage image({demTileSize, demTileSize});
+    for (uint32_t y = 0; y < demTileSize; ++y) {
+        const double meters = std::max(0.0, 1000.0 * (static_cast<double>(y) - 25.0));
+        const auto value = static_cast<uint32_t>(std::lround((meters + 10000.0) * 10.0));
+        for (uint32_t x = 0; x < demTileSize; ++x) {
+            uint8_t* px = image.data.get() + (y * demTileSize + x) * 4;
+            px[0] = static_cast<uint8_t>(value >> 16);
+            px[1] = static_cast<uint8_t>(value >> 8);
+            px[2] = static_cast<uint8_t>(value);
+            px[3] = 255;
+        }
+    }
+    return encodePNG(image);
+}
+
+// The bump at the end of a pan over mountains: anchored at the height under the centre, the
+// centre moved along the line of sight onto other ground, and the clamp then raised the camera
+// by the difference. Anchored where the line meets the ground, the clamp has nothing to move.
+TEST(TerrainCamera, AnchoringOnASlopeKeepsTheViewOnceTheClampFollows) {
+    TerrainCameraTest test;
+    test.tile = makeSlopedDEMTile();
+    test.map.setCenterClampedToGround(false);
+    test.map.jumpTo(CameraOptions().withZoom(10.0));
+    ASSERT_NEAR(test.renderAndGetAltitude(8), 0.0, 0.001);
+    const vec3 before = test.eye();
+    ASSERT_TRUE(std::isfinite(test.map.getSightGroundDistance()));
+
+    test.map.anchorCenterOnTerrain();
+    test.expectEyeAt(before);
+    test.map.setCenterClampedToGround(true);
+    EXPECT_GT(test.renderAndGetAltitude(8), 300.0);
+    test.expectEyeAt(before);
+}
+
+// The camera moved since the renderer last looked, as at the end of a pan: the anchor keeps
+// the view on the height it has, holds the clamp, and settles on the sight once it is measured.
+TEST(TerrainCamera, AnchoringBeforeTheSightIsMeasuredSettlesOnIt) {
+    TerrainCameraTest test;
+    test.tile = makeSlopedDEMTile();
+    test.map.setCenterClampedToGround(false);
+    test.map.jumpTo(CameraOptions().withZoom(10.0));
+    ASSERT_NEAR(test.renderAndGetAltitude(8), 0.0, 0.001);
+    test.map.jumpTo(CameraOptions().withCenter(LatLng{47.24, 11.4041}));
+    const vec3 before = test.eye();
+
+    test.map.anchorCenterOnTerrain();
+    test.map.setCenterClampedToGround(true);
+    EXPECT_GT(test.renderAndGetAltitude(8), 300.0);
+    test.expectEyeAt(before);
 }
 
 namespace {

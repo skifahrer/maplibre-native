@@ -9,6 +9,7 @@
 #include <Foundation/Foundation.hpp>
 #endif // MLN_RENDER_BACKEND_METAL
 
+#include <array>
 #include <map>
 #include <memory>
 #include <limits>
@@ -112,6 +113,9 @@ private:
     /// Last terrain height reported under the map centre, so an unchanged surface does not
     /// post an observer message every frame.
     double lastReportedCenterElevation = 0.0;
+    /// The sight ground last reported, NaN for none, so it is posted only when it moves.
+    std::array<double, 3> lastReportedSightGround{
+        {std::numeric_limits<double>::quiet_NaN(), 0.0, std::numeric_limits<double>::quiet_NaN()}};
 
     enum class RenderState {
         Never,

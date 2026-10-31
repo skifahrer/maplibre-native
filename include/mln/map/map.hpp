@@ -281,6 +281,12 @@ public:
     /// zoom limits, the bounds or the constrain mode would cut the move short.
     bool setCenterAltitudeKeepingView(double altitudeMeters);
 
+    /// Metres from the camera to where the line of sight through the centre meets the terrain,
+    /// as the renderer last measured it (a frame behind a moving camera). NaN without terrain or
+    /// where the line meets no ground. A gesture holds the centre at the height it started on, so
+    /// the distance to the centre is not the distance to the ground looked at; this is.
+    double getSightGroundDistance() const;
+
     /// Debug: when enabled, RenderTerrain logs the camera eye's clearance over the terrain
     /// ("ABOVE-GROUND ...") each frame it is near/below the surface. Off by default; the
     /// per-frame elevation sampling is skipped entirely when off, so it has no cost otherwise.

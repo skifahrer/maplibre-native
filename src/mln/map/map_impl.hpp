@@ -15,6 +15,7 @@
 #include <mln/tile/tile_operation.hpp>
 
 
+#include <array>
 #include <limits>
 #include <numbers>
 
@@ -66,6 +67,7 @@ public:
     void onWillStartRenderingMap() final;
     void onDidFinishRenderingMap() final;
     void onTerrainCenterElevationChanged(double elevationMeters) final;
+    void onTerrainSightGroundChanged(double latitude, double longitude, double elevationMeters) final;
     void onStyleImageMissing(const std::string&, const std::function<void()>&) final;
     void onRemoveUnusedStyleImages(const std::vector<std::string>&) final;
     void onRegisterShaders(gfx::ShaderRegistry&) final;
@@ -135,6 +137,17 @@ public:
     /// of sight nearly grazes the plane at that altitude, the plane is (nearly) at the camera, or
     /// the zoom limits, the bounds or the constrain mode would cut the move short.
     bool setCenterAltitudeKeepingView(double altitudeMeters);
+    /// The centre and zoom at `altitudeMeters` on the line of sight; none where that is refused.
+    std::optional<CameraOptions> cameraKeepingView(double altitudeMeters) const;
+    /// Where the line of sight met the terrain when the renderer last looked: latitude,
+    /// longitude, height (NaN for no ground).
+    std::array<double, 3> sightGround{
+        {std::numeric_limits<double>::quiet_NaN(), 0.0, std::numeric_limits<double>::quiet_NaN()}};
+    /// Whether sightGround lies on the current camera's line of sight.
+    bool sightGroundOnTheLine() const;
+    /// Anchored before the sight was measured: anchor again when it is, and hold the clamp.
+    bool sightAnchorPending = false;
+    double getSightGroundDistance() const;
     /// Whether the style had terrain when last checked, and whether the centre has yet to come
     /// back to sea level since it was removed (a transition was in flight, or a still map has
     /// not rendered since).

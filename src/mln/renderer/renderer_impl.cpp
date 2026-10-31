@@ -762,6 +762,20 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             lastReportedCenterElevation = centerElevation;
             observer->onTerrainCenterElevationChanged(centerElevation);
         }
+        const auto sight = terrain->getSightGround(updateParameters->transformState);
+        const std::array<double, 3> ground =
+            sight ? std::array<double, 3>{{sight->latitude, sight->longitude, sight->elevation}}
+                  : std::array<double, 3>{
+                        {std::numeric_limits<double>::quiet_NaN(), 0.0, std::numeric_limits<double>::quiet_NaN()}};
+        const auto& last = lastReportedSightGround;
+        // Under a centimetre of ground, or NaN again: nothing moved.
+        const bool same = (std::isnan(ground[2]) && std::isnan(last[2])) ||
+                          (std::abs(ground[0] - last[0]) < 1e-7 && std::abs(ground[1] - last[1]) < 1e-7 &&
+                           std::abs(ground[2] - last[2]) < 0.01);
+        if (!same) {
+            lastReportedSightGround = ground;
+            observer->onTerrainSightGroundChanged(ground[0], ground[1], ground[2]);
+        }
     }
 
     auto stats = std::make_shared<gfx::RenderingStats>(context.threadSafeCopyRenderingStats());

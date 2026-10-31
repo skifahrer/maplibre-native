@@ -66,6 +66,10 @@ public:
         delegate.invoke(&RendererObserver::onTerrainCenterElevationChanged, elevationMeters);
     }
 
+    void onTerrainSightGroundChanged(double latitude, double longitude, double elevationMeters) override {
+        delegate.invoke(&RendererObserver::onTerrainSightGroundChanged, latitude, longitude, elevationMeters);
+    }
+
     void onStyleImageMissing(const std::string& id, const StyleImageMissingCallback& done) override {
         delegate.invoke(&RendererObserver::onStyleImageMissing, id, done);
     }
