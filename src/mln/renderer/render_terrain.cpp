@@ -251,6 +251,35 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     return out;
 }
 
+double RenderTerrain::screenEdge(const UnwrappedTileID& id, const TransformState& state) const {
+    const double tiles = std::exp2(id.canonical.z);
+    const double worldSize = Projection::worldSize(state.getScale());
+    const double west = (id.canonical.x / tiles + id.wrap) * worldSize;
+    const double north = id.canonical.y / tiles * worldSize;
+    const double side = worldSize / tiles;
+    const LatLng middle = Projection::unproject({west + side / 2, north + side / 2}, state.getScale());
+    const double height = getElevationForLatLng(middle) /
+                          Projection::getMetersPerPixelAtLatitude(middle.latitude(), state.getZoom());
+    const auto& projection = state.getProjectionMatrix();
+    const auto size = state.getSize();
+    const auto onScreen = [&](double x, double y) {
+        vec4 clip;
+        matrix::transformMat4(clip, vec4{{x, y, height, 1.0}}, projection);
+        const double w = std::max(clip[3], 1.0);
+        return std::array<double, 2>{{(clip[0] / w + 1) / 2 * size.width, (1 - clip[1] / w) / 2 * size.height}};
+    };
+    const std::array<std::array<double, 2>, 4> corners{
+        {onScreen(west, north), onScreen(west + side, north), onScreen(west + side, north + side),
+         onScreen(west, north + side)}};
+    double longest = 0.0;
+    for (std::size_t i = 0; i < 4; ++i) {
+        const auto& a = corners[i];
+        const auto& b = corners[(i + 1) % 4];
+        longest = std::max(longest, std::hypot(b[0] - a[0], b[1] - a[1]));
+    }
+    return longest;
+}
+
 bool RenderTerrain::sightBlocked(const TransformState& state) const {
     const auto eye = state.getFreeCameraOptions().getLocation();
     if (!demSource || !eye) {

@@ -11,6 +11,8 @@
 
 #include <array>
 #include <map>
+#include <set>
+#include <mln/map/mode.hpp>
 #include <memory>
 #include <limits>
 #include <string>
@@ -19,6 +21,8 @@
 namespace mln {
 
 class RendererObserver;
+class RenderTerrain;
+class TransformState;
 class RenderStaticData;
 class RenderTree;
 
@@ -69,9 +73,24 @@ private:
     // back to 1 to save GPU memory on constrained devices (each step is 4x memory/target).
     static constexpr uint32_t drapeTileSize = 512;
     static constexpr uint32_t drapeQualityFactor = 2;
-    // On a screen of more pixels than that (3x), the tiles nearest the camera, the largest
-    // on it, drape at the screen's own density; the rest keep 1024 for memory.
-    static constexpr std::size_t denseDrapeTiles = 8;
+    // Drape targets are sized to the tile on screen, in steps of drapeTileSize up to this.
+    static constexpr uint32_t maxDrapeSide = 4096;
+    // Texels all drape targets may hold together: about what the 1024 targets held before.
+    static constexpr std::size_t drapeTexelBudget(TerrainLoadMode mode) {
+        switch (mode) {
+            case TerrainLoadMode::Balanced:
+                return 64u << 20;
+            case TerrainLoadMode::Performance:
+                return 24u << 20;
+            case TerrainLoadMode::Quality:
+            default:
+                return 96u << 20;
+        }
+    }
+    std::map<UnwrappedTileID, uint32_t> drapeSides(const RenderTerrain& terrain,
+                                                   const std::set<UnwrappedTileID>& tiles,
+                                                   const TransformState& state,
+                                                   TerrainLoadMode mode) const;
     TexturePool texturePool{drapeTileSize * drapeQualityFactor};
 
     gfx::RendererBackend& backend;

@@ -89,6 +89,10 @@ public:
     /// The fog is full by then.
     double getCoverReachMetres() const { return coverReachMetres; }
 
+    /// The tile's longest edge on screen, in points, at the height of the ground at its middle:
+    /// how many texels its drape can show. Corners behind the camera count as at the near plane.
+    double screenEdge(const UnwrappedTileID& id, const TransformState& state) const;
+
     /// Squared distance from `origin` (normalized web-mercator) to the nearest point of the tile.
     static double nearestPointDist2(const UnwrappedTileID& id, const std::array<double, 2>& origin);
 
