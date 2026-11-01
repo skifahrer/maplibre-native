@@ -1,0 +1,221 @@
+diff --git a/include/mln/map/map.hpp b/include/mln/map/map.hpp
+index 16c68ac34ab..d75a6fc3b30 100644
+--- a/include/mln/map/map.hpp
++++ b/include/mln/map/map.hpp
+@@ -124,6 +124,10 @@ public:
+     Color getFogColor() const;
+     double getFogStart() const;
+     double getFogEnd() const;
++    /// The colour of the clay face where the terrain stands past its height model, premultiplied.
++    /// A transparent colour (the default) keeps the built-in light clay. Metal only for now.
++    void setClayColor(const Color& color);
++    Color getClayColor() const;
+     MapOptions getMapOptions() const;
+ 
+     // Projection Mode
+diff --git a/include/mln/shaders/mtl/common.hpp b/include/mln/shaders/mtl/common.hpp
+index a4437bc39d3..0375f073a37 100644
+--- a/include/mln/shaders/mtl/common.hpp
++++ b/include/mln/shaders/mtl/common.hpp
+@@ -151,9 +151,10 @@ inline bool on_clay_face(float none) {
+     return none > 0.001 && none < 0.999;
+ }
+ 
+-// Clay grey, darker toward the table it stands on
+-inline float4 clay_color(float elevation) {
+-    return float4(float3(0.58, 0.56, 0.53) * mix(0.62, 1.0, saturate(elevation / 1500.0)), 1.0);
++// Clay grey, or the map's own (premultiplied), darker toward the table it stands on
++inline float4 clay_color(float elevation, float4 chosen) {
++    const float3 clay = chosen.a > 0.0 ? chosen.rgb / chosen.a : float3(0.58, 0.56, 0.53);
++    return float4(clay * mix(0.62, 1.0, saturate(elevation / 1500.0)), 1.0);
+ }
+ 
+ // Whether the tile has ground throughout, on a 9 by 9 grid. A tile edge's curtain hangs only
+diff --git a/include/mln/shaders/mtl/terrain.hpp b/include/mln/shaders/mtl/terrain.hpp
+index 0b0a3487462..c159fd2ce52 100644
+--- a/include/mln/shaders/mtl/terrain.hpp
++++ b/include/mln/shaders/mtl/terrain.hpp
+@@ -43,9 +43,10 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
+     /* 52 */ float fog_end;
+     /* 56 */ float cut_depth;
+     /* 60 */ float cut_ndc_y;
+-    /* 64 */
++    /* 64 */ float4 clay_color;
++    /* 80 */
+ };
+-static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64, "wrong size");
++static_assert(sizeof(TerrainEvaluatedPropsUBO) == 80, "wrong size");
+ 
+ // Terrain the camera must see through: what stands nearer than the centre in a window over it,
+ // so the mountains to the sides stay. The curtains under the cut tiles' edges go with it.
+@@ -155,7 +156,7 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
+     if (in.skirt > 0.5 && in.ground < 0.999) {
+         discard_fragment();
+     }
+-    float4 color = on_clay_face(in.none) ? clay_color(in.elevation)
++    float4 color = on_clay_face(in.none) ? clay_color(in.elevation, props.clay_color)
+                                          : mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
+ 
+     // Fog: from fog_start to fog_end the surface fades into the fog colour, straight (not
+diff --git a/include/mln/shaders/terrain_layer_ubo.hpp b/include/mln/shaders/terrain_layer_ubo.hpp
+index e5ed9e6f939..9aa97243cf0 100644
+--- a/include/mln/shaders/terrain_layer_ubo.hpp
++++ b/include/mln/shaders/terrain_layer_ubo.hpp
+@@ -48,9 +48,10 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
+     /* 52 */ float fog_end;                  // and where it is full
+     /* 56 */ float cut_depth;              // view depth of the map centre; 0 = no cutaway
+     /* 60 */ float cut_ndc_y;              // the centre's NDC y: the window opens above it
+-    /* 64 */
++    /* 64 */ std::array<float, 4> clay_color; // premultiplied; alpha 0 = the built-in clay
++    /* 80 */
+ };
+-static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64);
++static_assert(sizeof(TerrainEvaluatedPropsUBO) == 80);
+ 
+ } // namespace shaders
+ } // namespace mln
+diff --git a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
+index ee65cce6469..1af8b410178 100644
+--- a/platform/ios/src/MLNMapView.h
++++ b/platform/ios/src/MLNMapView.h
+@@ -619,6 +619,14 @@ MLN_EXPORT
+ /** The distance from the camera, in meters, where the fog is full. Default 0. */
+ @property (nonatomic, assign) CLLocationDistance fogEndDistance;
+ 
++/**
++ The color of the clay face 3D terrain shows where it stands past its height model,
++ or `nil` for the built-in light clay. Match it to a dark style so the face is not bright.
++
++ This property is experimental and subject to change.
++ */
++@property (nonatomic, nullable) UIColor *clayColor;
++
+ /**
+  Whether the map centre rides the 3D terrain surface rather than sea level.
+ 
+diff --git a/platform/ios/src/MLNMapView.mm b/platform/ios/src/MLNMapView.mm
+index 86fd1c7afc6..31acf3d0e46 100644
+--- a/platform/ios/src/MLNMapView.mm
++++ b/platform/ios/src/MLNMapView.mm
+@@ -3304,6 +3304,15 @@ static void *windowScreenContext = &windowScreenContext;
+   return _mbglMap->getFogEnd();
+ }
+ 
++- (void)setClayColor:(UIColor *)clayColor {
++  _mbglMap->setClayColor(clayColor ? clayColor.mgl_color : mln::Color{0, 0, 0, 0});
++}
++
++- (UIColor *)clayColor {
++  const mln::Color color = _mbglMap->getClayColor();
++  return color.a > 0 ? [UIColor mgl_colorWithColor:color] : nil;
++}
++
+ - (void)setCenterClampedToGround:(BOOL)centerClampedToGround {
+   _mbglMap->setCenterClampedToGround(centerClampedToGround);
+ }
+diff --git a/src/mln/map/map.cpp b/src/mln/map/map.cpp
+index 6e681459f1f..ac90e26c7e2 100644
+--- a/src/mln/map/map.cpp
++++ b/src/mln/map/map.cpp
+@@ -415,6 +415,15 @@ double Map::getFogEnd() const {
+     return impl->transform.getState().getFogEnd();
+ }
+ 
++void Map::setClayColor(const Color& color) {
++    impl->transform.setClayColor(color);
++    impl->onUpdate();
++}
++
++Color Map::getClayColor() const {
++    return impl->transform.getState().getClayColor();
++}
++
+ void Map::setNorthOrientation(NorthOrientation orientation) {
+     impl->transform.setNorthOrientation(orientation);
+     impl->onUpdate();
+diff --git a/src/mln/map/transform.cpp b/src/mln/map/transform.cpp
+index 7c92514414e..9494dc9b6cc 100644
+--- a/src/mln/map/transform.cpp
++++ b/src/mln/map/transform.cpp
+@@ -508,6 +508,10 @@ void Transform::setFog(const Color& color, double startMetres, double endMetres)
+     state.setFog(color, startMetres, endMetres);
+ }
+ 
++void Transform::setClayColor(const Color& color) {
++    state.setClayColor(color);
++}
++
+ // MARK: - Bearing
+ 
+ void Transform::rotateBy(const ScreenCoordinate& first,
+diff --git a/src/mln/map/transform.hpp b/src/mln/map/transform.hpp
+index 86f4d8e2e98..8def9403b48 100644
+--- a/src/mln/map/transform.hpp
++++ b/src/mln/map/transform.hpp
+@@ -147,6 +147,7 @@ public:
+     void setDrawDistance(double metres);
+     double getDrawDistance() const;
+     void setFog(const Color& color, double startMetres, double endMetres);
++    void setClayColor(const Color& color);
+ 
+ private:
+     TransformObserver& observer;
+diff --git a/src/mln/map/transform_state.hpp b/src/mln/map/transform_state.hpp
+index d5e41119308..82e15106e06 100644
+--- a/src/mln/map/transform_state.hpp
++++ b/src/mln/map/transform_state.hpp
+@@ -153,6 +153,10 @@ public:
+     double getFogEnd() const { return fogEnd; }
+     void setFog(const Color& color, double startMetres, double endMetres);
+ 
++    /// The clay face's colour (Map::setClayColor), premultiplied; transparent for the built-in one.
++    Color getClayColor() const { return clayColor; }
++    void setClayColor(const Color& color) { clayColor = color; }
++
+     // North Orientation
+     NorthOrientation getNorthOrientation() const;
+     double getNorthOrientationAngle() const;
+@@ -306,6 +310,7 @@ private:
+     Color fogColor = Color{0.0f, 0.0f, 0.0f, 0.0f};
+     double fogStart = 0;
+     double fogEnd = 0;
++    Color clayColor = Color{0.0f, 0.0f, 0.0f, 0.0f};
+ 
+     mat4 coordinatePointMatrix(const mat4& projMatrix) const;
+     mat4 getPixelMatrix() const;
+diff --git a/src/mln/renderer/layers/terrain_layer_tweaker.cpp b/src/mln/renderer/layers/terrain_layer_tweaker.cpp
+index b7a6e6bd14b..e0a47292d40 100644
+--- a/src/mln/renderer/layers/terrain_layer_tweaker.cpp
++++ b/src/mln/renderer/layers/terrain_layer_tweaker.cpp
+@@ -46,6 +46,7 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
+ 
+     // Fog, as view depth in world pixels: 1 unit is 1 pixel at the centre, as the far plane.
+     const Color fogColor = parameters.state.getFogColor();
++    const Color clayColor = parameters.state.getClayColor();
+     const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(parameters.state.getLatLng().latitude(),
+                                                                           parameters.state.getZoom());
+     const auto fogDepth = [&](double metres) { return static_cast<float>(metres / metresPerPixel); };
+@@ -79,7 +80,8 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
+                                                .fog_start = fogDepth(fogStart),
+                                                .fog_end = fogDepth(fogEnd),
+                                                .cut_depth = cutDepth,
+-                                               .cut_ndc_y = cutNdcY};
++                                               .cut_ndc_y = cutNdcY,
++                                               .clay_color = {clayColor.r, clayColor.g, clayColor.b, clayColor.a}};
+     layerUniforms.createOrUpdate(idTerrainEvaluatedPropsUBO, &propsUBO, context);
+ 
+ #if MLN_UBO_CONSOLIDATION
+diff --git a/src/mln/renderer/render_terrain.cpp b/src/mln/renderer/render_terrain.cpp
+index 6cc8be4d465..8fca55c4d17 100644
+--- a/src/mln/renderer/render_terrain.cpp
++++ b/src/mln/renderer/render_terrain.cpp
+@@ -1564,7 +1564,8 @@ void RenderTerrain::updateInstancedDepthUBO(PaintParameters& parameters) {
+                                                         .fog_start = 0.0f,
+                                                         .fog_end = 0.0f,
+                                                         .cut_depth = 0.0f,
+-                                                        .cut_ndc_y = 0.0f};
++                                                        .cut_ndc_y = 0.0f,
++                                                        .clay_color = {0.0f, 0.0f, 0.0f, 0.0f}};
+ 
+     depthLg->visitDrawables([&](gfx::Drawable& drawable) {
+         auto& u = drawable.mutableUniformBuffers();
