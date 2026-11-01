@@ -1,5 +1,5 @@
 diff --git a/include/mln/map/map.hpp b/include/mln/map/map.hpp
-index cb8e6e153a..7967883532 100644
+index 38e27bed941..08ffaeaa72e 100644
 --- a/include/mln/map/map.hpp
 +++ b/include/mln/map/map.hpp
 @@ -110,6 +110,11 @@ public:
@@ -15,7 +15,7 @@ index cb8e6e153a..7967883532 100644
  
      // Projection Mode
 diff --git a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
-index aa6060af17..b6f39d21e6 100644
+index aa6060af174..b6f39d21e6f 100644
 --- a/platform/ios/src/MLNMapView.h
 +++ b/platform/ios/src/MLNMapView.h
 @@ -581,6 +581,21 @@ MLN_EXPORT
@@ -41,7 +41,7 @@ index aa6060af17..b6f39d21e6 100644
   Whether the map centre rides the 3D terrain surface rather than sea level.
  
 diff --git a/platform/ios/src/MLNMapView.mm b/platform/ios/src/MLNMapView.mm
-index 0ac064ea9b..b9503fadaa 100644
+index 0ac064ea9b2..b9503fadaa0 100644
 --- a/platform/ios/src/MLNMapView.mm
 +++ b/platform/ios/src/MLNMapView.mm
 @@ -3270,6 +3270,14 @@ static void *windowScreenContext = &windowScreenContext;
@@ -60,10 +60,10 @@ index 0ac064ea9b..b9503fadaa 100644
    _mbglMap->setCenterClampedToGround(centerClampedToGround);
  }
 diff --git a/src/mln/map/map.cpp b/src/mln/map/map.cpp
-index 29e3ae5073..81b52f6267 100644
+index becd56d4dc9..26bfb7e54dd 100644
 --- a/src/mln/map/map.cpp
 +++ b/src/mln/map/map.cpp
-@@ -389,6 +389,15 @@ EdgeInsets Map::getFrustumOffset() {
+@@ -394,6 +394,15 @@ EdgeInsets Map::getFrustumOffset() {
      return impl->transform.getFrustumOffset();
  }
  
@@ -80,10 +80,10 @@ index 29e3ae5073..81b52f6267 100644
      impl->transform.setNorthOrientation(orientation);
      impl->onUpdate();
 diff --git a/src/mln/map/transform.cpp b/src/mln/map/transform.cpp
-index 5a48156487..daae5d2716 100644
+index 16eea22b654..ae1ec0a906c 100644
 --- a/src/mln/map/transform.cpp
 +++ b/src/mln/map/transform.cpp
-@@ -489,6 +489,14 @@ EdgeInsets Transform::getFrustumOffset() {
+@@ -505,6 +505,14 @@ EdgeInsets Transform::getFrustumOffset() {
      return state.getFrustumOffset();
  }
  
@@ -99,10 +99,10 @@ index 5a48156487..daae5d2716 100644
  
  void Transform::rotateBy(const ScreenCoordinate& first,
 diff --git a/src/mln/map/transform.hpp b/src/mln/map/transform.hpp
-index 3d609f79e3..2eee6650dd 100644
+index 547587fc27e..eedd8160287 100644
 --- a/src/mln/map/transform.hpp
 +++ b/src/mln/map/transform.hpp
-@@ -141,6 +141,8 @@ public:
+@@ -148,6 +148,8 @@ public:
      // Frustum
      void setFrustumOffset(const EdgeInsets&);
      EdgeInsets getFrustumOffset();
@@ -112,7 +112,7 @@ index 3d609f79e3..2eee6650dd 100644
  private:
      TransformObserver& observer;
 diff --git a/src/mln/map/transform_state.cpp b/src/mln/map/transform_state.cpp
-index f7aa72ef89..84b9ef8fce 100644
+index facb86a903f..a5295689856 100644
 --- a/src/mln/map/transform_state.cpp
 +++ b/src/mln/map/transform_state.cpp
 @@ -9,6 +9,8 @@
@@ -160,7 +160,7 @@ index f7aa72ef89..84b9ef8fce 100644
  
  NorthOrientation TransformState::getNorthOrientation() const {
 diff --git a/src/mln/map/transform_state.hpp b/src/mln/map/transform_state.hpp
-index f0c2a8d1ef..3675c61c2b 100644
+index d27f4f98acf..88885a34c8e 100644
 --- a/src/mln/map/transform_state.hpp
 +++ b/src/mln/map/transform_state.hpp
 @@ -141,6 +141,10 @@ public:

@@ -1,0 +1,2529 @@
+diff --git a/include/mln/map/map.hpp b/include/mln/map/map.hpp
+index c071976977d..903cb5e007c 100644
+--- a/include/mln/map/map.hpp
++++ b/include/mln/map/map.hpp
+@@ -124,6 +124,10 @@ public:
+     Color getFogColor() const;
+     double getFogStart() const;
+     double getFogEnd() const;
++    /// The colour of the clay face where the terrain stands past its height model, premultiplied.
++    /// A transparent colour (the default) keeps the built-in light clay. Metal only for now.
++    void setClayColor(const Color& color);
++    Color getClayColor() const;
+     MapOptions getMapOptions() const;
+ 
+     // Projection Mode
+@@ -288,6 +292,12 @@ public:
+     /// zoom limits, the bounds or the constrain mode would cut the move short.
+     bool setCenterAltitudeKeepingView(double altitudeMeters);
+ 
++    /// Metres from the camera to where the line of sight through the centre meets the terrain,
++    /// as the renderer last measured it (a frame behind a moving camera). NaN without terrain or
++    /// where the line meets no ground. A gesture holds the centre at the height it started on, so
++    /// the distance to the centre is not the distance to the ground looked at; this is.
++    double getSightGroundDistance() const;
++
+     /// Debug: when enabled, RenderTerrain logs the camera eye's clearance over the terrain
+     /// ("ABOVE-GROUND ...") each frame it is near/below the surface. Off by default; the
+     /// per-frame elevation sampling is skipped entirely when off, so it has no cost otherwise.
+diff --git a/include/mln/renderer/renderer_observer.hpp b/include/mln/renderer/renderer_observer.hpp
+index b0570291b5f..08194abd189 100644
+--- a/include/mln/renderer/renderer_observer.hpp
++++ b/include/mln/renderer/renderer_observer.hpp
+@@ -85,6 +85,12 @@ public:
+     /// covers it (UpdateParameters::transitionTargetCenter), and whenever a finer one changes it.
+     virtual void onTerrainTransitionTargetElevationChanged(double /*elevationMeters*/) {}
+ 
++    /// Where the line of sight through the centre meets the terrain moved: the camera or the
++    /// ground changed. The point and its height; a NaN height when the line meets no ground.
++    virtual void onTerrainSightGroundChanged(double /*latitude*/,
++                                             double /*longitude*/,
++                                             double /*elevationMeters*/) {}
++
+     /// Style is missing an image
+     using StyleImageMissingCallback = std::function<void()>;
+     virtual void onStyleImageMissing(const std::string&, const StyleImageMissingCallback& done) { done(); }
+diff --git a/include/mln/renderer/terrain_cache_policy.hpp b/include/mln/renderer/terrain_cache_policy.hpp
+index 35b30da792f..e8b338408ee 100644
+--- a/include/mln/renderer/terrain_cache_policy.hpp
++++ b/include/mln/renderer/terrain_cache_policy.hpp
+@@ -1,5 +1,8 @@
+ #pragma once
+ 
++#include <algorithm>
++#include <array>
++#include <cmath>
+ #include <cstdint>
+ #include <vector>
+ 
+@@ -28,6 +31,23 @@ inline bool shouldRebind(const DEMBinding& current, const DEMBinding& available)
+     return available.tier == 1 && available.demZoom > current.demZoom;
+ }
+ 
++/// The RGB texel a DEM decodes to 0 m, for its unpack vector (r * x + g * y + b * z - w):
++/// (1, 134, 160) for Mapbox, (128, 0, 0) for Terrarium.
++inline std::array<uint8_t, 3> seaLevelTexel(const std::array<float, 4>& unpack) {
++    std::array<uint8_t, 3> texel{};
++    double rest = unpack[3];
++    for (std::size_t i = 0; i < 3; ++i) {
++        if (unpack[i] <= 0.0f) {
++            continue;
++        }
++        const double steps = i == 2 ? std::round(rest / unpack[i]) : std::floor(rest / unpack[i]);
++        const double value = std::clamp(steps, 0.0, 255.0);
++        texel[i] = static_cast<uint8_t>(value);
++        rest -= value * unpack[i];
++    }
++    return texel;
++}
++
+ /// How one draped layer group covers a drape target.
+ struct DrapeGroupFallback {
+     int32_t layerIndex = 0;
+diff --git a/include/mln/shaders/mtl/common.hpp b/include/mln/shaders/mtl/common.hpp
+index 740197b89e8..0375f073a37 100644
+--- a/include/mln/shaders/mtl/common.hpp
++++ b/include/mln/shaders/mtl/common.hpp
+@@ -82,6 +82,16 @@ inline float dem_texel(texture2d<float, access::sample> dem, int2 texel, float4
+     return dot(data, dem_unpack);
+ }
+ 
++inline float get_ground_elevation(float2 pos,
++                                  texture2d<float, access::sample> dem,
++                                  float4 dem_coords,
++                                  float4 dem_unpack,
++                                  float dem_dim,
++                                  float dem_exaggeration,
++                                  float no_ground,
++                                  thread float& ground);
++
++// Where the model has no ground (dem_coords.w, its plane), at sea level, as the terrain draws it
+ inline float get_elevation(float2 pos,
+                            texture2d<float, access::sample> dem,
+                            sampler dem_sampler,
+@@ -93,18 +103,82 @@ inline float get_elevation(float2 pos,
+     if (dem_enabled == 0.0) {
+         return 0.0;
+     }
++    float ground = 1.0;
++    return get_ground_elevation(pos, dem, dem_coords, dem_unpack, dem_dim, dem_exaggeration, dem_coords.w, ground);
++}
++
++// Ground, unless the DEM's height there is the plane it writes where it has none: exact in
++// Terrarium's 1/256 m steps, and no real surface holds one height over the whole area.
++inline bool dem_has_ground(float height, float no_ground) {
++    return abs(height - no_ground) > 0.002;
++}
++
++// The elevation, and how much of the vertex stands on the model's ground (`ground`, 0 to 1).
++// No ground lies at sea level: a triangle joining it to ground is the clay face of the model.
++inline float get_ground_elevation(float2 pos,
++                                  texture2d<float, access::sample> dem,
++                                  float4 dem_coords,
++                                  float4 dem_unpack,
++                                  float dem_dim,
++                                  float dem_exaggeration,
++                                  float no_ground,
++                                  thread float& ground) {
+     const float2 coord = (pos * dem_coords.x + dem_coords.yz) * dem_dim + 2.0;
+     const float2 f = fract(coord);
+     const int2 c = int2(floor(coord));
+     const int2 hi = int2(dem.get_width(), dem.get_height()) - 1;
+-    const float tl = dem_texel(dem, clamp(c, int2(0), hi), dem_unpack);
+-    const float tr = dem_texel(dem, clamp(c + int2(1, 0), int2(0), hi), dem_unpack);
+-    const float bl = dem_texel(dem, clamp(c + int2(0, 1), int2(0), hi), dem_unpack);
+-    const float br = dem_texel(dem, clamp(c + int2(1, 1), int2(0), hi), dem_unpack);
+-    const float elevation = mix(mix(tl, tr, f.x), mix(bl, br, f.x), f.y);
++    const int2 taps[4] = {c, c + int2(1, 0), c + int2(0, 1), c + int2(1, 1)};
++    const float weights[4] = {(1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y};
++    float on = 0.0;
++    float onWeight = 0.0;
++    float offWeight = 0.0;
++    for (int i = 0; i < 4; i++) {
++        const float height = dem_texel(dem, clamp(taps[i], int2(0), hi), dem_unpack);
++        if (dem_has_ground(height, no_ground)) {
++            on += weights[i] * height;
++            onWeight += weights[i];
++        } else {
++            offWeight += weights[i];
++        }
++    }
++    ground = onWeight / max(onWeight + offWeight, 1e-6);
++    const float elevation = onWeight > 0.0 ? on / onWeight : 0.0;
+     return elevation * dem_exaggeration;
+ }
+ 
++// A fragment of a triangle from ground down to none (`none` is 1 at a vertex with no ground)
++inline bool on_clay_face(float none) {
++    return none > 0.001 && none < 0.999;
++}
++
++// Clay grey, or the map's own (premultiplied), darker toward the table it stands on
++inline float4 clay_color(float elevation, float4 chosen) {
++    const float3 clay = chosen.a > 0.0 ? chosen.rgb / chosen.a : float3(0.58, 0.56, 0.53);
++    return float4(clay * mix(0.62, 1.0, saturate(elevation / 1500.0)), 1.0);
++}
++
++// Whether the tile has ground throughout, on a 9 by 9 grid. A tile edge's curtain hangs only
++// in such a tile: one that reaches the model's edge has a neighbour without ground, at another
++// zoom too (whose heights never reach this tile's border), and its curtain stood as a wall.
++inline bool ground_throughout(texture2d<float, access::sample> dem, float4 dem_coords, float dem_dim,
++                              float4 dem_unpack, float no_ground) {
++    // The 1x1 placeholder: no DEM here, past the model's tiles, so nothing for a curtain to join
++    if (dem.get_width() < 2) {
++        return false;
++    }
++    const int2 hi = int2(dem.get_width(), dem.get_height()) - 1;
++    for (int y = 0; y <= 8; y++) {
++        for (int x = 0; x <= 8; x++) {
++            const float2 pos = float2(x, y) * 1024.0;
++            const int2 c = int2(floor((pos * dem_coords.x + dem_coords.yz) * dem_dim + 2.0));
++            if (!dem_has_ground(dem_texel(dem, clamp(c, int2(0), hi), dem_unpack), no_ground)) {
++                return false;
++            }
++        }
++    }
++    return true;
++}
++
+ // The camera distance (clip w) the terrain depth pass packed (mtl/terrain_depth.hpp)
+ inline float unpack_distance(float4 rgba_depth) {
+     const float4 bit_shift = float4(1.0 / (256.0 * 256.0 * 256.0), 1.0 / (256.0 * 256.0), 1.0 / 256.0, 1.0);
+diff --git a/include/mln/shaders/mtl/terrain.hpp b/include/mln/shaders/mtl/terrain.hpp
+index 127965af77b..c159fd2ce52 100644
+--- a/include/mln/shaders/mtl/terrain.hpp
++++ b/include/mln/shaders/mtl/terrain.hpp
+@@ -36,16 +36,30 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
+     /*  0 */ float4 unpack; // DEM unpack vector for the source's encoding
+     /* 16 */ float exaggeration;
+     /* 20 */ float elevation_offset;
+-    /* 24 */ float pad1;
+-    /* 28 */ float pad2;
++    /* 24 */ float no_ground;
++    /* 28 */ float cut_ndc_x;
+     /* 32 */ float4 fog_color;
+     /* 48 */ float fog_start;
+     /* 52 */ float fog_end;
+-    /* 56 */ float pad3;
+-    /* 60 */ float pad4;
+-    /* 64 */
++    /* 56 */ float cut_depth;
++    /* 60 */ float cut_ndc_y;
++    /* 64 */ float4 clay_color;
++    /* 80 */
+ };
+-static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64, "wrong size");
++static_assert(sizeof(TerrainEvaluatedPropsUBO) == 80, "wrong size");
++
++// Terrain the camera must see through: what stands nearer than the centre in a window over it,
++// so the mountains to the sides stay. The curtains under the cut tiles' edges go with it.
++inline bool cut_away(device const TerrainEvaluatedPropsUBO& props, float3 clip_xyw, float depth, float skirt) {
++    if (props.cut_depth <= 0.0) {
++        return false;
++    }
++    // Deepest over the centre, none at the window's edge: the cut follows the ground, no seam.
++    const float2 ndc = clip_xyw.xy / clip_xyw.z;
++    const float2 off = (ndc - float2(props.cut_ndc_x, props.cut_ndc_y)) / float2(0.5, ndc.y > props.cut_ndc_y ? 1.0 : 0.3);
++    const float reach = 1.0 - dot(off, off);
++    return reach > 0.0 && (depth < props.cut_depth * reach || skirt > 0.5);
++}
+ 
+ )";
+ 
+@@ -71,6 +85,10 @@ struct FragmentStage {
+     float2 uv;
+     float elevation;
+     float depth; // view depth, for the fog
++    float3 clip_xyw; // clip y and w, for the cutaway in front of the centre
++    float skirt;    // 1 on the curtain below a tile edge
++    float ground;   // 1 where the height model has ground, 0 where it has none
++    float none;     // 1 at a vertex with no ground under it at all
+ };
+ 
+ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+@@ -91,8 +109,13 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+     // NEAREST and interpolated after decoding, matching maplibre-gl-js and the
+     // elevated layers). Map into the bound DEM tile; an ancestor tile is bound as
+     // a fallback while this tile's own DEM loads. dem_coords.w = DEM dimension.
+-    float elevation = get_elevation(pos, demTexture, demSampler, drawable.dem_coords, props.unpack,
+-                                    drawable.dem_coords.w, props.exaggeration, 1.0);
++    float ground = 1.0;
++    float elevation = get_ground_elevation(pos, demTexture, drawable.dem_coords, props.unpack,
++                                           drawable.dem_coords.w, props.exaggeration, props.no_ground, ground);
++    if (vertx.pos.z == 1 && !ground_throughout(demTexture, drawable.dem_coords, drawable.dem_coords.w,
++                                                props.unpack, props.no_ground)) {
++        ground = 0.0;
++    }
+ 
+     // Skirt vertices hang below the surface by elevation_offset, forming a curtain
+     // that hides the cracks between neighbouring tiles at different zoom levels
+@@ -105,6 +128,10 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+         .uv        = uv,
+         .elevation = elevation,
+         .depth     = position.w,
++        .clip_xyw  = position.xyw,
++        .skirt     = float(vertx.pos.z),
++        .ground    = ground,
++        .none      = ground < 0.001 ? 1.0 : 0.0,
+     };
+ }
+ 
+@@ -122,7 +149,15 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
+     // 1.0 - uv.y. Metal's NDC is Y-up, so the RTT is stored upright and the V must NOT
+     // be flipped here - sampling 1.0 - uv.y flips the draped map vertically (north/south
+     // swapped about the view). Sample uv.y directly on Metal.
+-    float4 color = mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
++    if (cut_away(props, in.clip_xyw, in.depth, in.skirt)) {
++        discard_fragment();
++    }
++    // The curtains under ground the model does not have
++    if (in.skirt > 0.5 && in.ground < 0.999) {
++        discard_fragment();
++    }
++    float4 color = on_clay_face(in.none) ? clay_color(in.elevation, props.clay_color)
++                                         : mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
+ 
+     // Fog: from fog_start to fog_end the surface fades into the fog colour, straight (not
+     // premultiplied) and opaque, by as much as the colour's alpha.
+diff --git a/include/mln/shaders/mtl/terrain_depth.hpp b/include/mln/shaders/mtl/terrain_depth.hpp
+index 32193cca8ae..bac7173c379 100644
+--- a/include/mln/shaders/mtl/terrain_depth.hpp
++++ b/include/mln/shaders/mtl/terrain_depth.hpp
+@@ -29,6 +29,9 @@ struct VertexStage {
+ struct FragmentStage {
+     float4 position [[position, invariant]];
+     float distance;
++    float3 clip_xyw;
++    float skirt;
++    float ground;
+ };
+ 
+ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+@@ -44,8 +47,13 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+     // rendering only depth for the symbol occlusion pass
+     const float2 pos = float2(vertx.pos.xy);
+ 
+-    const float elevation = get_elevation(pos, demTexture, demSampler, drawable.dem_coords, props.unpack,
+-                                          drawable.dem_coords.w, props.exaggeration, 1.0);
++    float ground = 1.0;
++    const float elevation = get_ground_elevation(pos, demTexture, drawable.dem_coords, props.unpack,
++                                                 drawable.dem_coords.w, props.exaggeration, props.no_ground, ground);
++    if (vertx.pos.z == 1 && !ground_throughout(demTexture, drawable.dem_coords, drawable.dem_coords.w,
++                                                props.unpack, props.no_ground)) {
++        ground = 0.0;
++    }
+ 
+     // Skirt vertices drop below the surface by elevation_offset (gl-js u_ele_delta)
+     const float ele_delta = (float(vertx.pos.z) == 1.0) ? props.elevation_offset : 0.0;
+@@ -53,10 +61,22 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
+     return {
+         .position = position,
+         .distance = position.w,
++        .clip_xyw = position.xyw,
++        .skirt    = float(vertx.pos.z),
++        .ground   = ground,
+     };
+ }
+ 
+-half4 fragment fragmentMain(FragmentStage in [[stage_in]]) {
++half4 fragment fragmentMain(FragmentStage in [[stage_in]],
++                            device const TerrainEvaluatedPropsUBO& props [[buffer(idTerrainEvaluatedPropsUBO)]]) {
++    // The cutaway of the terrain shader, so labels behind the cut mountain show
++    if (cut_away(props, in.clip_xyw, in.distance, in.skirt)) {
++        discard_fragment();
++    }
++    // The curtains under ground the model does not have
++    if (in.skirt > 0.5 && in.ground < 0.999) {
++        discard_fragment();
++    }
+     // Pack the camera distance / 2^24 into RGBA8, unpacked by unpack_distance(); the
+     // white clear colour unpacks as farther than any terrain
+     const float depth = in.distance / 16777216.0;
+diff --git a/include/mln/shaders/terrain_layer_ubo.hpp b/include/mln/shaders/terrain_layer_ubo.hpp
+index e6f796a7333..9aa97243cf0 100644
+--- a/include/mln/shaders/terrain_layer_ubo.hpp
++++ b/include/mln/shaders/terrain_layer_ubo.hpp
+@@ -41,16 +41,17 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
+     /*  0 */ std::array<float, 4> unpack; // DEM unpack vector for the source's encoding
+     /* 16 */ float exaggeration;
+     /* 20 */ float elevation_offset;
+-    /* 24 */ float pad1;
+-    /* 28 */ float pad2;
++    /* 24 */ float no_ground;              // the DEM's height where it has no ground; -1e9 for none
++    /* 28 */ float cut_ndc_x;              // the centre's NDC x, the middle of the cut window
+     /* 32 */ std::array<float, 4> fog_color; // premultiplied; alpha 0 = no fog
+     /* 48 */ float fog_start;                // view depth (world pixels) where the fog starts
+     /* 52 */ float fog_end;                  // and where it is full
+-    /* 56 */ float pad3;
+-    /* 60 */ float pad4;
+-    /* 64 */
++    /* 56 */ float cut_depth;              // view depth of the map centre; 0 = no cutaway
++    /* 60 */ float cut_ndc_y;              // the centre's NDC y: the window opens above it
++    /* 64 */ std::array<float, 4> clay_color; // premultiplied; alpha 0 = the built-in clay
++    /* 80 */
+ };
+-static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64);
++static_assert(sizeof(TerrainEvaluatedPropsUBO) == 80);
+ 
+ } // namespace shaders
+ } // namespace mln
+diff --git a/include/mln/style/terrain.hpp b/include/mln/style/terrain.hpp
+index e586c4b3e43..4d109c39600 100644
+--- a/include/mln/style/terrain.hpp
++++ b/include/mln/style/terrain.hpp
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include <mln/util/immutable.hpp>
++#include <optional>
+ #include <string>
+ 
+ namespace mln {
+@@ -42,6 +43,18 @@ public:
+      */
+     void setExaggeration(float exaggeration);
+ 
++    /**
++     * @brief The height the DEM writes where it has no ground, as a flat plane past its data
++     * @return The height in metres, or nullopt when every texel is ground
++     */
++    std::optional<float> getPlane() const;
++
++    /**
++     * @brief Set the height the DEM writes where it has no ground: the mesh is not drawn
++     * where it joins such texels to ground, so the edge of the data stands as no wall
++     */
++    void setPlane(std::optional<float> plane);
++
+     // Internal implementation
+     class Impl;
+     Immutable<Impl> impl;
+diff --git a/platform/android/MapLibreAndroid/src/cpp/android_renderer_frontend.cpp b/platform/android/MapLibreAndroid/src/cpp/android_renderer_frontend.cpp
+index 491989db3f1..f2eb7913d1b 100644
+--- a/platform/android/MapLibreAndroid/src/cpp/android_renderer_frontend.cpp
++++ b/platform/android/MapLibreAndroid/src/cpp/android_renderer_frontend.cpp
+@@ -74,6 +74,10 @@ public:
+         delegate.invoke(&RendererObserver::onTerrainTransitionTargetElevationChanged, elevationMeters);
+     }
+ 
++    void onTerrainSightGroundChanged(double latitude, double longitude, double elevationMeters) override {
++        delegate.invoke(&RendererObserver::onTerrainSightGroundChanged, latitude, longitude, elevationMeters);
++    }
++
+     void onStyleImageMissing(const std::string& id, const StyleImageMissingCallback& done) override {
+         delegate.invoke(&RendererObserver::onStyleImageMissing, id, done);
+     }
+diff --git a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
+index cc36889e1d9..1af8b410178 100644
+--- a/platform/ios/src/MLNMapView.h
++++ b/platform/ios/src/MLNMapView.h
+@@ -619,6 +619,14 @@ MLN_EXPORT
+ /** The distance from the camera, in meters, where the fog is full. Default 0. */
+ @property (nonatomic, assign) CLLocationDistance fogEndDistance;
+ 
++/**
++ The color of the clay face 3D terrain shows where it stands past its height model,
++ or `nil` for the built-in light clay. Match it to a dark style so the face is not bright.
++
++ This property is experimental and subject to change.
++ */
++@property (nonatomic, nullable) UIColor *clayColor;
++
+ /**
+  Whether the map centre rides the 3D terrain surface rather than sea level.
+ 
+@@ -658,6 +666,20 @@ MLN_EXPORT
+  */
+ - (void)anchorCenterOnTerrain;
+ 
++/**
++ The distance in meters from the camera to the 3D terrain at the centre of the
++ view, where the line of sight meets the ground.
++
++ While a gesture runs the map centre stays at the height the gesture started
++ on, so the camera's ``MLNMapCamera/viewingDistance`` is to a point above or
++ below the ground looked at; this is to the ground. Measured as the map
++ renders, a frame behind a moving camera. `NaN` when terrain is not enabled or
++ the line of sight meets no ground.
++
++ This property is experimental and subject to change.
++ */
++@property (nonatomic, readonly) CLLocationDistance sightGroundDistance;
++
+ // MARK: Displaying the User’s Location
+ 
+ /**
+diff --git a/platform/ios/src/MLNMapView.mm b/platform/ios/src/MLNMapView.mm
+index 87e0c3b743f..31acf3d0e46 100644
+--- a/platform/ios/src/MLNMapView.mm
++++ b/platform/ios/src/MLNMapView.mm
+@@ -3304,6 +3304,15 @@ static void *windowScreenContext = &windowScreenContext;
+   return _mbglMap->getFogEnd();
+ }
+ 
++- (void)setClayColor:(UIColor *)clayColor {
++  _mbglMap->setClayColor(clayColor ? clayColor.mgl_color : mln::Color{0, 0, 0, 0});
++}
++
++- (UIColor *)clayColor {
++  const mln::Color color = _mbglMap->getClayColor();
++  return color.a > 0 ? [UIColor mgl_colorWithColor:color] : nil;
++}
++
+ - (void)setCenterClampedToGround:(BOOL)centerClampedToGround {
+   _mbglMap->setCenterClampedToGround(centerClampedToGround);
+ }
+@@ -3316,6 +3325,10 @@ static void *windowScreenContext = &windowScreenContext;
+   _mbglMap->anchorCenterOnTerrain();
+ }
+ 
++- (CLLocationDistance)sightGroundDistance {
++  return _mbglMap->getSightGroundDistance();
++}
++
+ - (void)setTerrainLoadMode:(MLNTerrainLoadMode)terrainLoadMode {
+   switch (terrainLoadMode) {
+     case MLNTerrainLoadModeBalanced:
+diff --git a/src/mln/map/map.cpp b/src/mln/map/map.cpp
+index 86bb18595d9..f1a58d5f330 100644
+--- a/src/mln/map/map.cpp
++++ b/src/mln/map/map.cpp
+@@ -420,6 +420,15 @@ double Map::getFogEnd() const {
+     return impl->transform.getState().getFogEnd();
+ }
+ 
++void Map::setClayColor(const Color& color) {
++    impl->transform.setClayColor(color);
++    impl->onUpdate();
++}
++
++Color Map::getClayColor() const {
++    return impl->transform.getState().getClayColor();
++}
++
+ void Map::setNorthOrientation(NorthOrientation orientation) {
+     impl->transform.setNorthOrientation(orientation);
+     impl->onUpdate();
+@@ -681,6 +690,10 @@ bool Map::setCenterAltitudeKeepingView(double altitudeMeters) {
+     return moved;
+ }
+ 
++double Map::getSightGroundDistance() const {
++    return impl->getSightGroundDistance();
++}
++
+ void Map::setCenterClampedToGround(bool clamped) {
+     impl->centerClampedToGround = clamped;
+ }
+diff --git a/src/mln/map/map_impl.cpp b/src/mln/map/map_impl.cpp
+index e48544106a8..fffb3625bb7 100644
+--- a/src/mln/map/map_impl.cpp
++++ b/src/mln/map/map_impl.cpp
+@@ -393,6 +393,28 @@ void Map::Impl::anchorCenterOnTerrain() {
+     }
+ }
+ 
++double Map::Impl::getSightGroundDistance() const {
++    if (std::isnan(sightGround[2])) {
++        return std::numeric_limits<double>::quiet_NaN();
++    }
++    const auto eye = transform.getState().getFreeCameraOptions().position;
++    if (!eye) {
++        return std::numeric_limits<double>::quiet_NaN();
++    }
++    // Normalized Mercator, in which a metre is 1/(2πR·cos(latitude)) here.
++    const double metre = 1.0 / (util::M2PI * util::EARTH_RADIUS_M * std::cos(util::deg2rad(sightGround[0])));
++    const LatLng point{sightGround[0], sightGround[1]};
++    const Point<double> ground = Projection::project(point, 1.0);
++    const double dx = (*eye)[0] - ground.x / util::tileSize_D;
++    const double dy = (*eye)[1] - ground.y / util::tileSize_D;
++    const double dz = (*eye)[2] - sightGround[2] * metre;
++    return std::sqrt(dx * dx + dy * dy + dz * dz) / metre;
++}
++
++void Map::Impl::onTerrainSightGroundChanged(double latitude, double longitude, double elevationMeters) {
++    sightGround = {{latitude, longitude, elevationMeters}};
++}
++
+ bool Map::Impl::setCenterAltitudeKeepingView(double altitudeMeters) {
+     const TransformState& state = transform.getState();
+     const double rise = altitudeMeters - state.getCenterAltitude();
+diff --git a/src/mln/map/map_impl.hpp b/src/mln/map/map_impl.hpp
+index 9f868b8c9d1..a99e7506ae8 100644
+--- a/src/mln/map/map_impl.hpp
++++ b/src/mln/map/map_impl.hpp
+@@ -14,6 +14,7 @@
+ #include <mln/util/size.hpp>
+ #include <mln/tile/tile_operation.hpp>
+ 
++#include <array>
+ #include <limits>
+ #include <numbers>
+ 
+@@ -67,6 +68,7 @@ public:
+     void onTerrainCenterElevationChanged(double elevationMeters) final;
+     void onTerrainEyeElevationChanged(double elevationMeters) final;
+     void onTerrainTransitionTargetElevationChanged(double elevationMeters) final;
++    void onTerrainSightGroundChanged(double latitude, double longitude, double elevationMeters) final;
+     void onStyleImageMissing(const std::string&, const std::function<void()>&) final;
+     void onRemoveUnusedStyleImages(const std::vector<std::string>&) final;
+     void onRegisterShaders(gfx::ShaderRegistry&) final;
+@@ -180,6 +182,11 @@ public:
+     /// of sight nearly grazes the plane at that altitude, the plane is (nearly) at the camera, or
+     /// the zoom limits, the bounds or the constrain mode would cut the move short.
+     bool setCenterAltitudeKeepingView(double altitudeMeters);
++    /// Where the line of sight met the terrain when the renderer last looked: latitude,
++    /// longitude, height (NaN for no ground).
++    std::array<double, 3> sightGround{
++        {std::numeric_limits<double>::quiet_NaN(), 0.0, std::numeric_limits<double>::quiet_NaN()}};
++    double getSightGroundDistance() const;
+     /// Whether the style had terrain when last checked, and whether the centre has yet to come
+     /// back to sea level since it was removed (a transition was in flight, or a still map has
+     /// not rendered since).
+diff --git a/src/mln/map/transform.cpp b/src/mln/map/transform.cpp
+index 7aa5fd559d4..f54ce339738 100644
+--- a/src/mln/map/transform.cpp
++++ b/src/mln/map/transform.cpp
+@@ -201,7 +201,7 @@ void Transform::easeTo(const CameraOptions& inputCamera, const AnimationOptions&
+                                      util::interpolate(startEdgeInsets.right(), padding.right(), t)});
+             }
+             double maxPitch = getMaxPitchForEdgeInsets(state.getEdgeInsets());
+-            if (pitch != startPitch || maxPitch < startPitch) {
++            if (pitch != startPitch || maxPitch < state.getPitch()) {
+                 state.setPitch(std::min(maxPitch, util::interpolate(startPitch, pitch, t)));
+             }
+             if (roll != startRoll) {
+@@ -401,8 +401,9 @@ void Transform::flyTo(const CameraOptions& inputCamera,
+                                      util::interpolate(startEdgeInsets.right(), padding.right(), k)});
+             }
+ 
+-            if (pitch != startPitch) {
+-                state.setPitch(util::interpolate(startPitch, pitch, k));
++            const double maxPitch = getMaxPitchForEdgeInsets(state.getEdgeInsets());
++            if (pitch != startPitch || maxPitch < state.getPitch()) {
++                state.setPitch(std::min(maxPitch, util::interpolate(startPitch, pitch, k)));
+             }
+             if (roll != startRoll) {
+                 state.setPitch(util::interpolate(startRoll, roll, k));
+@@ -517,6 +518,10 @@ void Transform::setFog(const Color& color, double startMetres, double endMetres)
+     state.setFog(color, startMetres, endMetres);
+ }
+ 
++void Transform::setClayColor(const Color& color) {
++    state.setClayColor(color);
++}
++
+ // MARK: - Bearing
+ 
+ void Transform::rotateBy(const ScreenCoordinate& first,
+diff --git a/src/mln/map/transform.hpp b/src/mln/map/transform.hpp
+index 4d0804ad2b4..9ecc5d5873f 100644
+--- a/src/mln/map/transform.hpp
++++ b/src/mln/map/transform.hpp
+@@ -151,6 +151,7 @@ public:
+     void setDrawDistance(double metres);
+     double getDrawDistance() const;
+     void setFog(const Color& color, double startMetres, double endMetres);
++    void setClayColor(const Color& color);
+ 
+ private:
+     TransformObserver& observer;
+diff --git a/src/mln/map/transform_state.hpp b/src/mln/map/transform_state.hpp
+index e2eba64404a..904599d6476 100644
+--- a/src/mln/map/transform_state.hpp
++++ b/src/mln/map/transform_state.hpp
+@@ -153,6 +153,10 @@ public:
+     double getFogEnd() const { return fogEnd; }
+     void setFog(const Color& color, double startMetres, double endMetres);
+ 
++    /// The clay face's colour (Map::setClayColor), premultiplied; transparent for the built-in one.
++    Color getClayColor() const { return clayColor; }
++    void setClayColor(const Color& color) { clayColor = color; }
++
+     // North Orientation
+     NorthOrientation getNorthOrientation() const;
+     double getNorthOrientationAngle() const;
+@@ -306,6 +310,7 @@ private:
+     Color fogColor = Color{0.0f, 0.0f, 0.0f, 0.0f};
+     double fogStart = 0;
+     double fogEnd = 0;
++    Color clayColor = Color{0.0f, 0.0f, 0.0f, 0.0f};
+ 
+     mat4 coordinatePointMatrix(const mat4& projMatrix) const;
+     mat4 getPixelMatrix() const;
+diff --git a/src/mln/renderer/dem_elevation_provider.cpp b/src/mln/renderer/dem_elevation_provider.cpp
+index e5a8c20ae50..dc3f27a94b8 100644
+--- a/src/mln/renderer/dem_elevation_provider.cpp
++++ b/src/mln/renderer/dem_elevation_provider.cpp
+@@ -2,18 +2,30 @@
+ 
+ #include <mln/renderer/sources/render_raster_dem_source.hpp>
+ 
++#include <algorithm>
++
+ namespace mln {
+ 
+-DEMElevationProvider::DEMElevationProvider(const RenderSource* demSource_, double exaggeration_)
++DEMElevationProvider::DEMElevationProvider(const RenderSource* demSource_,
++                                           double exaggeration_,
++                                           std::optional<float> plane_)
+     : demSource(demSource_ && demSource_->baseImpl->type == style::SourceType::RasterDEM
+                     ? static_cast<const RenderRasterDEMSource*>(demSource_)
+                     : nullptr),
+-      exaggeration(exaggeration_) {}
++      exaggeration(exaggeration_),
++      plane(plane_) {}
+ 
+ std::optional<Range<double>> DEMElevationProvider::getTileElevationRange(const CanonicalTileID& id) const {
+     if (!demSource) {
+         return std::nullopt;
+     }
++    if (const auto known = answers.find(id); known != answers.end()) {
++        return known->second;
++    }
++    return answers.emplace(id, lookUp(id)).first->second;
++}
++
++std::optional<Range<double>> DEMElevationProvider::lookUp(const CanonicalTileID& id) const {
+ 
+     // The tile's own DEM, or failing that the deepest loaded ancestor's, or failing that the
+     // range of the loaded DEM nearest the tile (see the header).
+@@ -25,6 +37,11 @@ std::optional<Range<double>> DEMElevationProvider::getTileElevationRange(const C
+         return std::nullopt;
+     }
+ 
++    // A tile with no ground in it reaches down to sea level, its clay face and the table
++    if (plane && range->min <= *plane + 1) {
++        range->min = std::min(range->min, 0);
++    }
++
+     // Exaggeration is applied to the mesh in the terrain vertex shader, so the bounds
+     // have to carry it too, or an exaggerated peak would still be culled.
+     return Range<double>{range->min * exaggeration, range->max * exaggeration};
+diff --git a/src/mln/renderer/dem_elevation_provider.hpp b/src/mln/renderer/dem_elevation_provider.hpp
+index 8fab78a1295..46fbe15f393 100644
+--- a/src/mln/renderer/dem_elevation_provider.hpp
++++ b/src/mln/renderer/dem_elevation_provider.hpp
+@@ -5,6 +5,7 @@
+ #include <mln/util/tile_cover.hpp>
+ 
+ #include <optional>
++#include <unordered_map>
+ 
+ namespace mln {
+ 
+@@ -38,13 +39,21 @@ class DEMElevationProvider final : public util::TileElevationProvider {
+ public:
+     /// `demSource` may be null (no terrain, or its source not yet resolved), in which
+     /// case every query reports unknown and the cover stays flat.
+-    explicit DEMElevationProvider(const RenderSource* demSource, double exaggeration);
++    /// `plane` is the height the DEM writes where it has no ground, drawn at sea level.
++    explicit DEMElevationProvider(const RenderSource* demSource,
++                                  double exaggeration,
++                                  std::optional<float> plane = std::nullopt);
+ 
+     std::optional<Range<double>> getTileElevationRange(const CanonicalTileID&) const override;
+ 
+ private:
++    std::optional<Range<double>> lookUp(const CanonicalTileID&) const;
++
+     const RenderRasterDEMSource* demSource;
+     double exaggeration;
++    std::optional<float> plane;
++    /// Every source's cover asks about the same tiles in a frame, each an ancestor walk.
++    mutable std::unordered_map<CanonicalTileID, std::optional<Range<double>>> answers;
+ };
+ 
+ } // namespace mln
+diff --git a/src/mln/renderer/layers/terrain_layer_tweaker.cpp b/src/mln/renderer/layers/terrain_layer_tweaker.cpp
+index ff008bc887c..e0a47292d40 100644
+--- a/src/mln/renderer/layers/terrain_layer_tweaker.cpp
++++ b/src/mln/renderer/layers/terrain_layer_tweaker.cpp
+@@ -46,22 +46,42 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
+ 
+     // Fog, as view depth in world pixels: 1 unit is 1 pixel at the centre, as the far plane.
+     const Color fogColor = parameters.state.getFogColor();
++    const Color clayColor = parameters.state.getClayColor();
+     const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(parameters.state.getLatLng().latitude(),
+                                                                           parameters.state.getZoom());
+     const auto fogDepth = [&](double metres) { return static_cast<float>(metres / metresPerPixel); };
++    // Where the tile cap cut the cover short, the haze is full before the cut, so the terrain
++    // fades into the sky there instead of ending in a wall of skirts.
++    double fogStart = parameters.state.getFogStart();
++    double fogEnd = parameters.state.getFogEnd();
++    if (fogEnd > 0.0 && std::isfinite(terrain->getCoverReachMetres())) {
++        fogEnd = std::min(fogEnd, 0.9 * terrain->getCoverReachMetres());
++        fogStart = std::min(fogStart, 0.5 * fogEnd);
++    }
++
++    // No cutaway: a mountain between the camera and the centre hides it, as it would.
++    const float cutDepth = 0.0f;
++    const auto size = parameters.state.getSize();
++    const auto& insets = parameters.state.getEdgeInsets();
++    const float cutNdcX = size.width > 0 ? static_cast<float>((insets.left() - insets.right()) / size.width) : 0.0f;
++    const float cutNdcY = size.height > 0
++                              ? static_cast<float>(-(parameters.state.getEdgeInsets().top() - parameters.state.getEdgeInsets().bottom()) /
++                                                   size.height)
++                              : 0.0f;
+ 
+     // Populate layer-level UBO with terrain properties
+     auto& layerUniforms = layerGroup.mutableUniformBuffers();
+     const TerrainEvaluatedPropsUBO propsUBO = {.unpack = terrain->getDEMUnpackVector(),
+                                                .exaggeration = exaggeration,
+                                                .elevation_offset = elevationOffset,
+-                                               .pad1 = 0.0f,
+-                                               .pad2 = 0.0f,
++                                               .no_ground = terrain->getPlane().value_or(-1.0e9f),
++                                               .cut_ndc_x = cutNdcX,
+                                                .fog_color = {fogColor.r, fogColor.g, fogColor.b, fogColor.a},
+-                                               .fog_start = fogDepth(parameters.state.getFogStart()),
+-                                               .fog_end = fogDepth(parameters.state.getFogEnd()),
+-                                               .pad3 = 0.0f,
+-                                               .pad4 = 0.0f};
++                                               .fog_start = fogDepth(fogStart),
++                                               .fog_end = fogDepth(fogEnd),
++                                               .cut_depth = cutDepth,
++                                               .cut_ndc_y = cutNdcY,
++                                               .clay_color = {clayColor.r, clayColor.g, clayColor.b, clayColor.a}};
+     layerUniforms.createOrUpdate(idTerrainEvaluatedPropsUBO, &propsUBO, context);
+ 
+ #if MLN_UBO_CONSOLIDATION
+diff --git a/src/mln/renderer/render_orchestrator.cpp b/src/mln/renderer/render_orchestrator.cpp
+index 885d9ada2aa..a59fae0fa62 100644
+--- a/src/mln/renderer/render_orchestrator.cpp
++++ b/src/mln/renderer/render_orchestrator.cpp
+@@ -3,6 +3,7 @@
+ #include <mln/annotation/annotation_manager.hpp>
+ #include <mln/layermanager/layer_manager.hpp>
+ #include <mln/renderer/change_request.hpp>
++#include <mln/util/tile_cover.hpp>
+ #include <mln/renderer/renderer_observer.hpp>
+ #include <mln/renderer/render_source.hpp>
+ #include <mln/renderer/render_layer.hpp>
+@@ -293,7 +294,8 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
+     const bool terrainEnabled = renderTerrain && renderTerrain->isEnabled();
+     const DEMElevationProvider elevationProvider{
+         terrainEnabled ? getRenderSource(renderTerrain->getSourceID()) : nullptr,
+-        terrainEnabled ? renderTerrain->getExaggeration() : 1.0};
++        terrainEnabled ? renderTerrain->getExaggeration() : 1.0,
++        terrainEnabled ? renderTerrain->getPlane() : std::nullopt};
+     tileParameters.elevationProvider = terrainEnabled ? &elevationProvider : nullptr;
+     // With the view pitched the finest tiles belong under the camera, where the screen is densest,
+     // not at the map centre far ahead of it: the point the mesh-tile cap measures from. Every
+@@ -302,6 +304,9 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
+         tileParameters.tileLodOrigin = RenderTerrain::meshTileCapOrigin(updateParameters->transformState);
+     }
+ 
++    util::TileCoverCache coverCache;
++    tileParameters.coverCache = &coverCache;
++
+     // A source whose minzoom is deeper than the far field's zoom is covered at that minzoom out
+     // to the horizon: thousands of tiles at a steep pitch, each kept with its geometry for as
+     // long as the view holds. The terrain mesh is capped to the tiles nearest the camera
+@@ -540,6 +545,7 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
+             sourceNeedsRendering = true;
+         }
+         tileParameters.coverTileLimit = isDemSource ? 0 : coverTileLimit;
++        tileParameters.terrainMeshCover = isDemSource ? util::terrainMeshCover() : std::vector<UnwrappedTileID>{};
+ 
+         tileParameters.isUpdateSynchronous = sourceImpl->isUpdateSynchronous();
+         source->update(sourceImpl, filteredLayersForSource, sourceNeedsRendering, sourceNeedsRelayout, tileParameters);
+diff --git a/src/mln/renderer/render_terrain.cpp b/src/mln/renderer/render_terrain.cpp
+index 823e87e2306..2594a1ddaa5 100644
+--- a/src/mln/renderer/render_terrain.cpp
++++ b/src/mln/renderer/render_terrain.cpp
+@@ -1,6 +1,9 @@
+ #include <mln/renderer/render_terrain.hpp>
++#include <mln/gfx/cull_face_mode.hpp>
+ #include <mln/renderer/update_parameters.hpp>
+ #include <mln/renderer/render_source.hpp>
++#include <mln/style/sources/tile_source_impl.hpp>
++#include <mln/renderer/sources/render_tile_source.hpp>
+ #include <mln/renderer/render_tile.hpp>
+ #include <mln/renderer/render_pass.hpp>
+ #include <mln/renderer/render_tree.hpp>
+@@ -50,6 +53,9 @@
+ #include <mln/gfx/vertex_attribute.hpp> // VertexAttributeArray for the a_instance attribute
+ 
+ #include <algorithm>
++#include <iterator>
++#include <array>
++#include <limits>
+ #include <cmath>
+ #include <cstring>
+ #include <functional>
+@@ -94,6 +100,33 @@ RenderTerrain::RenderTerrain(Immutable<style::Terrain::Impl> impl_)
+ 
+ RenderTerrain::~RenderTerrain() = default;
+ 
++namespace {
++std::set<UnwrappedTileID> dilatedCover(const util::TileCoverParameters& coverParams, std::set<UnwrappedTileID> out) {
++    // One-ring cover dilation. tileCover is a top-down DFS that only descends into tiles
++    // whose (sea-level) ancestor intersects the frustum, so a frontier tile whose terrain
++    // rises into view but whose flat ancestor was culled is never even visited - it stays
++    // out of the cover, and the terrain draws a skirt with nothing behind it, until a
++    // camera nudge shifts the frustum and pulls it in. Add every 8-neighbour of the cover,
++    // then keep only those whose elevation-extended bounds still intersect the frustum
++    // (frustumCull, using the DEM provider's conservative fallback range for the
++    // not-yet-loaded neighbours). The elevation sign decides which neighbours survive, so
++    // this is correct for terrain above OR below sea level (bathymetry) without hardcoding
++    // a direction; the frustum trim stops it from tripling the cover like a blind ring
++    // would. Drop the frustumCull line to fall back to a pure uniform 1-ring dilation.
++    // The cover's own tiles passed tileCover's stricter test: only the new neighbours are culled.
++    // RenderTerrain::dilateCover leaves out ground a tile of another zoom already covers.
++    std::set<UnwrappedTileID> neighbours;
++    const auto ring = RenderTerrain::dilateCover(out);
++    std::set_difference(
++        ring.begin(), ring.end(), out.begin(), out.end(), std::inserter(neighbours, neighbours.end()));
++    if (!neighbours.empty()) {
++        const auto kept = util::frustumCull(coverParams, neighbours);
++        out.insert(kept.begin(), kept.end());
++    }
++    return out;
++}
++} // namespace
++
+ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
+     const TransformState& state, const std::shared_ptr<UpdateParameters>& updateParameters) const {
+     std::set<UnwrappedTileID> out;
+@@ -104,7 +137,7 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
+     // Elevation-aware visibility: terrain leaning towards the camera occupies
+     // screen space its flat footprint does not, so the cover is tested against the
+     // DEM height rather than the z=0 plane (as util::tileCover / gl-js do).
+-    DEMElevationProvider elevationProvider(demSource, getExaggeration());
++    DEMElevationProvider elevationProvider(demSource, getExaggeration(), getPlane());
+ 
+     // Cover at the tile size the DEM source selects tiles with, so the mesh lands on the zoom its
+     // DEM tiles are on. Meshing shallower than the DEM leaves its tiles descendants, which the
+@@ -138,35 +171,60 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
+         zoomShift = updateParameters->tileLodZoomShift;
+     }
+ 
+-    const double zoom = util::clamp<double>(state.getZoom() + zoomShift, state.getMinZoom(), state.getMaxZoom());
+-    const int32_t overscaledZoom = util::coveringZoomLevel(zoom, style::SourceType::RasterDEM, terrainCoverTileSize);
+-    if (std::cmp_less(overscaledZoom, zoomRange.min)) {
+-        return out;
+-    }
+-    const int32_t idealZoom = std::min<int32_t>(zoomRange.max, overscaledZoom);
+-    for (const auto& id : util::tileCover(
+-             coverParams, static_cast<uint8_t>(idealZoom), zoomRange, static_cast<uint8_t>(overscaledZoom))) {
+-        out.insert(id.toUnwrapped());
++    std::optional<LatLngBounds> demBounds;
++    const RenderTileSource* demTiles = nullptr;
++    if (demSource->baseImpl->type == style::SourceType::RasterDEM) {
++        demTiles = static_cast<const RenderTileSource*>(demSource);
++        if (const auto& tileset = static_cast<const style::TileSource::Impl&>(*demSource->baseImpl).tileset) {
++            demBounds = tileset->bounds;
++        }
+     }
++    const auto coverAt = [&](uint8_t coarsening) {
++        std::set<UnwrappedTileID> cover;
++        const double zoom = util::clamp<double>(
++            state.getZoom() + zoomShift - coarsening, state.getMinZoom(), state.getMaxZoom());
++        const int32_t overscaledZoom = util::coveringZoomLevel(zoom, style::SourceType::RasterDEM, terrainCoverTileSize);
++        if (overscaledZoom < static_cast<int32_t>(zoomRange.min)) {
++            return cover;
++        }
++        const int32_t idealZoom = std::min<int32_t>(zoomRange.max, overscaledZoom);
++        for (const auto& id : util::tileCover(
++                 coverParams, static_cast<uint8_t>(idealZoom), zoomRange, static_cast<uint8_t>(overscaledZoom))) {
++            cover.insert(id.toUnwrapped());
++        }
++        cover = dilatedCover(coverParams, std::move(cover));
++        // The map ends where the height model does: past its bounds, or where a tile came back
++        // empty, there is no DEM to stand on, and sea level under it stood as a cliff.
++        std::erase_if(cover, [&](const UnwrappedTileID& id) {
++            return (demBounds && !demBounds->intersects(LatLngBounds(id.canonical))) ||
++                   (demTiles && demTiles->tileHasNoData(id));
++        });
++        return cover;
++    };
+ 
+-    // One-ring cover dilation. tileCover is a top-down DFS that only descends into tiles
+-    // whose (sea-level) ancestor intersects the frustum, so a frontier tile whose terrain
+-    // rises into view but whose flat ancestor was culled is never even visited - it stays
+-    // out of the cover, and the terrain draws a skirt with nothing behind it, until a
+-    // camera nudge shifts the frustum and pulls it in. Add every 8-neighbour of the cover,
+-    // then keep only those whose elevation-extended bounds still intersect the frustum
+-    // (frustumCull, using the DEM provider's conservative fallback range for the
+-    // not-yet-loaded neighbours). The elevation sign decides which neighbours survive, so
+-    // this is correct for terrain above OR below sea level (bathymetry) without hardcoding
+-    // a direction; the frustum trim stops it from tripling the cover like a blind ring
+-    // would. Drop the frustumCull line to fall back to a pure uniform 1-ring dilation.
+-    std::set<UnwrappedTileID> dilated = dilateCover(out);
+-    if (dilated.size() != out.size()) {
+-        out = util::frustumCull(coverParams, dilated);
++    out = coverAt(0);
++    // Over the budget, the farthest tiles merge into their parents until it fits: the ground
++    // reaches the horizon, coarser the farther it is, and the near ground keeps its detail. The
++    // whole mesh one level coarser blurred the ground in front of the camera, and dropping the
++    // far tiles pulled the haze in front of the cut; both snapped as a zoom crossed the budget.
++    if (updateParameters) {
++        std::vector<OverscaledTileID> merged;
++        merged.reserve(out.size());
++        for (const auto& id : out) {
++            merged.emplace_back(id.canonical.z, id.wrap, id.canonical);
++        }
++        util::mergeFarthestTiles(merged,
++                                 terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles,
++                                 meshTileCapOrigin(state),
++                                 zoomRange.min);
++        out.clear();
++        for (const auto& id : merged) {
++            out.insert(id.toUnwrapped());
++        }
+     }
+ 
+-    // Cap the tile count: keep those nearest the camera, drop the farthest (the horizon tiles a
+-    // high tilt pulls in). Nearest the camera, not the map centre: at a steep tilt the centre is
++    // Whatever the merge could not fit (parents stop at the DEM's minzoom): keep those nearest the
++    // camera, drop the farthest (the horizon tiles a high tilt pulls in). Nearest the camera, not the map centre: at a steep tilt the centre is
+     // far ahead, and the tiles right under the camera - the bottom corners of the screen, the
+     // biggest on it - would rank as far and be dropped, showing the skirts of the tiles behind
+     // them as streaks. Per-mode cap (TerrainLoadBudget::maxMeshTiles): Quality keeps
+@@ -174,16 +232,29 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
+     // for frame time. It caps the cover, not just the mesh: the drape-target pool allocates a
+     // 1024 px target per cover tile, so a cap on the mesh alone still allocated one for every
+     // tile it dropped.
+-    // Before the cap drops any tile, the farthest tiles past the DEM's maxzoom go back to their
+-    // parents (coarsenFarMeshTiles): the deeper mesh (meshMaxZoom) then costs detail in the
+-    // distance, where a tile covers little of the screen, instead of terrain render distance.
+-    // Never shallower than the DEM, which the per-tile lookup needs (see above), so the cover is
+-    // never coarser than it would be without the deeper mesh.
+     if (updateParameters) {
+-        const size_t maxTiles = terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles;
+         const auto origin = meshTileCapOrigin(state);
+-        out = coarsenFarMeshTiles(std::move(out), maxTiles, demSource->getMaxZoom(), origin);
+-        out = nearestMeshTiles(std::move(out), maxTiles, origin);
++        auto kept = nearestMeshTiles(out, terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles, origin);
++        // Where the first dropped tile begins, so the fog can be full before the cover ends.
++        double nearestDropped2 = std::numeric_limits<double>::infinity();
++        for (const auto& id : out) {
++            if (!kept.count(id)) {
++                nearestDropped2 = std::min(nearestDropped2, nearestPointDist2(id, origin));
++            }
++        }
++        double reach = std::numeric_limits<double>::infinity();
++        if (std::isfinite(nearestDropped2)) {
++            const double metresPerUnit = util::M2PI * util::EARTH_RADIUS_M *
++                                         std::cos(util::deg2rad(state.getLatLng().latitude()));
++            reach = std::sqrt(nearestDropped2) * metresPerUnit;
++        }
++        // Eased, as the tile set changes in steps: in fast, so nothing past it shows, out slowly.
++        if (!std::isfinite(reach) || !std::isfinite(coverReachMetres)) {
++            coverReachMetres = reach;
++        } else {
++            coverReachMetres = reach < coverReachMetres ? reach : coverReachMetres + 0.1 * (reach - coverReachMetres);
++        }
++        out = std::move(kept);
+     }
+     return out;
+ }
+@@ -247,6 +318,61 @@ std::set<UnwrappedTileID> RenderTerrain::dilateCover(const std::set<UnwrappedTil
+     return dilated;
+ }
+ 
++double RenderTerrain::screenEdge(const UnwrappedTileID& id, const TransformState& state) const {
++    const double tiles = std::exp2(id.canonical.z);
++    const double worldSize = Projection::worldSize(state.getScale());
++    const double west = (id.canonical.x / tiles + id.wrap) * worldSize;
++    const double north = id.canonical.y / tiles * worldSize;
++    const double side = worldSize / tiles;
++    const LatLng middle = Projection::unproject({west + side / 2, north + side / 2}, state.getScale());
++    const double height = getElevationForLatLng(middle) /
++                          Projection::getMetersPerPixelAtLatitude(middle.latitude(), state.getZoom());
++    const auto& projection = state.getProjectionMatrix();
++    const auto size = state.getSize();
++    const auto onScreen = [&](double x, double y) {
++        vec4 clip;
++        matrix::transformMat4(clip, vec4{{x, y, height, 1.0}}, projection);
++        const double w = std::max(clip[3], 1.0);
++        return std::array<double, 2>{{(clip[0] / w + 1) / 2 * size.width, (1 - clip[1] / w) / 2 * size.height}};
++    };
++    const std::array<std::array<double, 2>, 4> corners{
++        {onScreen(west, north), onScreen(west + side, north), onScreen(west + side, north + side),
++         onScreen(west, north + side)}};
++    double longest = 0.0;
++    for (std::size_t i = 0; i < 4; ++i) {
++        const auto& a = corners[i];
++        const auto& b = corners[(i + 1) % 4];
++        longest = std::max(longest, std::hypot(b[0] - a[0], b[1] - a[1]));
++    }
++    return longest;
++}
++
++bool RenderTerrain::sightBlocked(const TransformState& state) const {
++    const auto eye = state.getFreeCameraOptions().getLocation();
++    if (!demSource || !eye) {
++        cutting = false;
++        return false;
++    }
++    const LatLng centre = state.getLatLng();
++    const double centreAltitude = state.getCenterAltitude();
++    const double dLat = eye->location.latitude() - centre.latitude();
++    const double dLng = eye->location.longitude() - centre.longitude();
++    // The last tenth before the centre is the slope it stands on, not a mountain in the way.
++    constexpr int samples = 32;
++    double highest = -std::numeric_limits<double>::infinity();
++    for (int i = 2; i < samples; ++i) {
++        const double f = static_cast<double>(i) / samples;
++        const double ground = getElevationForLatLng(LatLng(centre.latitude() + f * dLat, centre.longitude() + f * dLng));
++        if (ground != 0.0) {
++            highest = std::max(highest, ground - (centreAltitude + f * (eye->altitude - centreAltitude)));
++        }
++    }
++    // On once the ground rises above the line, off only once it is well clear: a ridge that
++    // grazes the line would otherwise switch the cut on and off from one frame to the next.
++    cutting = cutting ? highest > -kCutReleaseM : highest > 0.0;
++    return cutting;
++}
++
+ std::array<double, 2> RenderTerrain::meshTileCapOrigin(const TransformState& state) {
+     // The ground under the camera in normalized web-mercator [0,1] (standard projection): the
+     // map centre, moved back along the view by the camera's horizontal distance from it.
+@@ -259,12 +385,26 @@ std::array<double, 2> RenderTerrain::meshTileCapOrigin(const TransformState& sta
+             0.5 - std::log(std::tan(M_PI / 4.0 + latRad / 2.0)) / (2.0 * M_PI) + back * std::cos(compass)};
+ }
+ 
++double RenderTerrain::nearestPointDist2(const UnwrappedTileID& id, const std::array<double, 2>& origin) {
++    const double scale = static_cast<double>(1u << id.canonical.z);
++    const double x0 = static_cast<double>(id.canonical.x) / scale + id.wrap;
++    const double y0 = static_cast<double>(id.canonical.y) / scale;
++    const double dx = std::max({0.0, x0 - origin[0], origin[0] - (x0 + 1.0 / scale)});
++    const double dy = std::max({0.0, y0 - origin[1], origin[1] - (y0 + 1.0 / scale)});
++    return dx * dx + dy * dy;
++}
++
+ std::set<UnwrappedTileID> RenderTerrain::nearestMeshTiles(std::set<UnwrappedTileID> tiles,
+                                                           size_t maxTiles,
+                                                           const std::array<double, 2>& origin) {
+     if (maxTiles == 0 || tiles.size() <= maxTiles) {
+         return tiles;
+     }
++    // Ranked by the tile's nearest point, not its centre: every tile that begins within some
++    // distance is kept, so the ground is whole out to there and the cover grows outwards from
++    // the camera. By centre, a big far tile could outrank smaller ones in front of it, which
++    // left a hole with a ridge behind it.
++    const auto tileDist2 = [&](const UnwrappedTileID& id) { return nearestPointDist2(id, origin); };
+ 
+     // Ties go by tile ID, so the same view keeps the same tiles from one call to the next.
+     std::vector<UnwrappedTileID> sorted(tiles.begin(), tiles.end());
+@@ -272,8 +412,8 @@ std::set<UnwrappedTileID> RenderTerrain::nearestMeshTiles(std::set<UnwrappedTile
+                       sorted.begin() + static_cast<std::ptrdiff_t>(maxTiles),
+                       sorted.end(),
+                       [&](const UnwrappedTileID& a, const UnwrappedTileID& b) {
+-                          const double da = tileCentreDistance2(a, origin);
+-                          const double db = tileCentreDistance2(b, origin);
++                          const double da = tileDist2(a);
++                          const double db = tileDist2(b);
+                           return da < db || (da == db && a < b);
+                       });
+     return {sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(maxTiles)};
+@@ -418,6 +558,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
+             depthDirty = true;
+         }
+         tilesWithDrawables.clear();
++        boundDrapes.clear();
+     }
+ 
+     // If we don't have a DEM source, we can't create terrain drawables
+@@ -425,11 +566,9 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
+         return;
+     }
+ 
+-    // Get tiles from the DEM source
++    // Get tiles from the DEM source. None in view still builds the mesh, flat on the
++    // placeholder, or nothing draped is drawn until a DEM tile arrives.
+     auto renderTiles = demSource->getRawRenderTiles();
+-    if (renderTiles->empty()) {
+-        return;
+-    }
+ 
+     // Cast to LayerGroup for addDrawable
+     auto* lg = static_cast<LayerGroup*>(layerGroup.get());
+@@ -499,6 +638,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
+     for (auto it = tilesWithDrawables.begin(); it != tilesWithDrawables.end();) {
+         if (!currentTiles.contains(it->first)) {
+             drawableDemCoords.erase(it->first);
++            boundDrapes.erase(it->first);
+             it = tilesWithDrawables.erase(it);
+         } else {
+             ++it;
+@@ -552,6 +692,20 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
+     for (const auto& unwrapped : meshTiles) {
+         const OverscaledTileID tileID(unwrapped.canonical.z, unwrapped.wrap, unwrapped.canonical);
+ 
++        // A drape target remade at another size leaves the drawable sampling the old texture.
++        if (const auto target = texturePool.getRenderTarget(unwrapped);
++            target && tilesWithDrawables.contains(tileID) && boundDrapes[tileID] != target->getTexture().get()) {
++            const auto ofTile = [&](gfx::Drawable& drawable) {
++                return drawable.getTileID() && *drawable.getTileID() == tileID;
++            };
++            lg->removeDrawablesIf(ofTile);
++            if (depthLg) {
++                depthLg->removeDrawablesIf(ofTile);
++                depthDirty = true;
++            }
++            tilesWithDrawables.erase(tileID);
++        }
++
+         // Skip if the tile already has a drawable bound to its own DEM, but mark that DEM used:
+         // this early-out is a tier-2 tile's only path, so the LRU could otherwise evict the
+         // texture from under the drawable still sampling it.
+@@ -656,6 +810,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
+         if (drawable) {
+             lg->addDrawable(std::move(drawable));
+             tilesWithDrawables[tileID] = binding;
++            boundDrapes[tileID] = renderTarget->getTexture().get();
+ #if !MLN_RENDER_BACKEND_OPENGL
+             // Non-GL backends: one depth drawable per tile (no instancing path there).
+             if (depthLg) {
+@@ -841,22 +996,32 @@ float RenderTerrain::getElevation(const UnwrappedTileID& tileID_, float x, float
+     const auto y0 = static_cast<int32_t>(std::floor(py));
+     const float fx = px - static_cast<float>(x0);
+     const float fy = py - static_cast<float>(y0);
+-    const float tl = static_cast<float>(demData.get(x0, y0));
+-    const float tr = static_cast<float>(demData.get(x0 + 1, y0));
+-    const float bl = static_cast<float>(demData.get(x0, y0 + 1));
+-    const float br = static_cast<float>(demData.get(x0 + 1, y0 + 1));
+-    const float top = tl + (tr - tl) * fx;
+-    const float bottom = bl + (br - bl) * fx;
+-    return top + (bottom - top) * fy;
++    // As the terrain shader: the ground texels alone, and sea level where there are none
++    const auto plane = getPlane();
++    const std::array<float, 4> heights{static_cast<float>(demData.get(x0, y0)),
++                                       static_cast<float>(demData.get(x0 + 1, y0)),
++                                       static_cast<float>(demData.get(x0, y0 + 1)),
++                                       static_cast<float>(demData.get(x0 + 1, y0 + 1))};
++    const std::array<float, 4> weights{
++        (1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy};
++    float sum = 0;
++    float weight = 0;
++    for (std::size_t i = 0; i < heights.size(); ++i) {
++        if (!plane || heights[i] != std::trunc(*plane)) {
++            sum += weights[i] * heights[i];
++            weight += weights[i];
++        }
++    }
++    return weight > 0 ? sum / weight : 0.0f;
+ }
+ 
+ float RenderTerrain::getElevationWithExaggeration(const UnwrappedTileID& tileID, float x, float y) const {
+     return getElevation(tileID, x, y) * getExaggeration();
+ }
+ 
+-double RenderTerrain::getElevationForLatLng(const LatLng& latLng) const {
++int RenderTerrain::elevationSampleZoom() const {
+     if (!demSource) {
+-        return 0.0;
++        return -1;
+     }
+ 
+     // Sample as deep as the finest DEM tile loaded: getElevation walks up to the closest
+@@ -868,6 +1033,14 @@ double RenderTerrain::getElevationForLatLng(const LatLng& latLng) const {
+             sampleZoom = std::max(sampleZoom, static_cast<int>(renderTile.id.canonical.z));
+         }
+     }
++    return sampleZoom;
++}
++
++double RenderTerrain::getElevationForLatLng(const LatLng& latLng) const {
++    return elevationAt(latLng, elevationSampleZoom());
++}
++
++double RenderTerrain::elevationAt(const LatLng& latLng, int sampleZoom) const {
+     if (sampleZoom < 0) {
+         return 0.0;
+     }
+@@ -932,6 +1105,54 @@ std::optional<double> RenderTerrain::findElevationForLatLng(const LatLng& latLng
+     return getElevationWithExaggeration(sampleTile, localX, localY);
+ }
+ 
++std::optional<RenderTerrain::SightGround> RenderTerrain::getSightGround(const TransformState& state) const {
++    const int sampleZoom = elevationSampleZoom();
++    const double pitch = state.getPitch();
++    // Near grazing the line runs along the ground; Map::Impl does not anchor there either.
++    if (sampleZoom < 0 || std::cos(pitch) < 0.1) {
++        return std::nullopt;
++    }
++    const LatLng centre = state.getLatLng();
++    const double centreAltitude = state.getCenterAltitude();
++    const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(centre.latitude(), state.getZoom());
++    const double sight = state.getCameraToCenterDistance() * metresPerPixel;
++    // Towards the camera, which sits opposite the bearing; y grows southwards.
++    const double bearing = -state.getBearing();
++    const double scale = state.getScale();
++    const Point<double> projected = Projection::project(centre, scale);
++    // The point of the line at `altitude`, which lies (altitude - centre)·tan(pitch) nearer the camera.
++    const auto pointAt = [&](double altitude) {
++        const double shift = (altitude - centreAltitude) * std::tan(pitch) / metresPerPixel;
++        return Projection::unproject(
++            {projected.x - shift * std::sin(bearing), projected.y + shift * std::cos(bearing)}, scale);
++    };
++    const auto above = [&](double altitude) { return altitude - elevationAt(pointAt(altitude), sampleZoom); };
++
++    // From just under the camera down to as far beyond the centre as the camera is before it.
++    const double top = centreAltitude + 0.95 * sight * std::cos(pitch);
++    const double bottom = centreAltitude - 3.0 * sight * std::cos(pitch);
++    if (above(top) <= 0.0) {
++        return std::nullopt; // the camera is in the ground
++    }
++    // Steps of 1/64 of the height down to the centre; halving then finds the crossing.
++    constexpr int stepsToCentre = 64;
++    const double step = (top - centreAltitude) / stepsToCentre;
++    double high = top;
++    for (double low = top - step; low >= bottom; low -= step) {
++        if (above(low) <= 0.0) {
++            for (int i = 0; i < 24; ++i) {
++                const double middle = 0.5 * (high + low);
++                (above(middle) > 0.0 ? high : low) = middle;
++            }
++            const double elevation = 0.5 * (high + low);
++            const LatLng point = pointAt(elevation);
++            return SightGround{point.latitude(), point.longitude(), elevation};
++        }
++        high = low;
++    }
++    return std::nullopt;
++}
++
+ std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const UnwrappedTileID& tileID) const {
+     // Find the DEM texture matching the requested tile, or its closest available ancestor
+     const UnwrappedTileID* demTileID = nullptr;
+@@ -954,21 +1175,32 @@ std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const Un
+ 
+     return TerrainData{
+         .demTexture = entry->texture,
+-        .demCoords = {{mapping[0], mapping[1], mapping[2], 0.0f}},
++        .demCoords = {{mapping[0], mapping[1], mapping[2], getPlane().value_or(-1.0e9f)}},
+         .demDim = static_cast<float>(entry->dim),
+     };
+ }
+ 
+ const std::shared_ptr<gfx::Texture2D>& RenderTerrain::getPlaceholderDEMTexture(gfx::Context& context) {
++    // One texel that decodes to sea level in the source's encoding. An all-zero texel decodes
++    // to -10000 m (Mapbox) or -32768 m (Terrarium): the ground of every tile still waiting
++    // for its DEM, or outside the DEM's coverage, sank kilometres under the camera, past the
++    // far plane, and the map there showed only its labels.
+     if (!placeholderDEMTexture) {
+-        auto image = std::make_shared<PremultipliedImage>(Size{1, 1});
+-        std::memset(image->data.get(), 0, image->bytes());
+         placeholderDEMTexture = context.createTexture2D();
+-        placeholderDEMTexture->setImage(image);
+         placeholderDEMTexture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Nearest,
+                                                         .wrapU = gfx::TextureWrapType::Clamp,
+                                                         .wrapV = gfx::TextureWrapType::Clamp});
+     }
++    if (placeholderUnpack != demUnpackVector) {
++        placeholderUnpack = demUnpackVector;
++        const auto texel = terrain::seaLevelTexel(demUnpackVector);
++        auto image = std::make_shared<PremultipliedImage>(Size{1, 1});
++        image->data[0] = texel[0];
++        image->data[1] = texel[1];
++        image->data[2] = texel[2];
++        image->data[3] = 255;
++        placeholderDEMTexture->setImage(image);
++    }
+     return placeholderDEMTexture;
+ }
+ 
+@@ -1260,6 +1492,8 @@ std::unique_ptr<gfx::Drawable> RenderTerrain::createDrawableForTile(gfx::Context
+     // forward order (high index = front), unlike Opaque which renders reversed.
+     builder->setShader(terrainShader);
+     builder->setRenderPass(RenderPass::Translucent);
++    // Only the upper side of the surface: from inside a mountain the camera sees through it.
++    builder->setCullFaceMode(gfx::CullFaceMode::backCCW());
+     if (depthPass) {
+         // The depth pass renders packed depth with real depth testing so the
+         // nearest surface wins, into the terrain depth target (renderDepth)
+@@ -1502,13 +1736,14 @@ void RenderTerrain::updateInstancedDepthUBO(PaintParameters& parameters) {
+     const shaders::TerrainEvaluatedPropsUBO propsUBO = {.unpack = getDEMUnpackVector(),
+                                                         .exaggeration = getExaggeration(),
+                                                         .elevation_offset = elevationOffset,
+-                                                        .pad1 = 0.0f,
+-                                                        .pad2 = 0.0f,
++                                                        .no_ground = getPlane().value_or(-1.0e9f),
++                                                        .cut_ndc_x = 0.0f,
+                                                         .fog_color = {0.0f, 0.0f, 0.0f, 0.0f},
+                                                         .fog_start = 0.0f,
+                                                         .fog_end = 0.0f,
+-                                                        .pad3 = 0.0f,
+-                                                        .pad4 = 0.0f};
++                                                        .cut_depth = 0.0f,
++                                                        .cut_ndc_y = 0.0f,
++                                                        .clay_color = {0.0f, 0.0f, 0.0f, 0.0f}};
+ 
+     depthLg->visitDrawables([&](gfx::Drawable& drawable) {
+         auto& u = drawable.mutableUniformBuffers();
+diff --git a/src/mln/renderer/render_terrain.hpp b/src/mln/renderer/render_terrain.hpp
+index 823570a1dcf..ae54982e396 100644
+--- a/src/mln/renderer/render_terrain.hpp
++++ b/src/mln/renderer/render_terrain.hpp
+@@ -101,6 +101,10 @@ public:
+     /// layers hand to get_elevation().
+     static std::array<float, 3> demTileMapping(const CanonicalTileID& tile, const CanonicalTileID& demTile);
+ 
++    /// Whether rendered terrain rises above the line from the camera to the map centre, so a
++    /// mountain stands between them. Ground with no DEM loaded is out of view and does not count.
++    bool sightBlocked(const TransformState& state) const;
++
+     /// The point the mesh-tile cap measures distance from, in normalized web-mercator [0, 1]:
+     /// the ground under the camera (the map centre when the map is not tilted).
+     static std::array<double, 2> meshTileCapOrigin(const TransformState& state);
+@@ -109,7 +113,19 @@ public:
+     /// except one that lies over, or under, a tile the cover already has (whatever its zoom).
+     static std::set<UnwrappedTileID> dilateCover(const std::set<UnwrappedTileID>& cover);
+ 
+-    /// The `maxTiles` tiles whose centres lie nearest `origin` (normalized web-mercator), or all
++    /// How far from the ground under the camera, in metres, the capped mesh cover is whole: where
++    /// the first tile the cap dropped begins, eased over frames; infinity when it dropped none.
++    /// The fog is full by then.
++    double getCoverReachMetres() const { return coverReachMetres; }
++
++    /// The tile's longest edge on screen, in points, at the height of the ground at its middle:
++    /// how many texels its drape can show. Corners behind the camera count as at the near plane.
++    double screenEdge(const UnwrappedTileID& id, const TransformState& state) const;
++
++    /// Squared distance from `origin` (normalized web-mercator) to the nearest point of the tile.
++    static double nearestPointDist2(const UnwrappedTileID& id, const std::array<double, 2>& origin);
++
++    /// The `maxTiles` tiles whose nearest points lie nearest `origin` (normalized web-mercator), or all
+     /// of them when there are no more than that or `maxTiles` is 0. The mesh-tile cap
+     /// (TerrainLoadBudget::maxMeshTiles) that computeMeshCover applies, after
+     /// coarsenFarMeshTiles.
+@@ -219,11 +235,28 @@ public:
+     /// As getElevationForLatLng, but empty where no loaded DEM tile covers the point (rather than 0).
+     std::optional<double> findElevationForLatLng(const LatLng& latLng) const;
+ 
++    /// Where the line of sight through the map centre first meets the drawn terrain, coming from
++    /// the camera: the point and its height in metres (exaggeration applied). Moving the centre
++    /// there keeping the view puts it on the ground actually looked at, so a clamp that follows
++    /// has nothing left to move. Empty with no DEM, at a grazing pitch, or when the line meets no
++    /// ground before passing three times the camera's distance beyond the centre.
++    struct SightGround {
++        double latitude;
++        double longitude;
++        double elevation;
++    };
++    std::optional<SightGround> getSightGround(const TransformState& state) const;
++
+     /**
+      * @brief Get the terrain exaggeration multiplier
+      */
+     float getExaggeration() const;
+ 
++    /**
++     * @brief The height the DEM writes where it has no ground, if it writes one
++     */
++    std::optional<float> getPlane() const { return impl->plane; }
++
+     /**
+      * @brief Get the source ID providing DEM data
+      */
+@@ -354,6 +387,16 @@ public:
+     Immutable<style::Terrain::Impl> impl;
+ 
+ private:
++    /// The finest DEM zoom loaded, which elevationAt samples at; -1 with none.
++    int elevationSampleZoom() const;
++    double elevationAt(const LatLng& latLng, int sampleZoom) const;
++
++    /// computeMeshCover's last answer for getCoverReachMetres.
++    mutable double coverReachMetres = std::numeric_limits<double>::infinity();
++    /// sightBlocked's last answer, which it holds until the ground is kCutReleaseM below the line.
++    mutable bool cutting = false;
++    static constexpr double kCutReleaseM = 30.0;
++
+     /**
+      * @brief Generate terrain mesh geometry
+      *
+@@ -399,6 +442,8 @@ private:
+     // whenever terrain::shouldRebind says a better DEM can be bound - a higher tier, or a
+     // deeper ancestor within the fallback tier
+     std::unordered_map<OverscaledTileID, terrain::DEMBinding> tilesWithDrawables;
++    /// The drape texture each tile's drawable samples: a target made at another size is new.
++    std::unordered_map<OverscaledTileID, const gfx::Texture2D*> boundDrapes;
+ 
+     // Per-drawable scale/offset into the bound DEM texture ({1,0,0,0} unless
+     // an ancestor tile's DEM is bound); read by the terrain layer tweaker
+@@ -486,6 +531,7 @@ private:
+ 
+     // See getPlaceholderDEMTexture
+     std::shared_ptr<gfx::Texture2D> placeholderDEMTexture;
++    std::array<float, 4> placeholderUnpack{};
+ 
+     // Layer index (terrain renders early in 3D pass, use negative index)
+     static constexpr int32_t TERRAIN_LAYER_INDEX = -1000;
+diff --git a/src/mln/renderer/renderer_impl.cpp b/src/mln/renderer/renderer_impl.cpp
+index eda7b6a9a94..5c5529f9726 100644
+--- a/src/mln/renderer/renderer_impl.cpp
++++ b/src/mln/renderer/renderer_impl.cpp
+@@ -1,5 +1,7 @@
+ #include <mln/renderer/renderer_impl.hpp>
+ 
++#include <cmath>
++
+ #include <mln/geometry/line_atlas.hpp>
+ #include <mln/gfx/backend_scope.hpp>
+ #include <mln/gfx/context.hpp>
+@@ -8,6 +10,7 @@
+ #include <mln/gfx/renderer_backend.hpp>
+ #include <mln/gfx/renderable.hpp>
+ #include <mln/gfx/upload_pass.hpp>
++#include <mln/math/angles.hpp>
+ #include <mln/renderer/paint_parameters.hpp>
+ #include <mln/renderer/pattern_atlas.hpp>
+ #include <mln/renderer/renderer_observer.hpp>
+@@ -264,14 +267,18 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
+         // permanent blankness in single-frame still renders (the render tests).
+         terrain->prepareSource(orchestrator);
+         const std::set<UnwrappedTileID> demTileIDs = terrain->computeMeshCover(state, updateParameters);
++        const auto sides = drapeSides(*terrain, demTileIDs, state, updateParameters->terrainLoadMode);
+         for (const auto& id : demTileIDs) {
+-            texturePool.createRenderTarget(context, id, renderTreeParameters.backgroundColor);
++            texturePool.createRenderTarget(context, id, renderTreeParameters.backgroundColor, sides.at(id));
+         }
+         texturePool.removeStaleRenderTargets(demTileIDs);
+         frameDrapeTargetCount = demTileIDs.size();
+         // Hand the exact cover to RenderTerrain so its mesh matches this pool
+         terrain->setFrameMeshCover(demTileIDs);
++        // ...and to the DEM source, which loads the levels the mesh is drawn at.
++        util::setTerrainMeshCover({demTileIDs.begin(), demTileIDs.end()});
+     } else {
++        util::setTerrainMeshCover({});
+         // The pool persists across frames, so release the drape targets when
+         // terrain is disabled instead of holding their textures indefinitely
+         texturePool.removeStaleRenderTargets({});
+@@ -745,7 +752,13 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
+     // Report the rendered terrain height under the map centre. Only the render side has the
+     // DEM, so this is the channel; whether the camera acts on it is the map's call
+     // (Map::setCenterClampedToGround). Gated so a still map does not post a message a frame.
+-    if (auto* terrain = orchestrator.getRenderTerrain()) {
++    auto* terrain = orchestrator.getRenderTerrain();
++    // A reloaded style drops the centre to sea level: report as the first terrain did.
++    if (terrain != reportedTerrain) {
++        reportedTerrain = terrain;
++        lastReportedCenterElevation = 0.0;
++    }
++    if (terrain) {
+         const double centerElevation = terrain->getElevationForLatLng(updateParameters->transformState.getLatLng());
+         if (std::abs(centerElevation - lastReportedCenterElevation) > 0.25) {
+             lastReportedCenterElevation = centerElevation;
+@@ -776,6 +789,20 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
+         } else {
+             lastReportedTargetElevation = std::numeric_limits<double>::quiet_NaN();
+         }
++        const auto sight = terrain->getSightGround(updateParameters->transformState);
++        const std::array<double, 3> ground =
++            sight ? std::array<double, 3>{{sight->latitude, sight->longitude, sight->elevation}}
++                  : std::array<double, 3>{
++                        {std::numeric_limits<double>::quiet_NaN(), 0.0, std::numeric_limits<double>::quiet_NaN()}};
++        const auto& last = lastReportedSightGround;
++        // Under a centimetre of ground, or NaN again: nothing moved.
++        const bool same = (std::isnan(ground[2]) && std::isnan(last[2])) ||
++                          (std::abs(ground[0] - last[0]) < 1e-7 && std::abs(ground[1] - last[1]) < 1e-7 &&
++                           std::abs(ground[2] - last[2]) < 0.01);
++        if (!same) {
++            lastReportedSightGround = ground;
++            observer->onTerrainSightGroundChanged(ground[0], ground[1], ground[2]);
++        }
+     }
+ 
+     auto stats = std::make_shared<gfx::RenderingStats>(context.threadSafeCopyRenderingStats());
+@@ -804,6 +831,54 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
+     MLN_END_FRAME();
+ }
+ 
++std::map<UnwrappedTileID, uint32_t> Renderer::Impl::drapeSides(const RenderTerrain& terrain,
++                                                               const std::set<UnwrappedTileID>& tiles,
++                                                               const TransformState& state,
++                                                               TerrainLoadMode mode) const {
++    // Each tile drapes at the density it shows at on screen, so the ground in front of the camera
++    // is as sharp as the 2D map; one far off, a few pixels tall, takes the smallest target.
++    struct Wanted {
++        UnwrappedTileID id;
++        uint32_t side;
++        double edge;
++    };
++    std::vector<Wanted> wanted;
++    wanted.reserve(tiles.size());
++    std::size_t texels = 0;
++    for (const auto& id : tiles) {
++        const double edge = terrain.screenEdge(id, state) * pixelRatio;
++        auto side = static_cast<uint32_t>(std::ceil(edge / drapeTileSize)) * drapeTileSize;
++        side = std::clamp(side, drapeTileSize, maxDrapeSide);
++        // A size changes only by two steps, so a pan does not remake textures each frame.
++        if (const auto target = texturePool.getRenderTarget(id)) {
++            const uint32_t current = target->getTexture()->getSize().width;
++            if (side + 2 * drapeTileSize > current && side < current + 2 * drapeTileSize) {
++                side = current;
++            }
++        }
++        wanted.push_back({id, side, edge});
++        texels += std::size_t{side} * side;
++    }
++    // Over the budget, the largest give way first, a step at a time.
++    const std::size_t budget = drapeTexelBudget(mode);
++    while (texels > budget) {
++        auto largest = std::max_element(wanted.begin(), wanted.end(), [](const Wanted& a, const Wanted& b) {
++            return a.side < b.side || (a.side == b.side && a.edge > b.edge);
++        });
++        if (largest->side <= drapeTileSize) {
++            break;
++        }
++        texels -= std::size_t{largest->side} * largest->side;
++        largest->side -= drapeTileSize;
++        texels += std::size_t{largest->side} * largest->side;
++    }
++    std::map<UnwrappedTileID, uint32_t> sides;
++    for (const auto& tile : wanted) {
++        sides.emplace(tile.id, tile.side);
++    }
++    return sides;
++}
++
+ void Renderer::Impl::reduceMemoryUse() {
+     assert(gfx::BackendScope::exists());
+     // The drape targets are the largest reclaimable GPU allocation (one
+diff --git a/src/mln/renderer/renderer_impl.hpp b/src/mln/renderer/renderer_impl.hpp
+index 611144f99d6..5fc8704443e 100644
+--- a/src/mln/renderer/renderer_impl.hpp
++++ b/src/mln/renderer/renderer_impl.hpp
+@@ -9,14 +9,20 @@
+ #include <Foundation/Foundation.hpp>
+ #endif // MLN_RENDER_BACKEND_METAL
+ 
++#include <array>
+ #include <map>
++#include <set>
++#include <mln/map/mode.hpp>
+ #include <memory>
++#include <limits>
+ #include <string>
+ #include <mln/tile/tile_id.hpp>
+ 
+ namespace mln {
+ 
+ class RendererObserver;
++class RenderTerrain;
++class TransformState;
+ class RenderStaticData;
+ class RenderTree;
+ 
+@@ -67,6 +73,24 @@ private:
+     // back to 1 to save GPU memory on constrained devices (each step is 4x memory/target).
+     static constexpr uint32_t drapeTileSize = 512;
+     static constexpr uint32_t drapeQualityFactor = 2;
++    // Drape targets are sized to the tile on screen, in steps of drapeTileSize up to this.
++    static constexpr uint32_t maxDrapeSide = 4096;
++    // Texels all drape targets may hold together: about what the 1024 targets held before.
++    static constexpr std::size_t drapeTexelBudget(TerrainLoadMode mode) {
++        switch (mode) {
++            case TerrainLoadMode::Balanced:
++                return 64u << 20;
++            case TerrainLoadMode::Performance:
++                return 24u << 20;
++            case TerrainLoadMode::Quality:
++            default:
++                return 96u << 20;
++        }
++    }
++    std::map<UnwrappedTileID, uint32_t> drapeSides(const RenderTerrain& terrain,
++                                                   const std::set<UnwrappedTileID>& tiles,
++                                                   const TransformState& state,
++                                                   TerrainLoadMode mode) const;
+     TexturePool texturePool{drapeTileSize * drapeQualityFactor};
+ 
+     gfx::RendererBackend& backend;
+@@ -108,8 +132,12 @@ private:
+     /// Last terrain height reported under the map centre, so an unchanged surface does not
+     /// post an observer message every frame.
+     double lastReportedCenterElevation = 0.0;
++    const RenderTerrain* reportedTerrain = nullptr;
+     double lastReportedEyeElevation = std::numeric_limits<double>::quiet_NaN();
+     double lastReportedTargetElevation = std::numeric_limits<double>::quiet_NaN();
++    /// The sight ground last reported, NaN for none, so it is posted only when it moves.
++    std::array<double, 3> lastReportedSightGround{
++        {std::numeric_limits<double>::quiet_NaN(), 0.0, std::numeric_limits<double>::quiet_NaN()}};
+ 
+     enum class RenderState {
+         Never,
+diff --git a/src/mln/renderer/sources/render_tile_source.cpp b/src/mln/renderer/sources/render_tile_source.cpp
+index d210b4fbe28..0d9b3586162 100644
+--- a/src/mln/renderer/sources/render_tile_source.cpp
++++ b/src/mln/renderer/sources/render_tile_source.cpp
+@@ -523,6 +523,15 @@ RenderTiles RenderTileSource::getRenderTilesSortedByYPosition() const {
+     return renderTilesSortedByY;
+ }
+ 
++bool RenderTileSource::tileHasNoData(const UnwrappedTileID& id) const {
++    for (const auto& [tileID, tile] : tilePyramid.getTiles()) {
++        if (tileID.toUnwrapped() == id) {
++            return tile->isComplete() && !tile->isRenderable();
++        }
++    }
++    return false;
++}
++
+ const Tile* RenderTileSource::getRenderedTile(const UnwrappedTileID& tileID) const {
+     return tilePyramid.getRenderedTile(tileID);
+ }
+diff --git a/src/mln/renderer/sources/render_tile_source.hpp b/src/mln/renderer/sources/render_tile_source.hpp
+index faa276dcf2f..328bd8fe213 100644
+--- a/src/mln/renderer/sources/render_tile_source.hpp
++++ b/src/mln/renderer/sources/render_tile_source.hpp
+@@ -28,6 +28,9 @@ public:
+     RenderTiles getRenderTilesSortedByYPosition() const override;
+     const Tile* getRenderedTile(const UnwrappedTileID&) const override;
+     Immutable<std::vector<RenderTile>> getRawRenderTiles() const override { return renderTiles; }
++    /// Whether the tile was asked for and came back with nothing to draw, as past a sparse
++    /// pyramid's edge.
++    bool tileHasNoData(const UnwrappedTileID&) const;
+ 
+     std::unordered_map<std::string, std::vector<Feature>> queryRenderedFeatures(
+         const ScreenLineString& geometry,
+diff --git a/src/mln/renderer/texture_pool.cpp b/src/mln/renderer/texture_pool.cpp
+index 27ff27c1093..35176becbaf 100644
+--- a/src/mln/renderer/texture_pool.cpp
++++ b/src/mln/renderer/texture_pool.cpp
+@@ -1,5 +1,6 @@
+ #include <mln/renderer/texture_pool.hpp>
+ #include <mln/gfx/context.hpp>
++#include <mln/gfx/texture2d.hpp>
+ #include <mln/util/logging.hpp>
+ 
+ namespace mln {
+@@ -8,18 +9,24 @@ TexturePool::TexturePool(uint32_t tilesize)
+ 
+ TexturePool::~TexturePool() = default;
+ 
+-void TexturePool::createRenderTarget(gfx::Context& context, const UnwrappedTileID& id, const Color& backgroundColor) {
++void TexturePool::createRenderTarget(gfx::Context& context,
++                                     const UnwrappedTileID& id,
++                                     const Color& backgroundColor,
++                                     uint32_t size) {
++    const uint32_t side = size ? size : tileSize;
+     // Keep an existing render target; recreating it every frame churns GL
+     // texture memory and invalidates the texture bound to the terrain drawable
+     if (auto it = renderTargets.find(id); it != renderTargets.end() && it->second) {
+-        it->second->setClearColor(backgroundColor);
+-        return;
++        if (it->second->getTexture()->getSize().width == side) {
++            it->second->setClearColor(backgroundColor);
++            return;
++        }
+     }
+     // Drape targets render several overlapping draped tiles (a parent standing in for missing
+     // children beside already-loaded children); the stencil clips them against each other,
+     // as maplibre-gl-js does for its render-to-texture framebuffer.
+     auto renderTarget = context.createRenderTarget(
+-        {tileSize, tileSize}, gfx::TextureChannelDataType::UnsignedByte, /*stencil=*/true);
++        {side, side}, gfx::TextureChannelDataType::UnsignedByte, /*stencil=*/true);
+     renderTarget->setClearColor(backgroundColor);
+     renderTarget->setDrapeTileID(id);
+     renderTargets[id] = std::move(renderTarget);
+diff --git a/src/mln/renderer/texture_pool.hpp b/src/mln/renderer/texture_pool.hpp
+index 94d72fd7889..eabbe951970 100644
+--- a/src/mln/renderer/texture_pool.hpp
++++ b/src/mln/renderer/texture_pool.hpp
+@@ -14,7 +14,11 @@ public:
+     std::shared_ptr<RenderTarget> getRenderTarget(const UnwrappedTileID& id) const;
+     std::shared_ptr<RenderTarget> getRenderTargetAncestorOrDescendant(
+         const UnwrappedTileID& id, std::optional<UnwrappedTileID>& terrainTileID) const;
+-    void createRenderTarget(gfx::Context& context, const UnwrappedTileID& id, const Color& backgroundColor);
++    /// `size` 0 is the pool's own; a target of another size is made anew.
++    void createRenderTarget(gfx::Context& context,
++                            const UnwrappedTileID& id,
++                            const Color& backgroundColor,
++                            uint32_t size = 0);
+ 
+     /// Remove render targets for tiles that are no longer part of the given set
+     void removeStaleRenderTargets(const std::set<UnwrappedTileID>& currentTiles);
+diff --git a/src/mln/renderer/tile_parameters.hpp b/src/mln/renderer/tile_parameters.hpp
+index 43000b41592..89f31b4c391 100644
+--- a/src/mln/renderer/tile_parameters.hpp
++++ b/src/mln/renderer/tile_parameters.hpp
+@@ -3,11 +3,13 @@
+ #include <mln/map/mode.hpp>
+ #include <mln/actor/scheduler.hpp>
+ #include <mln/util/feature.hpp>
++#include <mln/tile/tile_id.hpp>
+ 
+ #include <array>
+ #include <memory>
+ #include <numbers>
+ #include <optional>
++#include <vector>
+ 
+ #include <mapbox/std/weak.hpp>
+ 
+@@ -26,6 +28,7 @@ using DynamicTextureAtlasPtr = std::shared_ptr<gfx::DynamicTextureAtlas>;
+ 
+ namespace util {
+ class TileElevationProvider;
++class TileCoverCache;
+ } // namespace util
+ 
+ class TileParameters {
+@@ -53,6 +56,9 @@ public:
+     /// Where the distance-based level of detail measures from (normalized web-mercator), in place
+     /// of the map centre; see util::TileCoverParameters::tileLodOrigin.
+     std::optional<std::array<double, 2>> tileLodOrigin = std::nullopt;
++
++    /// This frame's covers, shared across sources; null computes each source's own.
++    util::TileCoverCache* coverCache = nullptr;
+     bool isUpdateSynchronous = false;
+     bool captureRenderedFeatures = false;
+     /// With terrain on: the most tiles one source covers (ideal and prefetch covers each),
+@@ -63,6 +69,8 @@ public:
+     /// Where coverTileLimit measures from (normalized web-mercator): the ground under the
+     /// camera, RenderTerrain::meshTileCapOrigin, the same point the mesh-tile cap uses.
+     std::array<double, 2> coverTileLimitOrigin{{0.0, 0.0}};
++    /// For the terrain's DEM source: the mesh's last cover, loaded instead of the DEM's own.
++    std::vector<UnwrappedTileID> terrainMeshCover;
+ };
+ 
+ } // namespace mln
+diff --git a/src/mln/renderer/tile_pyramid.cpp b/src/mln/renderer/tile_pyramid.cpp
+index ddc6d87c7f4..8b528374259 100644
+--- a/src/mln/renderer/tile_pyramid.cpp
++++ b/src/mln/renderer/tile_pyramid.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include <cmath>
+ #include <algorithm>
++#include <set>
+ 
+ namespace mln {
+ 
+@@ -117,9 +118,17 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
+         .tileLodPitchThreshold = parameters.tileLodPitchThreshold,
+         .tileLodMode = parameters.tileLodMode,
+         .roundZoom = type == SourceType::Raster || type == SourceType::Video,
++        .nearDetail = type == SourceType::RasterDEM ? uint8_t{0} : util::nearDetailLevels(),
+         .elevationProvider = parameters.elevationProvider,
+         .tileLodOrigin = parameters.tileLodOrigin};
+ 
++    const auto cover = [&](int32_t z, const std::optional<uint8_t>& overscaledZ) {
++        const auto coverZ = static_cast<uint8_t>(z);
++        return parameters.coverCache
++                   ? parameters.coverCache->cover(tileCoverParameters, coverZ, zoomRange, overscaledZ)
++                   : util::tileCover(tileCoverParameters, coverZ, zoomRange, overscaledZ);
++    };
++
+     if (std::cmp_greater_equal(overscaledZoom, zoomRange.min)) {
+         int32_t idealZoom = std::min<int32_t>(zoomRange.max, overscaledZoom);
+ 
+@@ -140,11 +149,11 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
+             }
+ 
+             if (panZoom < idealZoom) {
+-                panTiles = util::tileCover(tileCoverParameters, panZoom, zoomRange);
++                panTiles = cover(panZoom, std::nullopt);
+             }
+         }
+ 
+-        idealTiles = util::tileCover(tileCoverParameters, idealZoom, zoomRange, tileZoom);
++        idealTiles = cover(idealZoom, tileZoom);
+         if (parameters.mode == MapMode::Tile && type != SourceType::Raster && type != SourceType::RasterDEM &&
+             idealTiles.size() > 1) {
+             mln::Log::Warning(mln::Event::General,
+@@ -155,9 +164,20 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
+     }
+ 
+     if (parameters.coverTileLimit > 0) {
+-        util::keepNearestTiles(idealTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin);
++        util::mergeFarthestTiles(
++            idealTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin, zoomRange.min);
+         util::keepNearestTiles(panTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin);
+     }
++    // The terrain's DEM loads the tiles its mesh is drawn on, far ones merged to fit the budget.
++    if (!parameters.terrainMeshCover.empty()) {
++        // A mesh tile past the DEM's maxzoom samples its ancestor there (demTileMapping).
++        std::set<OverscaledTileID> demTiles;
++        for (const auto& id : parameters.terrainMeshCover) {
++            const auto z = std::min(id.canonical.z, zoomRange.max);
++            demTiles.emplace(z, id.wrap, id.canonical.scaledTo(z));
++        }
++        idealTiles.assign(demTiles.begin(), demTiles.end());
++    }
+ 
+     // Stores a list of all the tiles that we're definitely going to retain.
+     // There are two kinds of tiles we need: the ideal tiles determined by the
+diff --git a/src/mln/style/conversion/terrain.cpp b/src/mln/style/conversion/terrain.cpp
+index a447d9ba953..d13117220f0 100644
+--- a/src/mln/style/conversion/terrain.cpp
++++ b/src/mln/style/conversion/terrain.cpp
+@@ -37,7 +37,21 @@ std::optional<Terrain> Converter<Terrain>::operator()(const Convertible& value,
+         exaggeration = *converted;
+     }
+ 
+-    return Terrain(*source, exaggeration);
++    // Parse plane (optional): the height the DEM writes where it has no ground
++    std::optional<float> plane;
++    if (std::optional<Convertible> planeValue = objectMember(value, "plane")) {
++        plane = toNumber(*planeValue);
++        if (!plane) {
++            error.message = "terrain plane must be a number";
++            return std::nullopt;
++        }
++    }
++
++    Terrain terrain(*source, exaggeration);
++    if (plane) {
++        terrain.setPlane(plane);
++    }
++    return terrain;
+ }
+ 
+ } // namespace conversion
+diff --git a/src/mln/style/terrain.cpp b/src/mln/style/terrain.cpp
+index 964acddcc2a..b3c739b3626 100644
+--- a/src/mln/style/terrain.cpp
++++ b/src/mln/style/terrain.cpp
+@@ -52,5 +52,16 @@ void Terrain::setExaggeration(float exaggeration) {
+     observer->onTerrainChanged(*this);
+ }
+ 
++std::optional<float> Terrain::getPlane() const {
++    return impl->plane;
++}
++
++void Terrain::setPlane(std::optional<float> plane) {
++    auto impl_ = mutableImpl();
++    impl_->plane = plane;
++    impl = std::move(impl_);
++    observer->onTerrainChanged(*this);
++}
++
+ } // namespace style
+ } // namespace mln
+diff --git a/src/mln/style/terrain_impl.hpp b/src/mln/style/terrain_impl.hpp
+index ff61fa0f503..9b25f73f5a4 100644
+--- a/src/mln/style/terrain_impl.hpp
++++ b/src/mln/style/terrain_impl.hpp
+@@ -2,6 +2,7 @@
+ 
+ #include <mln/style/terrain.hpp>
+ #include <mln/util/immutable.hpp>
++#include <optional>
+ #include <string>
+ 
+ namespace mln {
+@@ -17,9 +18,11 @@ public:
+ 
+     std::string sourceID;
+     float exaggeration;
++    /// The height the DEM writes where it has no ground; nil when it writes none.
++    std::optional<float> plane;
+ 
+     bool operator==(const Impl& other) const {
+-        return sourceID == other.sourceID && exaggeration == other.exaggeration;
++        return sourceID == other.sourceID && exaggeration == other.exaggeration && plane == other.plane;
+     }
+ };
+ 
+diff --git a/src/mln/util/tile_cover.cpp b/src/mln/util/tile_cover.cpp
+index d5733c7af67..9868e5f04d5 100644
+--- a/src/mln/util/tile_cover.cpp
++++ b/src/mln/util/tile_cover.cpp
+@@ -5,12 +5,18 @@
+ #include <mln/util/interpolate.hpp>
+ #include <mln/util/tile_coordinate.hpp>
+ #include <mln/util/tile_cover.hpp>
++
++#include <atomic>
+ #include <mln/util/tile_cover_impl.hpp>
+ #include <mln/util/tile_lod.hpp>
+ 
+ #include <algorithm>
++#include <optional>
+ #include <functional>
+ #include <list>
++#include <mutex>
++#include <queue>
++#include <set>
+ 
+ using namespace std::numbers;
+ 
+@@ -150,6 +156,25 @@ std::vector<UnwrappedTileID> tileCover(const Point<double>& tl,
+ 
+ } // namespace
+ 
++uint8_t nearDetailLevels() noexcept {
++    return 2;
++}
++
++namespace {
++std::mutex terrainMeshCoverMutex;
++std::vector<UnwrappedTileID> lastTerrainMeshCover;
++} // namespace
++
++std::vector<UnwrappedTileID> terrainMeshCover() {
++    std::lock_guard<std::mutex> lock(terrainMeshCoverMutex);
++    return lastTerrainMeshCover;
++}
++
++void setTerrainMeshCover(std::vector<UnwrappedTileID> cover) {
++    std::lock_guard<std::mutex> lock(terrainMeshCoverMutex);
++    lastTerrainMeshCover = std::move(cover);
++}
++
+ int32_t coveringZoomLevel(double zoom, style::SourceType type, uint16_t size) noexcept {
+     zoom += util::log2(util::tileSize_D / size);
+     if (type == style::SourceType::Raster || type == style::SourceType::RasterDEM || type == style::SourceType::Video) {
+@@ -200,11 +225,13 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+     const bool allowVariableZoom = adaptiveLod || transform.getPitch() > state.tileLodPitchThreshold;
+     const uint8_t minZoom = allowVariableZoom ? zoomRange.min : z;
+     const bool variableZoomMode = state.tileLodMode == TileLodMode::Distance || adaptiveLod;
+-    // Adaptive never goes finer than the zoom the view asks for: under a steep pitch gl-js's
++    // Adaptive goes no finer than the zoom the view asks for: under a steep pitch gl-js's
+     // function sends the ground at the camera to the source's max zoom, and a few hundred such
+-    // tiles cost more than a tile budget allows. The near field gets the view's zoom, the far
+-    // field less - where Default would give the near field less, as it measures from the centre.
+-    const uint8_t maxZoom = (variableZoomMode && allowVariableZoom) ? (adaptiveLod ? z : zoomRange.max) : z;
++    // tiles cost more than a tile budget allows. Only the ground within kNearDetailMetres of the
++    // camera may go state.nearDetail levels finer.
++    constexpr double kNearDetailMetres = 1500.0;
++    const uint8_t adaptiveMax = std::min<uint8_t>(zoomRange.max, static_cast<uint8_t>(z + state.nearDetail));
++    const uint8_t maxZoom = (variableZoomMode && allowVariableZoom) ? (adaptiveLod ? adaptiveMax : zoomRange.max) : z;
+     const uint8_t overscaledZoom = std::max(overscaledZ.value_or(z), maxZoom);
+     const bool flippedY = transform.getViewportMode() == ViewportMode::FlippedY;
+ 
+@@ -298,6 +325,9 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+                 .fullyVisible = false};
+     };
+ 
++    const double nearRadius = kNearDetailMetres / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
++                                                   util::M2PI * util::EARTH_RADIUS_M);
++
+     // Perform depth-first traversal on tile tree to find visible tiles
+     std::vector<Node> stack;
+     std::vector<ResultTile> result;
+@@ -404,7 +434,8 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+                 requestedCenterZoom, distanceToTile2d, distanceToCenterZ, distanceToCenter3d) -
+                                   std::log2(std::max(1.0, state.tileLodScale));
+             const double desiredZoom = state.roundZoom ? std::round(rawZoom) : std::floor(rawZoom);
+-            shouldSplitTile = node.zoom < std::clamp(desiredZoom, 0.0, static_cast<double>(maxZoom));
++            const uint8_t cap = distanceToTile2d < nearRadius ? maxZoom : std::min(maxZoom, z);
++            shouldSplitTile = node.zoom < std::clamp(desiredZoom, 0.0, static_cast<double>(cap));
+         } else if (state.tileLodMode == TileLodMode::Distance) {
+             const vec3 camToTileMercator = vec3Scale(node.aabb.distanceXYZ(cameraCoord), 1.0 / worldSize);
+             const double distanceToTileMercator = vec3Length(camToTileMercator);
+@@ -469,8 +500,32 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+         }
+     }
+ 
++    bool centreAdded = false;
++    // Over terrain, the tile under the map centre is covered even when it is out of view: a
++    // camera that sank below the ground looks past it, so its height never loaded and the
++    // centre could not be put back on the ground (Map::setCenterClampedToGround).
++    if (state.elevationProvider) {
++        const auto centre = TileCoordinate::fromLatLng(z, transform.getLatLng()).p;
++        const auto cx = static_cast<int64_t>(std::floor(centre.x));
++        const auto cy = static_cast<int64_t>(std::floor(centre.y));
++        const auto n = static_cast<int64_t>(numTiles);
++        if (cy >= 0 && cy < n) {
++            const auto wrap = static_cast<int16_t>(cx >= 0 ? cx / n : (cx - n + 1) / n);
++            const auto x = static_cast<uint32_t>(cx - wrap * n);
++            const auto y = static_cast<uint32_t>(cy);
++            const bool covered = std::any_of(result.begin(), result.end(), [&](const ResultTile& tile) {
++                const auto& c = tile.id.canonical;
++                return tile.id.wrap == wrap && c.z <= z && (x >> (z - c.z)) == c.x && (y >> (z - c.z)) == c.y;
++            });
++            if (!covered) {
++                result.push_back({OverscaledTileID{z, wrap, z, x, y}, 0.0});
++                centreAdded = true;
++            }
++        }
++    }
++
+     // Sort results by distance (a limited walk already found them in order)
+-    if (!limited) {
++    if (!limited || centreAdded) {
+         std::sort(result.begin(), result.end(), [](const ResultTile& a, const ResultTile& b) {
+             return a.sqrDist < b.sqrDist;
+         });
+@@ -529,6 +584,27 @@ std::set<UnwrappedTileID> frustumCull(const TileCoverParameters& state, const st
+     return result;
+ }
+ 
++std::vector<OverscaledTileID> TileCoverCache::cover(const TileCoverParameters& state,
++                                                    uint8_t z,
++                                                    Range<uint8_t> zoomRange,
++                                                    const std::optional<uint8_t>& overscaledZ) {
++    const Key key{z,
++                  zoomRange.min,
++                  zoomRange.max,
++                  overscaledZ ? int16_t{*overscaledZ} : int16_t{-1},
++                  state.roundZoom,
++                  state.nearDetail,
++                  state.tileLimit,
++                  state.tileLimitOrigin,
++                  state.elevationProvider,
++                  state.tileLodOrigin};
++    auto found = covers.find(key);
++    if (found == covers.end()) {
++        found = covers.emplace(key, tileCover(state, z, zoomRange, overscaledZ)).first;
++    }
++    return found->second;
++}
++
+ std::vector<UnwrappedTileID> tileCover(const LatLngBounds& bounds_, uint8_t z) {
+     if (bounds_.isEmpty() || bounds_.south() > util::LATITUDE_MAX || bounds_.north() < -util::LATITUDE_MAX) {
+         return {};
+@@ -634,5 +710,54 @@ void keepNearestTiles(std::vector<OverscaledTileID>& tiles, size_t maxTiles, con
+     tiles.erase(keep, tiles.end());
+ }
+ 
++double nearestPointDistance2(const CanonicalTileID& id, int16_t wrap, const std::array<double, 2>& origin) {
++    const double scale = static_cast<double>(1u << id.z);
++    const double x0 = static_cast<double>(id.x) / scale + wrap;
++    const double y0 = static_cast<double>(id.y) / scale;
++    const double dx = std::max({0.0, x0 - origin[0], origin[0] - (x0 + 1.0 / scale)});
++    const double dy = std::max({0.0, y0 - origin[1], origin[1] - (y0 + 1.0 / scale)});
++    return dx * dx + dy * dy;
++}
++
++void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
++                        size_t maxTiles,
++                        const std::array<double, 2>& origin,
++                        uint8_t minZoom) {
++    if (maxTiles == 0 || tiles.size() <= maxTiles) {
++        return;
++    }
++    // Thousands of tiles at a source's deep minzoom cannot merge past it; the nearest are enough.
++    keepNearestTiles(tiles, maxTiles * 4, origin);
++    std::set<OverscaledTileID> alive(tiles.begin(), tiles.end());
++    const auto distance2 = [&](const OverscaledTileID& id) {
++        return nearestPointDistance2(id.canonical, id.wrap, origin);
++    };
++    // Farthest first; a parent goes back in at its own, nearer distance.
++    using Entry = std::pair<double, OverscaledTileID>;
++    std::priority_queue<Entry> farthest;
++    for (const auto& id : alive) {
++        farthest.emplace(distance2(id), id);
++    }
++    while (alive.size() > maxTiles && !farthest.empty()) {
++        const OverscaledTileID tile = farthest.top().second;
++        farthest.pop();
++        if (!alive.contains(tile) || tile.overscaledZ <= minZoom) {
++            continue;
++        }
++        const OverscaledTileID parent = tile.scaledTo(tile.overscaledZ - 1);
++        // No parent wider than twice its distance: merging on swallowed the near ground, 1043
++        // tiles at 79° became two z11 tiles spanning the camera and the drape there drew nothing.
++        const double parentSize = 1.0 / static_cast<double>(1u << parent.canonical.z);
++        if (parentSize * parentSize > 4 * distance2(parent)) {
++            continue;
++        }
++        std::erase_if(alive, [&](const OverscaledTileID& id) { return id == parent || id.isChildOf(parent); });
++        alive.insert(parent);
++        farthest.emplace(distance2(parent), parent);
++    }
++    tiles.assign(alive.begin(), alive.end());
++    keepNearestTiles(tiles, maxTiles, origin);
++}
++
+ } // namespace util
+ } // namespace mln
+diff --git a/src/mln/util/tile_cover.hpp b/src/mln/util/tile_cover.hpp
+index ffa4cb4abe9..dfa4368018c 100644
+--- a/src/mln/util/tile_cover.hpp
++++ b/src/mln/util/tile_cover.hpp
+@@ -7,11 +7,13 @@
+ #include <mln/util/range.hpp>
+ 
+ #include <array>
++#include <map>
+ #include <vector>
+ #include <memory>
+ #include <numbers>
+ #include <optional>
+ #include <set>
++#include <tuple>
+ 
+ namespace mln {
+ 
+@@ -70,6 +72,10 @@ struct TileCoverParameters {
+     size_t tileLimit = 0;
+     /// Where `tileLimit` measures from (normalized web-mercator).
+     std::array<double, 2> tileLimitOrigin{{0.0, 0.0}};
++    /// Adaptive only: levels finer than the view's zoom the ground near the camera may go
++    /// (nearDetailLevels()). The DEM source and the terrain mesh keep 0: the mesh near the camera
++    /// is already finer than the view, and it is the draped sources that were stretched over it.
++    uint8_t nearDetail = 0;
+     /// Optional; when null the cover is computed against the flat ground plane, as
+     /// it was before terrain support.
+     const TileElevationProvider* elevationProvider = nullptr;
+@@ -82,11 +88,43 @@ struct TileCoverParameters {
+ 
+ int32_t coveringZoomLevel(double z, style::SourceType type, uint16_t tileSize) noexcept;
+ 
++/// The levels an adaptive cover's near field may go past the view's zoom: the slope just ahead of
++/// a tilted camera is magnified on screen, and drawn from tiles at the view's zoom it blurs.
++uint8_t nearDetailLevels() noexcept;
++
++/// The terrain mesh's last cover, which its DEM source loads instead of a cover of its own: a mesh
++/// tile merged to fit the tile budget needs the DEM tile at its own level. Empty without terrain.
++std::vector<UnwrappedTileID> terrainMeshCover();
++void setTerrainMeshCover(std::vector<UnwrappedTileID> cover);
++
+ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+                                         uint8_t z,
+                                         const Range<uint8_t> zoomRange,
+                                         const std::optional<uint8_t>& overscaledZ = std::nullopt);
+ 
++/// One frame's covers, shared by sources asking for the same one.
++/// The key is every input but the frame's camera and detail.
++class TileCoverCache {
++public:
++    std::vector<OverscaledTileID> cover(const TileCoverParameters& state,
++                                        uint8_t z,
++                                        Range<uint8_t> zoomRange,
++                                        const std::optional<uint8_t>& overscaledZ = std::nullopt);
++
++private:
++    using Key = std::tuple<uint8_t,
++                           uint8_t,
++                           uint8_t,
++                           int16_t,
++                           bool,
++                           uint8_t,
++                           size_t,
++                           std::array<double, 2>,
++                           const TileElevationProvider*,
++                           std::optional<std::array<double, 2>>>;
++    std::map<Key, std::vector<OverscaledTileID>> covers;
++};
++
+ /// Keep only the tiles whose (elevation-aware) bounds intersect the view frustum.
+ /// The terrain mesh is built by subdividing the DEM source's render tiles, which
+ /// include large low-zoom ancestors when the DEM is sparse; most of such a tile's
+@@ -101,6 +139,20 @@ std::set<UnwrappedTileID> frustumCull(const TileCoverParameters& state, const st
+ /// the order tileCover returned them in. Ties go by tile ID, so the same view keeps the same
+ /// tiles from one call to the next.
+ void keepNearestTiles(std::vector<OverscaledTileID>& tiles, size_t maxTiles, const std::array<double, 2>& origin);
++
++/// Squared distance from `origin` (normalized web-mercator) to the nearest point of the tile.
++double nearestPointDistance2(const CanonicalTileID& id, int16_t wrap, const std::array<double, 2>& origin);
++
++/// Merge the tiles farthest from `origin` into their parents until no more than `maxTiles` are
++/// left: the far ground goes coarser and the cover stays whole out to the horizon, where
++/// keepNearestTiles cuts it short. The nearest keep their level: no parent is made wider than
++/// twice its distance from `origin`, so the ground near it is never coarsened.
++/// Parents stop at `minZoom`; where that is still too many, the nearest are kept. Ties go by tile
++/// ID, as in keepNearestTiles.
++void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
++                        size_t maxTiles,
++                        const std::array<double, 2>& origin,
++                        uint8_t minZoom);
+ std::vector<UnwrappedTileID> tileCover(const LatLngBounds&, uint8_t z);
+ std::vector<UnwrappedTileID> tileCover(const Geometry<double>&, uint8_t z);
+ 
+diff --git a/src/mln/util/tile_lod.cpp b/src/mln/util/tile_lod.cpp
+index c8fd3c9d1d0..cc83a1c48f1 100644
+--- a/src/mln/util/tile_lod.cpp
++++ b/src/mln/util/tile_lod.cpp
+@@ -42,11 +42,16 @@ double TileZoomFunction::operator()(double requestedCenterZoom,
+                                     double distanceToTile2D,
+                                     double distanceToTileZ,
+                                     double distanceToCenter3D) const {
+-    const double centerPitch = std::acos(std::min(1.0, distanceToTileZ / distanceToCenter3D));
+-    const double highestPitch = std::min(deg2rad(maxMercatorHorizonAngleDegrees),
+-                                         centerPitch + deg2rad(cameraVerticalFOV / 2));
+-    const double lowestPitch = std::min(highestPitch, centerPitch - deg2rad(cameraVerticalFOV / 2));
+-    const double tileCount = integralOfCosXByP(pitchTileLoadingBehavior - 1, lowestPitch, highestPitch);
++    if (distanceToTileZ != lastTileZ || distanceToCenter3D != lastCenter3D) {
++        const double centerPitch = std::acos(std::min(1.0, distanceToTileZ / distanceToCenter3D));
++        const double highestPitch = std::min(deg2rad(maxMercatorHorizonAngleDegrees),
++                                             centerPitch + deg2rad(cameraVerticalFOV / 2));
++        const double lowestPitch = std::min(highestPitch, centerPitch - deg2rad(cameraVerticalFOV / 2));
++        lastTileCount = integralOfCosXByP(pitchTileLoadingBehavior - 1, lowestPitch, highestPitch);
++        lastTileZ = distanceToTileZ;
++        lastCenter3D = distanceToCenter3D;
++    }
++    const double tileCount = lastTileCount;
+     const double thisTilePitch = std::atan(distanceToTile2D / distanceToTileZ);
+     const double distanceToTile3D = std::hypot(distanceToTile2D, distanceToTileZ);
+     double desired = requestedCenterZoom;
+diff --git a/src/mln/util/tile_lod.hpp b/src/mln/util/tile_lod.hpp
+index ae3ec794bf4..2acb578f8cb 100644
+--- a/src/mln/util/tile_lod.hpp
++++ b/src/mln/util/tile_lod.hpp
+@@ -30,6 +30,10 @@ private:
+     double pitchTileLoadingBehavior;
+     double tileCountPitch0;
+     double tileCountMaxMinRatio;
++    // One cover asks with the same camera distances for every tile: the integral once.
++    mutable double lastTileZ = -1;
++    mutable double lastCenter3D = -1;
++    mutable double lastTileCount = 0;
+ };
+ 
+ /// Near the bottom of a steeply pitched view, tiles are culled with room for the tallest feature they might hold,
+diff --git a/test/renderer/dem_elevation_provider.test.cpp b/test/renderer/dem_elevation_provider.test.cpp
+index 110af5d0640..1338abbc470 100644
+--- a/test/renderer/dem_elevation_provider.test.cpp
++++ b/test/renderer/dem_elevation_provider.test.cpp
+@@ -184,8 +184,8 @@ public:
+     }
+ 
+     /// The elevation the next frame's covers will see.
+-    std::optional<Range<double>> elevation(const CanonicalTileID& id) const {
+-        return DEMElevationProvider{demRenderSource.get(), 1.0}.getTileElevationRange(id);
++    std::optional<Range<double>> elevation(const CanonicalTileID& id, std::optional<float> plane = {}) const {
++        return DEMElevationProvider{demRenderSource.get(), 1.0, plane}.getTileElevationRange(id);
+     }
+ 
+     /// One frame: the elevation is taken before any source updates, every source's cover uses
+@@ -489,3 +489,20 @@ TEST(DEMElevationProvider, TileWithNothingLoadedNearItTakesTheRangeOfTheNearestL
+     EXPECT_EQ(span(lowRange, lowRange), test.elevation(inLowQuarter));
+     EXPECT_EQ(span(lowRange, highRange), test.elevation(inOwnQuarter));
+ }
++
++// Where the DEM has no ground it writes its plane, and the terrain draws that at sea level, under
++// the clay face down from the model's edge: a tile holding any of it reaches down to sea level.
++TEST(DEMElevationProvider, ATileWithNoGroundInItReachesDownToSeaLevel) {
++    TerrainSourcesTest test;
++    test.servedDEMZoom = 12;
++    const CanonicalTileID edge(12, 2270, 1430);
++    const CanonicalTileID inside(12, 2271, 1430);
++    test.elevationOf = [&](const CanonicalTileID& id) {
++        return id == edge ? Range<int32_t>{928, 2400} : Range<int32_t>{1100, 2600};
++    };
++    test.loadAround(inside);
++    ASSERT_EQ(span({928, 2400}, {928, 2400}), test.elevation(edge));
++
++    EXPECT_EQ(span({0, 2400}, {0, 2400}), test.elevation(edge, 928.0f));
++    EXPECT_EQ(span({1100, 2600}, {1100, 2600}), test.elevation(inside, 928.0f));
++}
+diff --git a/test/renderer/terrain_cache_policy.test.cpp b/test/renderer/terrain_cache_policy.test.cpp
+index d53c7bef802..56c544d6c53 100644
+--- a/test/renderer/terrain_cache_policy.test.cpp
++++ b/test/renderer/terrain_cache_policy.test.cpp
+@@ -67,3 +67,11 @@ TEST(TerrainCachePolicy, DifferentGroupSetsAreNotComparable) {
+     renumbered[1].layerIndex = 7;
+     EXPECT_FALSE(drapeFallbackStrictlyWorse(renumbered, groups({0, 0})));
+ }
++
++TEST(TerrainCachePolicy, PlaceholderTexelIsSeaLevel) {
++    // An all-zero texel decoded to -10000 m and sank the ground of a tile with no DEM out of view.
++    const std::array<float, 4> mapbox{{6553.6f, 25.6f, 0.1f, 10000.0f}};
++    const std::array<float, 4> terrarium{{256.0f, 1.0f, 1.0f / 256.0f, 32768.0f}};
++    EXPECT_EQ(seaLevelTexel(mapbox), (std::array<uint8_t, 3>{{1, 134, 160}}));
++    EXPECT_EQ(seaLevelTexel(terrarium), (std::array<uint8_t, 3>{{128, 0, 0}}));
++}
+diff --git a/test/renderer/terrain_camera.test.cpp b/test/renderer/terrain_camera.test.cpp
+index 34d253a5df0..5e614380ea2 100644
+--- a/test/renderer/terrain_camera.test.cpp
++++ b/test/renderer/terrain_camera.test.cpp
+@@ -286,6 +286,16 @@ TEST(TerrainCamera, CentreElevationSettlesWithoutDrift) {
+     EXPECT_NEAR(*atEnd.zoom, *afterSettling.zoom, 1e-6);
+ }
+ 
++// Where the DEM holds only its plane (no ground), the terrain lies at sea level, and so does
++// the centre: it does not hover over the table at the plane's height.
++TEST(TerrainCamera, CentreRestsAtSeaLevelWhereTheModelHasNoGround) {
++    TerrainCameraTest test;
++    test.map.getStyle().getTerrain()->setPlane(static_cast<float>(plateauMeters));
++    test.map.setCenterClampedToGround(true);
++
++    EXPECT_NEAR(test.renderAndGetAltitude(8), 0.0, 0.001);
++}
++
+ // Turning it off leaves the camera where the caller put it.
+ TEST(TerrainCamera, ClampingCanBeTurnedOff) {
+     TerrainCameraTest test;
+@@ -580,7 +590,8 @@ struct TerrainTransitionTest {
+               fileSource,
+               MapOptions().withMapMode(MapMode::Continuous).withSize(frontend.getSize())) {
+         fileSource->tileResponse = [this](const Resource& resource) {
+-            const bool west = resource.tileData && resource.tileData->z == 2 && resource.tileData->x == 1;
++            const auto& tile = resource.tileData;
++            const bool west = tile && tile->z >= 2 && (tile->x >> (tile->z - 2)) == 1;
+             Response res;
+             res.data = std::make_shared<std::string>(west ? highTile : lowTile);
+             return res;
+diff --git a/test/renderer/terrain_mesh_cover.test.cpp b/test/renderer/terrain_mesh_cover.test.cpp
+index 5387135341c..ae875875467 100644
+--- a/test/renderer/terrain_mesh_cover.test.cpp
++++ b/test/renderer/terrain_mesh_cover.test.cpp
+@@ -57,6 +57,14 @@ TEST(TerrainMeshCover, CapKeepsTheTilesNearestTheOrigin) {
+     EXPECT_EQ(middle, RenderTerrain::nearestMeshTiles(wholeZ2(), 4, worldCentre));
+ }
+ 
++TEST(TerrainMeshCover, CapKeepsTheTilesThatBeginNearest) {
++    // The z1 tile reaches the origin, though its centre is farther than the z3 tile's; ranked
++    // by centre it would be dropped and leave a hole between the origin and the z3 tile.
++    const UnwrappedTileID big(0, CanonicalTileID(1, 0, 0));
++    const UnwrappedTileID small(0, CanonicalTileID(3, 5, 4));
++    EXPECT_EQ(std::set<UnwrappedTileID>{big}, RenderTerrain::nearestMeshTiles({big, small}, 1, worldCentre));
++}
++
+ TEST(TerrainMeshCover, CapBreaksTiesByTileID) {
+     // Past the middle four, the eight edge tiles beside them lie equally far from the centre;
+     // the two with the lowest IDs stay, so the same view always keeps the same tiles.
+@@ -70,6 +78,75 @@ TEST(TerrainMeshCover, NoCapOrRoomToSpareKeepsEveryTile) {
+     EXPECT_EQ(wholeZ2(), RenderTerrain::nearestMeshTiles(wholeZ2(), 64, worldCentre));
+ }
+ 
++namespace {
++std::vector<OverscaledTileID> overscaled(const std::set<UnwrappedTileID>& tiles) {
++    std::vector<OverscaledTileID> out;
++    for (const auto& id : tiles) {
++        out.emplace_back(id.canonical.z, id.wrap, id.canonical);
++    }
++    return out;
++}
++
++OverscaledTileID z1(uint32_t x, uint32_t y) {
++    return {1, 0, CanonicalTileID(1, x, y)};
++}
++
++OverscaledTileID z2o(uint32_t x, uint32_t y) {
++    return {2, 0, CanonicalTileID(2, x, y)};
++}
++} // namespace
++
++// Over the budget the far tiles go coarser rather than missing: the ground stays whole to the
++// edge, the tiles nearest the origin keep their level. Here the origin is in the top-left tile,
++// and the three far quarters each become one z1 tile.
++TEST(TerrainMeshCover, OverTheBudgetTheFarTilesMergeIntoTheirParents) {
++    auto tiles = overscaled(wholeZ2());
++    util::mergeFarthestTiles(tiles, 7, {{0.1, 0.1}}, 0);
++    const std::set<OverscaledTileID> merged(tiles.begin(), tiles.end());
++    const std::set<OverscaledTileID> expected{
++        z2o(0, 0), z2o(1, 0), z2o(0, 1), z2o(1, 1), z1(1, 0), z1(0, 1), z1(1, 1)};
++    EXPECT_EQ(expected, merged);
++}
++
++// A source cannot go coarser than its minzoom: there the nearest are kept, as before.
++TEST(TerrainMeshCover, MergingStopsAtTheMinzoom) {
++    auto tiles = overscaled(wholeZ2());
++    util::mergeFarthestTiles(tiles, 7, {{0.1, 0.1}}, 2);
++    EXPECT_EQ(tiles.size(), 7u);
++    for (const auto& id : tiles) {
++        EXPECT_EQ(id.overscaledZ, 2);
++    }
++}
++
++// A deep cover far over the budget merged its far tiles until the parents spanned the origin,
++// swallowing the near ground: a merged tile is never wider than twice its distance from it.
++TEST(TerrainMeshCover, MergingNeverCoarsensTheGroundAtTheOrigin) {
++    std::vector<OverscaledTileID> tiles;
++    for (uint32_t x = 0; x < 64; x++) {
++        for (uint32_t y = 0; y < 64; y++) {
++            tiles.emplace_back(6, 0, CanonicalTileID(6, x, y));
++        }
++    }
++    const std::array<double, 2> origin{{0.5 / 64, 0.5 / 64}};
++    util::mergeFarthestTiles(tiles, 40, origin, 0);
++    EXPECT_LE(tiles.size(), 40u);
++    const OverscaledTileID atOrigin{6, 0, CanonicalTileID(6, 0, 0)};
++    EXPECT_NE(std::find(tiles.begin(), tiles.end(), atOrigin), tiles.end());
++    for (const auto& id : tiles) {
++        const double size = 1.0 / (1 << id.canonical.z);
++        if (id.canonical.z < 6) {
++            EXPECT_LE(size * size, 4 * util::nearestPointDistance2(id.canonical, id.wrap, origin))
++                << util::toString(id);
++        }
++    }
++}
++
++TEST(TerrainMeshCover, RoomToSpareMergesNothing) {
++    auto tiles = overscaled(wholeZ2());
++    util::mergeFarthestTiles(tiles, 16, {{0.1, 0.1}}, 0);
++    EXPECT_EQ(tiles.size(), 16u);
++}
++
+ TEST(TerrainMeshCover, CapOriginWithoutTiltIsTheMapCentre) {
+     Transform transform;
+     transform.resize({512, 512});
+diff --git a/test/renderer/terrain_source_cover.test.cpp b/test/renderer/terrain_source_cover.test.cpp
+index 38f04d72f3b..638909e3112 100644
+--- a/test/renderer/terrain_source_cover.test.cpp
++++ b/test/renderer/terrain_source_cover.test.cpp
+@@ -248,15 +248,26 @@ TEST(TerrainSourceCover, TheCapFollowsTheTerrainLoadMode) {
+     expectOnlyTheTilesNearestTheCamera({.mode = TerrainLoadMode::Performance});
+ }
+ 
+-// The terrain draws from its DEM source, so the DEM keeps its own cover rather than the cap.
+-// Here the DEM is as deep as the vector source, so its cover holds far more tiles than the cap
+-// allows. A capped DEM would stay within a few tiles of the limit: the tiles it asks for before
+-// it has loaded and after differ by a handful.
+-TEST(TerrainSourceCover, TheDEMSourceKeepsItsOwnCover) {
+-    TerrainSourceCoverTest test({.demMinZoom = 13, .demMaxZoom = 13, .mode = TerrainLoadMode::Performance});
++// The DEM loads the tiles the mesh is drawn on, far ones merged to fit the mesh-tile cap, not a
++// cover of its own: a mesh tile merged to a coarser level needs the DEM tile at that level, and
++// the DEM's own cover here holds far more tiles than the cap. Past maxzoom, its ancestor.
++TEST(TerrainSourceCover, TheDEMSourceLoadsTheMeshCover) {
++    TerrainSourceCoverTest test({.demMinZoom = 0, .demMaxZoom = 13, .mode = TerrainLoadMode::Performance});
+     test.settleDEM();
++    const size_t cap = terrainLoadBudget(TerrainLoadMode::Performance).maxMeshTiles;
++    const auto cover = util::terrainMeshCover();
++    ASSERT_FALSE(cover.empty());
++    EXPECT_LE(cover.size(), cap);
+ 
+-    EXPECT_GT(test.demTiles.size(), 2 * test.sourceTileLimit());
++    test.demTiles.clear();
++    test.map.jumpTo(CameraOptions().withBearing(40.0));
++    test.settleDEM();
++    const auto turned = util::terrainMeshCover();
++    for (const auto& id : test.demTiles) {
++        EXPECT_TRUE(std::any_of(turned.begin(), turned.end(), [&](const UnwrappedTileID& tile) {
++            return tile.canonical.scaledTo(std::min<uint8_t>(tile.canonical.z, 13)) == id;
++        })) << int(id.z) << "/" << id.x << "/" << id.y;
++    }
+ }
+ 
+ // Without terrain there is no mesh to size the cap from, and the source keeps its whole cover.
+diff --git a/test/util/tile_cover.test.cpp b/test/util/tile_cover.test.cpp
+index 63f72d19ae0..8be022365b4 100644
+--- a/test/util/tile_cover.test.cpp
++++ b/test/util/tile_cover.test.cpp
+@@ -916,3 +916,22 @@ TEST(TileCover, KeepNearestTilesMeasuresAcrossZoomsAndWraps) {
+     ASSERT_EQ(tiles.size(), 1u);
+     EXPECT_EQ(tiles[0], OverscaledTileID(1, 0, {1, 1, 0}));
+ }
++
++TEST(TileCover, CacheSharesOnlyTheSameCover) {
++    Transform transform;
++    transform.resize({512, 512});
++    transform.jumpTo(CameraOptions().withCenter(LatLng{49.16, 20.01}).withZoom(12.5).withPitch(70.0));
++    util::TileCoverParameters params{transform.getState()};
++    params.tileLodMode = TileLodMode::Adaptive;
++    params.nearDetail = util::nearDetailLevels();
++
++    util::TileCoverCache cache;
++    EXPECT_EQ(util::tileCover(params, 12, zoomRange), cache.cover(params, 12, zoomRange));
++    EXPECT_EQ(util::tileCover(params, 12, zoomRange, 13), cache.cover(params, 12, zoomRange, 13));
++    EXPECT_EQ(util::tileCover(params, 10, zoomRange), cache.cover(params, 10, zoomRange));
++    EXPECT_EQ(util::tileCover(params, 12, {0, 12}), cache.cover(params, 12, {0, 12}));
++    params.roundZoom = true;
++    EXPECT_EQ(util::tileCover(params, 12, zoomRange), cache.cover(params, 12, zoomRange));
++    params.nearDetail = 0;
++    EXPECT_EQ(util::tileCover(params, 12, zoomRange), cache.cover(params, 12, zoomRange));
++}
+diff --git a/test/util/tile_lod.test.cpp b/test/util/tile_lod.test.cpp
+index a364a82c5f7..a14286103dd 100644
+--- a/test/util/tile_lod.test.cpp
++++ b/test/util/tile_lod.test.cpp
+@@ -34,6 +34,17 @@ TEST(TileLod, TileZoomParameters) {
+     EXPECT_NEAR(util::TileZoomFunction(fov, 10.0, 1.0)(12, 4, 0.5, 1), 8.1871079138584975, 1e-9);
+ }
+ 
++// One function serves a whole cover, so a camera that moves between two calls must not reuse
++// the first call's terms.
++TEST(TileLod, TileZoomFollowsTheCameraBetweenCalls) {
++    const util::TileZoomFunction tileZoom(fov);
++    const double pitched = tileZoom(12, 4, 0.5, 1);
++    const double steep = tileZoom(12, 4, std::cos(util::deg2rad(80.0)), 1);
++    EXPECT_DOUBLE_EQ(pitched, util::TileZoomFunction(fov)(12, 4, 0.5, 1));
++    EXPECT_DOUBLE_EQ(steep, util::TileZoomFunction(fov)(12, 4, std::cos(util::deg2rad(80.0)), 1));
++    EXPECT_DOUBLE_EQ(tileZoom(12, 4, 0.5, 1), pitched);
++}
++
+ // Oracle: GL JS `getElevationForTileCulling` on the same inputs.
+ TEST(TileLod, ElevationForTileCulling) {
+     EXPECT_DOUBLE_EQ(util::elevationForTileCulling(0, fov), 0.0);

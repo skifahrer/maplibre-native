@@ -1,7 +1,8 @@
-diff -ru a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
---- a/platform/ios/src/MLNMapView.h	2026-10-26 22:03:16
-+++ b/platform/ios/src/MLNMapView.h	2026-10-26 22:49:29
-@@ -132,6 +132,20 @@
+diff --git a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
+index 5efbf57752e..0e0c4a9d60e 100644
+--- a/platform/ios/src/MLNMapView.h
++++ b/platform/ios/src/MLNMapView.h
+@@ -132,6 +132,20 @@ typedef NS_ENUM(NSUInteger, MLNTerrainLoadMode) {
    MLNTerrainLoadModePerformance,
  };
  
@@ -22,11 +23,10 @@ diff -ru a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
  /** Options for ``MLNMapView/preferredFramesPerSecond``. */
  typedef NSInteger MLNMapViewPreferredFramesPerSecond NS_TYPED_EXTENSIBLE_ENUM;
  
-@@ -545,6 +559,17 @@
-  average It is recommended to first configure the pixelRatio before adjusting TileLodZoomShift.
+@@ -546,6 +560,17 @@ MLN_EXPORT
   */
  @property (nonatomic, assign) double tileLodZoomShift;
-+
+ 
 +/**
 + Camera based tile level of detail controls
 +
@@ -37,13 +37,15 @@ diff -ru a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
 + The default value of this property is `MLNTileLodModeDefault`.
 + */
 +@property (nonatomic, assign) MLNTileLodMode tileLodMode;
- 
++
  /**
   Frustum offset used to disable rendering of elements at the edge of the screen
-diff -ru a/platform/ios/src/MLNMapView.mm b/platform/ios/src/MLNMapView.mm
---- a/platform/ios/src/MLNMapView.mm	2026-10-26 22:03:16
-+++ b/platform/ios/src/MLNMapView.mm	2026-10-26 22:49:29
-@@ -3237,6 +3237,31 @@
+ 
+diff --git a/platform/ios/src/MLNMapView.mm b/platform/ios/src/MLNMapView.mm
+index ebb20254c0b..70a6e31a479 100644
+--- a/platform/ios/src/MLNMapView.mm
++++ b/platform/ios/src/MLNMapView.mm
+@@ -3237,6 +3237,31 @@ static void *windowScreenContext = &windowScreenContext;
    return _mbglMap->getTileLodZoomShift();
  }
  
