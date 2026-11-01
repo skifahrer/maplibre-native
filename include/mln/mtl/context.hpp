@@ -14,6 +14,7 @@
 
 #include <memory>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 namespace mln {
@@ -189,6 +190,10 @@ private:
     std::optional<BufferResource> clipMaskUniformsBuffer;
     bool clipMaskUniformsBufferUsed = false;
     const gfx::Renderable* stencilStateRenderable = nullptr;
+
+    // Depth-stencil states by everything their descriptor holds. The stencil reference is set on
+    // the encoder, not in the state, so a new reference must not cost a new state every frame.
+    mutable std::unordered_map<uint64_t, MTLDepthStencilStatePtr> depthStencilStates;
 
     UniformBufferArray globalUniformBuffers;
 };
