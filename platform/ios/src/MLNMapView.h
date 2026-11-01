@@ -536,6 +536,8 @@ MLN_EXPORT
  A value larger than 1 increases the distance to the camera view point reducing LOD
  Larger values may improve performance at the cost of quality (tiles away from camera
  use lower Zoom levels)
+ In ``MLNTileLodModeAdaptive`` every tile goes log2(scale) zoom levels coarser, and none
+ goes finer than the zoom the view asks for.
  */
 @property (nonatomic, assign) double tileLodScale;
 
