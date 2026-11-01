@@ -147,6 +147,7 @@ public:
     void setDrawDistance(double metres);
     double getDrawDistance() const;
     void setFog(const Color& color, double startMetres, double endMetres);
+    void setClayColor(const Color& color);
 
 private:
     TransformObserver& observer;

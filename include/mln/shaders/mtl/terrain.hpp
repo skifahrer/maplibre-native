@@ -43,9 +43,10 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
     /* 52 */ float fog_end;
     /* 56 */ float cut_depth;
     /* 60 */ float cut_ndc_y;
-    /* 64 */
+    /* 64 */ float4 clay_color;
+    /* 80 */
 };
-static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64, "wrong size");
+static_assert(sizeof(TerrainEvaluatedPropsUBO) == 80, "wrong size");
 
 // Terrain the camera must see through: what stands nearer than the centre in a window over it,
 // so the mountains to the sides stay. The curtains under the cut tiles' edges go with it.
@@ -155,7 +156,7 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     if (in.skirt > 0.5 && in.ground < 0.999) {
         discard_fragment();
     }
-    float4 color = on_clay_face(in.none) ? clay_color(in.elevation)
+    float4 color = on_clay_face(in.none) ? clay_color(in.elevation, props.clay_color)
                                          : mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
 
     // Fog: from fog_start to fog_end the surface fades into the fog colour, straight (not

@@ -508,6 +508,10 @@ void Transform::setFog(const Color& color, double startMetres, double endMetres)
     state.setFog(color, startMetres, endMetres);
 }
 
+void Transform::setClayColor(const Color& color) {
+    state.setClayColor(color);
+}
+
 // MARK: - Bearing
 
 void Transform::rotateBy(const ScreenCoordinate& first,

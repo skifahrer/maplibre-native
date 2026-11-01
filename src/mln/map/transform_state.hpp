@@ -153,6 +153,10 @@ public:
     double getFogEnd() const { return fogEnd; }
     void setFog(const Color& color, double startMetres, double endMetres);
 
+    /// The clay face's colour (Map::setClayColor), premultiplied; transparent for the built-in one.
+    Color getClayColor() const { return clayColor; }
+    void setClayColor(const Color& color) { clayColor = color; }
+
     // North Orientation
     NorthOrientation getNorthOrientation() const;
     double getNorthOrientationAngle() const;
@@ -306,6 +310,7 @@ private:
     Color fogColor = Color{0.0f, 0.0f, 0.0f, 0.0f};
     double fogStart = 0;
     double fogEnd = 0;
+    Color clayColor = Color{0.0f, 0.0f, 0.0f, 0.0f};
 
     mat4 coordinatePointMatrix(const mat4& projMatrix) const;
     mat4 getPixelMatrix() const;

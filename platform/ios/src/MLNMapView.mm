@@ -3304,6 +3304,15 @@ static void *windowScreenContext = &windowScreenContext;
   return _mbglMap->getFogEnd();
 }
 
+- (void)setClayColor:(UIColor *)clayColor {
+  _mbglMap->setClayColor(clayColor ? clayColor.mgl_color : mln::Color{0, 0, 0, 0});
+}
+
+- (UIColor *)clayColor {
+  const mln::Color color = _mbglMap->getClayColor();
+  return color.a > 0 ? [UIColor mgl_colorWithColor:color] : nil;
+}
+
 - (void)setCenterClampedToGround:(BOOL)centerClampedToGround {
   _mbglMap->setCenterClampedToGround(centerClampedToGround);
 }

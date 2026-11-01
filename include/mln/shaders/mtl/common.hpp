@@ -151,9 +151,10 @@ inline bool on_clay_face(float none) {
     return none > 0.001 && none < 0.999;
 }
 
-// Clay grey, darker toward the table it stands on
-inline float4 clay_color(float elevation) {
-    return float4(float3(0.58, 0.56, 0.53) * mix(0.62, 1.0, saturate(elevation / 1500.0)), 1.0);
+// Clay grey, or the map's own (premultiplied), darker toward the table it stands on
+inline float4 clay_color(float elevation, float4 chosen) {
+    const float3 clay = chosen.a > 0.0 ? chosen.rgb / chosen.a : float3(0.58, 0.56, 0.53);
+    return float4(clay * mix(0.62, 1.0, saturate(elevation / 1500.0)), 1.0);
 }
 
 // Whether the tile has ground throughout, on a 9 by 9 grid. A tile edge's curtain hangs only

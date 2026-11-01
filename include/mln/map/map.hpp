@@ -124,6 +124,10 @@ public:
     Color getFogColor() const;
     double getFogStart() const;
     double getFogEnd() const;
+    /// The colour of the clay face where the terrain stands past its height model, premultiplied.
+    /// A transparent colour (the default) keeps the built-in light clay. Metal only for now.
+    void setClayColor(const Color& color);
+    Color getClayColor() const;
     MapOptions getMapOptions() const;
 
     // Projection Mode

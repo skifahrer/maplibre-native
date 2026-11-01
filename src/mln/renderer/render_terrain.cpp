@@ -1564,7 +1564,8 @@ void RenderTerrain::updateInstancedDepthUBO(PaintParameters& parameters) {
                                                         .fog_start = 0.0f,
                                                         .fog_end = 0.0f,
                                                         .cut_depth = 0.0f,
-                                                        .cut_ndc_y = 0.0f};
+                                                        .cut_ndc_y = 0.0f,
+                                                        .clay_color = {0.0f, 0.0f, 0.0f, 0.0f}};
 
     depthLg->visitDrawables([&](gfx::Drawable& drawable) {
         auto& u = drawable.mutableUniformBuffers();

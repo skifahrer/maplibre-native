@@ -48,9 +48,10 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
     /* 52 */ float fog_end;                  // and where it is full
     /* 56 */ float cut_depth;              // view depth of the map centre; 0 = no cutaway
     /* 60 */ float cut_ndc_y;              // the centre's NDC y: the window opens above it
-    /* 64 */
+    /* 64 */ std::array<float, 4> clay_color; // premultiplied; alpha 0 = the built-in clay
+    /* 80 */
 };
-static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64);
+static_assert(sizeof(TerrainEvaluatedPropsUBO) == 80);
 
 } // namespace shaders
 } // namespace mln
