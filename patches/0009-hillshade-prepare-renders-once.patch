@@ -1,7 +1,8 @@
 diff --git a/src/mln/renderer/layers/render_hillshade_layer.cpp b/src/mln/renderer/layers/render_hillshade_layer.cpp
+index 90bc9748b92..e2826ac40ac 100644
 --- a/src/mln/renderer/layers/render_hillshade_layer.cpp
 +++ b/src/mln/renderer/layers/render_hillshade_layer.cpp
-@@ -267,6 +267,10 @@
+@@ -267,6 +267,10 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
              }
              bucket.renderTarget = renderTarget;
              bucket.renderTargetPrepared = true;
