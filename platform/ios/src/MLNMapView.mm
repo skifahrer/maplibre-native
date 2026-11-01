@@ -3278,6 +3278,10 @@ static void *windowScreenContext = &windowScreenContext;
   return _mbglMap->getCenterClampedToGround();
 }
 
+- (void)anchorCenterOnTerrain {
+  _mbglMap->anchorCenterOnTerrain();
+}
+
 - (void)setTerrainLoadMode:(MLNTerrainLoadMode)terrainLoadMode {
   switch (terrainLoadMode) {
     case MLNTerrainLoadModeBalanced:

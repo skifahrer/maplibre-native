@@ -607,6 +607,19 @@ MLN_EXPORT
  */
 @property (nonatomic, assign) MLNTerrainLoadMode terrainLoadMode;
 
+/**
+ Moves the map centre onto the 3D terrain under it without moving the camera.
+
+ The centre slides along the line of sight up to the ground and the zoom level
+ rises by the distance saved, so nothing on screen moves. Rotating and tilting
+ then turn around the ground being looked at, not a point at sea level beneath
+ it. A one-off, where ``centerClampedToGround`` is the continuous follow. Has
+ no effect when terrain is not enabled.
+
+ This method is experimental and subject to change.
+ */
+- (void)anchorCenterOnTerrain;
+
 // MARK: Displaying the User’s Location
 
 /**
