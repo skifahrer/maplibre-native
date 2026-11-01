@@ -118,6 +118,20 @@ typedef NS_ENUM(NSUInteger, MLNPanScrollingMode) {
   MLNPanScrollingModeDefault
 };
 
+/**
+ How much 3D terrain the map draws and builds per frame, used by
+ ``MLNMapView/terrainLoadMode``. Each mode also caps the terrain tiles drawn,
+ keeping those nearest the camera, so a lighter mode draws less of the distance.
+ */
+typedef NS_ENUM(NSUInteger, MLNTerrainLoadMode) {
+  /** No per-frame budget; up to 64 terrain tiles. */
+  MLNTerrainLoadModeQuality = 0,
+  /** 32 new tiles and 16 drapes a frame; up to 48 terrain tiles. */
+  MLNTerrainLoadModeBalanced,
+  /** 8 new tiles and 4 drapes a frame; up to 24 terrain tiles. */
+  MLNTerrainLoadModePerformance,
+};
+
 /** Options for ``MLNMapView/preferredFramesPerSecond``. */
 typedef NSInteger MLNMapViewPreferredFramesPerSecond NS_TYPED_EXTENSIBLE_ENUM;
 
@@ -554,6 +568,19 @@ MLN_EXPORT
  This property is experimental and subject to change.
  */
 @property (nonatomic, assign, getter=isCenterClampedToGround) BOOL centerClampedToGround;
+
+/**
+ How much 3D terrain the map draws and builds per frame.
+
+ Balanced and Performance spread new terrain tiles and drape re-renders across
+ frames and draw fewer far terrain tiles, for a smoother map on weaker GPUs.
+ Has no effect when terrain is not enabled.
+
+ The default value of this property is `MLNTerrainLoadModeQuality`.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic, assign) MLNTerrainLoadMode terrainLoadMode;
 
 // MARK: Displaying the User’s Location
 

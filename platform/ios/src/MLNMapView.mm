@@ -3253,6 +3253,31 @@ static void *windowScreenContext = &windowScreenContext;
   return _mbglMap->getCenterClampedToGround();
 }
 
+- (void)setTerrainLoadMode:(MLNTerrainLoadMode)terrainLoadMode {
+  switch (terrainLoadMode) {
+    case MLNTerrainLoadModeBalanced:
+      _mbglMap->setTerrainLoadMode(mln::TerrainLoadMode::Balanced);
+      break;
+    case MLNTerrainLoadModePerformance:
+      _mbglMap->setTerrainLoadMode(mln::TerrainLoadMode::Performance);
+      break;
+    default:
+      _mbglMap->setTerrainLoadMode(mln::TerrainLoadMode::Quality);
+      break;
+  }
+}
+
+- (MLNTerrainLoadMode)terrainLoadMode {
+  switch (_mbglMap->getTerrainLoadMode()) {
+    case mln::TerrainLoadMode::Balanced:
+      return MLNTerrainLoadModeBalanced;
+    case mln::TerrainLoadMode::Performance:
+      return MLNTerrainLoadModePerformance;
+    default:
+      return MLNTerrainLoadModeQuality;
+  }
+}
+
 // MARK: - Accessibility -
 
 - (NSString *)accessibilityValue {
