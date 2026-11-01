@@ -5,12 +5,18 @@
 #include <mln/util/interpolate.hpp>
 #include <mln/util/tile_coordinate.hpp>
 #include <mln/util/tile_cover.hpp>
+
+#include <atomic>
 #include <mln/util/tile_cover_impl.hpp>
 #include <mln/util/tile_lod.hpp>
 
 #include <algorithm>
+#include <optional>
 #include <functional>
 #include <list>
+#include <mutex>
+#include <queue>
+#include <set>
 
 using namespace std::numbers;
 
@@ -150,6 +156,25 @@ std::vector<UnwrappedTileID> tileCover(const Point<double>& tl,
 
 } // namespace
 
+uint8_t nearDetailLevels() noexcept {
+    return 2;
+}
+
+namespace {
+std::mutex terrainMeshCoverMutex;
+std::vector<UnwrappedTileID> lastTerrainMeshCover;
+} // namespace
+
+std::vector<UnwrappedTileID> terrainMeshCover() {
+    std::lock_guard<std::mutex> lock(terrainMeshCoverMutex);
+    return lastTerrainMeshCover;
+}
+
+void setTerrainMeshCover(std::vector<UnwrappedTileID> cover) {
+    std::lock_guard<std::mutex> lock(terrainMeshCoverMutex);
+    lastTerrainMeshCover = std::move(cover);
+}
+
 int32_t coveringZoomLevel(double zoom, style::SourceType type, uint16_t size) noexcept {
     zoom += util::log2(util::tileSize_D / size);
     if (type == style::SourceType::Raster || type == style::SourceType::RasterDEM || type == style::SourceType::Video) {
@@ -200,11 +225,13 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     const bool allowVariableZoom = adaptiveLod || transform.getPitch() > state.tileLodPitchThreshold;
     const uint8_t minZoom = allowVariableZoom ? zoomRange.min : z;
     const bool variableZoomMode = state.tileLodMode == TileLodMode::Distance || adaptiveLod;
-    // Adaptive never goes finer than the zoom the view asks for: under a steep pitch gl-js's
+    // Adaptive goes no finer than the zoom the view asks for: under a steep pitch gl-js's
     // function sends the ground at the camera to the source's max zoom, and a few hundred such
-    // tiles cost more than a tile budget allows. The near field gets the view's zoom, the far
-    // field less - where Default would give the near field less, as it measures from the centre.
-    const uint8_t maxZoom = (variableZoomMode && allowVariableZoom) ? (adaptiveLod ? z : zoomRange.max) : z;
+    // tiles cost more than a tile budget allows. Only the ground within kNearDetailMetres of the
+    // camera may go state.nearDetail levels finer.
+    constexpr double kNearDetailMetres = 1500.0;
+    const uint8_t adaptiveMax = std::min<uint8_t>(zoomRange.max, static_cast<uint8_t>(z + state.nearDetail));
+    const uint8_t maxZoom = (variableZoomMode && allowVariableZoom) ? (adaptiveLod ? adaptiveMax : zoomRange.max) : z;
     const uint8_t overscaledZoom = std::max(overscaledZ.value_or(z), maxZoom);
     const bool flippedY = transform.getViewportMode() == ViewportMode::FlippedY;
 
@@ -297,6 +324,9 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
                 .wrap = wrap,
                 .fullyVisible = false};
     };
+
+    const double nearRadius = kNearDetailMetres / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
+                                                   util::M2PI * util::EARTH_RADIUS_M);
 
     // Perform depth-first traversal on tile tree to find visible tiles
     std::vector<Node> stack;
@@ -404,7 +434,8 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
                 requestedCenterZoom, distanceToTile2d, distanceToCenterZ, distanceToCenter3d) -
                                   std::log2(std::max(1.0, state.tileLodScale));
             const double desiredZoom = state.roundZoom ? std::round(rawZoom) : std::floor(rawZoom);
-            shouldSplitTile = node.zoom < std::clamp(desiredZoom, 0.0, static_cast<double>(maxZoom));
+            const uint8_t cap = distanceToTile2d < nearRadius ? maxZoom : std::min(maxZoom, z);
+            shouldSplitTile = node.zoom < std::clamp(desiredZoom, 0.0, static_cast<double>(cap));
         } else if (state.tileLodMode == TileLodMode::Distance) {
             const vec3 camToTileMercator = vec3Scale(node.aabb.distanceXYZ(cameraCoord), 1.0 / worldSize);
             const double distanceToTileMercator = vec3Length(camToTileMercator);
@@ -469,8 +500,32 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
         }
     }
 
+    bool centreAdded = false;
+    // Over terrain, the tile under the map centre is covered even when it is out of view: a
+    // camera that sank below the ground looks past it, so its height never loaded and the
+    // centre could not be put back on the ground (Map::setCenterClampedToGround).
+    if (state.elevationProvider) {
+        const auto centre = TileCoordinate::fromLatLng(z, transform.getLatLng()).p;
+        const auto cx = static_cast<int64_t>(std::floor(centre.x));
+        const auto cy = static_cast<int64_t>(std::floor(centre.y));
+        const auto n = static_cast<int64_t>(numTiles);
+        if (cy >= 0 && cy < n) {
+            const auto wrap = static_cast<int16_t>(cx >= 0 ? cx / n : (cx - n + 1) / n);
+            const auto x = static_cast<uint32_t>(cx - wrap * n);
+            const auto y = static_cast<uint32_t>(cy);
+            const bool covered = std::any_of(result.begin(), result.end(), [&](const ResultTile& tile) {
+                const auto& c = tile.id.canonical;
+                return tile.id.wrap == wrap && c.z <= z && (x >> (z - c.z)) == c.x && (y >> (z - c.z)) == c.y;
+            });
+            if (!covered) {
+                result.push_back({OverscaledTileID{z, wrap, z, x, y}, 0.0});
+                centreAdded = true;
+            }
+        }
+    }
+
     // Sort results by distance (a limited walk already found them in order)
-    if (!limited) {
+    if (!limited || centreAdded) {
         std::sort(result.begin(), result.end(), [](const ResultTile& a, const ResultTile& b) {
             return a.sqrDist < b.sqrDist;
         });
@@ -527,6 +582,27 @@ std::set<UnwrappedTileID> frustumCull(const TileCoverParameters& state, const st
         }
     }
     return result;
+}
+
+std::vector<OverscaledTileID> TileCoverCache::cover(const TileCoverParameters& state,
+                                                    uint8_t z,
+                                                    Range<uint8_t> zoomRange,
+                                                    const std::optional<uint8_t>& overscaledZ) {
+    const Key key{z,
+                  zoomRange.min,
+                  zoomRange.max,
+                  overscaledZ ? int16_t{*overscaledZ} : int16_t{-1},
+                  state.roundZoom,
+                  state.nearDetail,
+                  state.tileLimit,
+                  state.tileLimitOrigin,
+                  state.elevationProvider,
+                  state.tileLodOrigin};
+    auto found = covers.find(key);
+    if (found == covers.end()) {
+        found = covers.emplace(key, tileCover(state, z, zoomRange, overscaledZ)).first;
+    }
+    return found->second;
 }
 
 std::vector<UnwrappedTileID> tileCover(const LatLngBounds& bounds_, uint8_t z) {
@@ -632,6 +708,55 @@ void keepNearestTiles(std::vector<OverscaledTileID>& tiles, size_t maxTiles, con
         return da < db || (da == db && a < b);
     });
     tiles.erase(keep, tiles.end());
+}
+
+double nearestPointDistance2(const CanonicalTileID& id, int16_t wrap, const std::array<double, 2>& origin) {
+    const double scale = static_cast<double>(1u << id.z);
+    const double x0 = static_cast<double>(id.x) / scale + wrap;
+    const double y0 = static_cast<double>(id.y) / scale;
+    const double dx = std::max({0.0, x0 - origin[0], origin[0] - (x0 + 1.0 / scale)});
+    const double dy = std::max({0.0, y0 - origin[1], origin[1] - (y0 + 1.0 / scale)});
+    return dx * dx + dy * dy;
+}
+
+void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
+                        size_t maxTiles,
+                        const std::array<double, 2>& origin,
+                        uint8_t minZoom) {
+    if (maxTiles == 0 || tiles.size() <= maxTiles) {
+        return;
+    }
+    // Thousands of tiles at a source's deep minzoom cannot merge past it; the nearest are enough.
+    keepNearestTiles(tiles, maxTiles * 4, origin);
+    std::set<OverscaledTileID> alive(tiles.begin(), tiles.end());
+    const auto distance2 = [&](const OverscaledTileID& id) {
+        return nearestPointDistance2(id.canonical, id.wrap, origin);
+    };
+    // Farthest first; a parent goes back in at its own, nearer distance.
+    using Entry = std::pair<double, OverscaledTileID>;
+    std::priority_queue<Entry> farthest;
+    for (const auto& id : alive) {
+        farthest.emplace(distance2(id), id);
+    }
+    while (alive.size() > maxTiles && !farthest.empty()) {
+        const OverscaledTileID tile = farthest.top().second;
+        farthest.pop();
+        if (!alive.contains(tile) || tile.overscaledZ <= minZoom) {
+            continue;
+        }
+        const OverscaledTileID parent = tile.scaledTo(tile.overscaledZ - 1);
+        // No parent wider than twice its distance: merging on swallowed the near ground, 1043
+        // tiles at 79° became two z11 tiles spanning the camera and the drape there drew nothing.
+        const double parentSize = 1.0 / static_cast<double>(1u << parent.canonical.z);
+        if (parentSize * parentSize > 4 * distance2(parent)) {
+            continue;
+        }
+        std::erase_if(alive, [&](const OverscaledTileID& id) { return id == parent || id.isChildOf(parent); });
+        alive.insert(parent);
+        farthest.emplace(distance2(parent), parent);
+    }
+    tiles.assign(alive.begin(), alive.end());
+    keepNearestTiles(tiles, maxTiles, origin);
 }
 
 } // namespace util

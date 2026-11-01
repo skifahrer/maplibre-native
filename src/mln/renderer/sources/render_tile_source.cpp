@@ -523,6 +523,15 @@ RenderTiles RenderTileSource::getRenderTilesSortedByYPosition() const {
     return renderTilesSortedByY;
 }
 
+bool RenderTileSource::tileHasNoData(const UnwrappedTileID& id) const {
+    for (const auto& [tileID, tile] : tilePyramid.getTiles()) {
+        if (tileID.toUnwrapped() == id) {
+            return tile->isComplete() && !tile->isRenderable();
+        }
+    }
+    return false;
+}
+
 const Tile* RenderTileSource::getRenderedTile(const UnwrappedTileID& tileID) const {
     return tilePyramid.getRenderedTile(tileID);
 }

@@ -286,6 +286,16 @@ TEST(TerrainCamera, CentreElevationSettlesWithoutDrift) {
     EXPECT_NEAR(*atEnd.zoom, *afterSettling.zoom, 1e-6);
 }
 
+// Where the DEM holds only its plane (no ground), the terrain lies at sea level, and so does
+// the centre: it does not hover over the table at the plane's height.
+TEST(TerrainCamera, CentreRestsAtSeaLevelWhereTheModelHasNoGround) {
+    TerrainCameraTest test;
+    test.map.getStyle().getTerrain()->setPlane(static_cast<float>(plateauMeters));
+    test.map.setCenterClampedToGround(true);
+
+    EXPECT_NEAR(test.renderAndGetAltitude(8), 0.0, 0.001);
+}
+
 // Turning it off leaves the camera where the caller put it.
 TEST(TerrainCamera, ClampingCanBeTurnedOff) {
     TerrainCameraTest test;
@@ -580,7 +590,8 @@ struct TerrainTransitionTest {
               fileSource,
               MapOptions().withMapMode(MapMode::Continuous).withSize(frontend.getSize())) {
         fileSource->tileResponse = [this](const Resource& resource) {
-            const bool west = resource.tileData && resource.tileData->z == 2 && resource.tileData->x == 1;
+            const auto& tile = resource.tileData;
+            const bool west = tile && tile->z >= 2 && (tile->x >> (tile->z - 2)) == 1;
             Response res;
             res.data = std::make_shared<std::string>(west ? highTile : lowTile);
             return res;

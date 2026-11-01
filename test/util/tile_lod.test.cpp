@@ -34,6 +34,17 @@ TEST(TileLod, TileZoomParameters) {
     EXPECT_NEAR(util::TileZoomFunction(fov, 10.0, 1.0)(12, 4, 0.5, 1), 8.1871079138584975, 1e-9);
 }
 
+// One function serves a whole cover, so a camera that moves between two calls must not reuse
+// the first call's terms.
+TEST(TileLod, TileZoomFollowsTheCameraBetweenCalls) {
+    const util::TileZoomFunction tileZoom(fov);
+    const double pitched = tileZoom(12, 4, 0.5, 1);
+    const double steep = tileZoom(12, 4, std::cos(util::deg2rad(80.0)), 1);
+    EXPECT_DOUBLE_EQ(pitched, util::TileZoomFunction(fov)(12, 4, 0.5, 1));
+    EXPECT_DOUBLE_EQ(steep, util::TileZoomFunction(fov)(12, 4, std::cos(util::deg2rad(80.0)), 1));
+    EXPECT_DOUBLE_EQ(tileZoom(12, 4, 0.5, 1), pitched);
+}
+
 // Oracle: GL JS `getElevationForTileCulling` on the same inputs.
 TEST(TileLod, ElevationForTileCulling) {
     EXPECT_DOUBLE_EQ(util::elevationForTileCulling(0, fov), 0.0);

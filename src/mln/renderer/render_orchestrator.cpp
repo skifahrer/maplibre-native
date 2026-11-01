@@ -3,6 +3,7 @@
 #include <mln/annotation/annotation_manager.hpp>
 #include <mln/layermanager/layer_manager.hpp>
 #include <mln/renderer/change_request.hpp>
+#include <mln/util/tile_cover.hpp>
 #include <mln/renderer/renderer_observer.hpp>
 #include <mln/renderer/render_source.hpp>
 #include <mln/renderer/render_layer.hpp>
@@ -293,7 +294,8 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
     const bool terrainEnabled = renderTerrain && renderTerrain->isEnabled();
     const DEMElevationProvider elevationProvider{
         terrainEnabled ? getRenderSource(renderTerrain->getSourceID()) : nullptr,
-        terrainEnabled ? renderTerrain->getExaggeration() : 1.0};
+        terrainEnabled ? renderTerrain->getExaggeration() : 1.0,
+        terrainEnabled ? renderTerrain->getPlane() : std::nullopt};
     tileParameters.elevationProvider = terrainEnabled ? &elevationProvider : nullptr;
     // With the view pitched the finest tiles belong under the camera, where the screen is densest,
     // not at the map centre far ahead of it: the point the mesh-tile cap measures from. Every
@@ -301,6 +303,9 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
     if (terrainEnabled) {
         tileParameters.tileLodOrigin = RenderTerrain::meshTileCapOrigin(updateParameters->transformState);
     }
+
+    util::TileCoverCache coverCache;
+    tileParameters.coverCache = &coverCache;
 
     // A source whose minzoom is deeper than the far field's zoom is covered at that minzoom out
     // to the horizon: thousands of tiles at a steep pitch, each kept with its geometry for as
@@ -540,6 +545,7 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
             sourceNeedsRendering = true;
         }
         tileParameters.coverTileLimit = isDemSource ? 0 : coverTileLimit;
+        tileParameters.terrainMeshCover = isDemSource ? util::terrainMeshCover() : std::vector<UnwrappedTileID>{};
 
         tileParameters.isUpdateSynchronous = sourceImpl->isUpdateSynchronous();
         source->update(sourceImpl, filteredLayersForSource, sourceNeedsRendering, sourceNeedsRelayout, tileParameters);

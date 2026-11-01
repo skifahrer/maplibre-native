@@ -67,3 +67,11 @@ TEST(TerrainCachePolicy, DifferentGroupSetsAreNotComparable) {
     renumbered[1].layerIndex = 7;
     EXPECT_FALSE(drapeFallbackStrictlyWorse(renumbered, groups({0, 0})));
 }
+
+TEST(TerrainCachePolicy, PlaceholderTexelIsSeaLevel) {
+    // An all-zero texel decoded to -10000 m and sank the ground of a tile with no DEM out of view.
+    const std::array<float, 4> mapbox{{6553.6f, 25.6f, 0.1f, 10000.0f}};
+    const std::array<float, 4> terrarium{{256.0f, 1.0f, 1.0f / 256.0f, 32768.0f}};
+    EXPECT_EQ(seaLevelTexel(mapbox), (std::array<uint8_t, 3>{{1, 134, 160}}));
+    EXPECT_EQ(seaLevelTexel(terrarium), (std::array<uint8_t, 3>{{128, 0, 0}}));
+}

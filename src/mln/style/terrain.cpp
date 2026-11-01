@@ -52,5 +52,16 @@ void Terrain::setExaggeration(float exaggeration) {
     observer->onTerrainChanged(*this);
 }
 
+std::optional<float> Terrain::getPlane() const {
+    return impl->plane;
+}
+
+void Terrain::setPlane(std::optional<float> plane) {
+    auto impl_ = mutableImpl();
+    impl_->plane = plane;
+    impl = std::move(impl_);
+    observer->onTerrainChanged(*this);
+}
+
 } // namespace style
 } // namespace mln

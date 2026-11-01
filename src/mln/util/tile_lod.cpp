@@ -42,11 +42,16 @@ double TileZoomFunction::operator()(double requestedCenterZoom,
                                     double distanceToTile2D,
                                     double distanceToTileZ,
                                     double distanceToCenter3D) const {
-    const double centerPitch = std::acos(std::min(1.0, distanceToTileZ / distanceToCenter3D));
-    const double highestPitch = std::min(deg2rad(maxMercatorHorizonAngleDegrees),
-                                         centerPitch + deg2rad(cameraVerticalFOV / 2));
-    const double lowestPitch = std::min(highestPitch, centerPitch - deg2rad(cameraVerticalFOV / 2));
-    const double tileCount = integralOfCosXByP(pitchTileLoadingBehavior - 1, lowestPitch, highestPitch);
+    if (distanceToTileZ != lastTileZ || distanceToCenter3D != lastCenter3D) {
+        const double centerPitch = std::acos(std::min(1.0, distanceToTileZ / distanceToCenter3D));
+        const double highestPitch = std::min(deg2rad(maxMercatorHorizonAngleDegrees),
+                                             centerPitch + deg2rad(cameraVerticalFOV / 2));
+        const double lowestPitch = std::min(highestPitch, centerPitch - deg2rad(cameraVerticalFOV / 2));
+        lastTileCount = integralOfCosXByP(pitchTileLoadingBehavior - 1, lowestPitch, highestPitch);
+        lastTileZ = distanceToTileZ;
+        lastCenter3D = distanceToCenter3D;
+    }
+    const double tileCount = lastTileCount;
     const double thisTilePitch = std::atan(distanceToTile2D / distanceToTileZ);
     const double distanceToTile3D = std::hypot(distanceToTile2D, distanceToTileZ);
     double desired = requestedCenterZoom;

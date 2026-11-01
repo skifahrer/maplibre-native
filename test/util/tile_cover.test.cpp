@@ -916,3 +916,22 @@ TEST(TileCover, KeepNearestTilesMeasuresAcrossZoomsAndWraps) {
     ASSERT_EQ(tiles.size(), 1u);
     EXPECT_EQ(tiles[0], OverscaledTileID(1, 0, {1, 1, 0}));
 }
+
+TEST(TileCover, CacheSharesOnlyTheSameCover) {
+    Transform transform;
+    transform.resize({512, 512});
+    transform.jumpTo(CameraOptions().withCenter(LatLng{49.16, 20.01}).withZoom(12.5).withPitch(70.0));
+    util::TileCoverParameters params{transform.getState()};
+    params.tileLodMode = TileLodMode::Adaptive;
+    params.nearDetail = util::nearDetailLevels();
+
+    util::TileCoverCache cache;
+    EXPECT_EQ(util::tileCover(params, 12, zoomRange), cache.cover(params, 12, zoomRange));
+    EXPECT_EQ(util::tileCover(params, 12, zoomRange, 13), cache.cover(params, 12, zoomRange, 13));
+    EXPECT_EQ(util::tileCover(params, 10, zoomRange), cache.cover(params, 10, zoomRange));
+    EXPECT_EQ(util::tileCover(params, 12, {0, 12}), cache.cover(params, 12, {0, 12}));
+    params.roundZoom = true;
+    EXPECT_EQ(util::tileCover(params, 12, zoomRange), cache.cover(params, 12, zoomRange));
+    params.nearDetail = 0;
+    EXPECT_EQ(util::tileCover(params, 12, zoomRange), cache.cover(params, 12, zoomRange));
+}

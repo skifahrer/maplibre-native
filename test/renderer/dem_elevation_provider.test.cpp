@@ -184,8 +184,8 @@ public:
     }
 
     /// The elevation the next frame's covers will see.
-    std::optional<Range<double>> elevation(const CanonicalTileID& id) const {
-        return DEMElevationProvider{demRenderSource.get(), 1.0}.getTileElevationRange(id);
+    std::optional<Range<double>> elevation(const CanonicalTileID& id, std::optional<float> plane = {}) const {
+        return DEMElevationProvider{demRenderSource.get(), 1.0, plane}.getTileElevationRange(id);
     }
 
     /// One frame: the elevation is taken before any source updates, every source's cover uses
@@ -488,4 +488,21 @@ TEST(DEMElevationProvider, TileWithNothingLoadedNearItTakesTheRangeOfTheNearestL
 
     EXPECT_EQ(span(lowRange, lowRange), test.elevation(inLowQuarter));
     EXPECT_EQ(span(lowRange, highRange), test.elevation(inOwnQuarter));
+}
+
+// Where the DEM has no ground it writes its plane, and the terrain draws that at sea level, under
+// the clay face down from the model's edge: a tile holding any of it reaches down to sea level.
+TEST(DEMElevationProvider, ATileWithNoGroundInItReachesDownToSeaLevel) {
+    TerrainSourcesTest test;
+    test.servedDEMZoom = 12;
+    const CanonicalTileID edge(12, 2270, 1430);
+    const CanonicalTileID inside(12, 2271, 1430);
+    test.elevationOf = [&](const CanonicalTileID& id) {
+        return id == edge ? Range<int32_t>{928, 2400} : Range<int32_t>{1100, 2600};
+    };
+    test.loadAround(inside);
+    ASSERT_EQ(span({928, 2400}, {928, 2400}), test.elevation(edge));
+
+    EXPECT_EQ(span({0, 2400}, {0, 2400}), test.elevation(edge, 928.0f));
+    EXPECT_EQ(span({1100, 2600}, {1100, 2600}), test.elevation(inside, 928.0f));
 }

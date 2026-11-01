@@ -37,7 +37,21 @@ std::optional<Terrain> Converter<Terrain>::operator()(const Convertible& value, 
         exaggeration = *converted;
     }
 
-    return Terrain(*source, exaggeration);
+    // Parse plane (optional): the height the DEM writes where it has no ground
+    std::optional<float> plane;
+    if (std::optional<Convertible> planeValue = objectMember(value, "plane")) {
+        plane = toNumber(*planeValue);
+        if (!plane) {
+            error.message = "terrain plane must be a number";
+            return std::nullopt;
+        }
+    }
+
+    Terrain terrain(*source, exaggeration);
+    if (plane) {
+        terrain.setPlane(plane);
+    }
+    return terrain;
 }
 
 } // namespace conversion

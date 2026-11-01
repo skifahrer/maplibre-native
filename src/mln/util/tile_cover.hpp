@@ -7,11 +7,13 @@
 #include <mln/util/range.hpp>
 
 #include <array>
+#include <map>
 #include <vector>
 #include <memory>
 #include <numbers>
 #include <optional>
 #include <set>
+#include <tuple>
 
 namespace mln {
 
@@ -70,6 +72,10 @@ struct TileCoverParameters {
     size_t tileLimit = 0;
     /// Where `tileLimit` measures from (normalized web-mercator).
     std::array<double, 2> tileLimitOrigin{{0.0, 0.0}};
+    /// Adaptive only: levels finer than the view's zoom the ground near the camera may go
+    /// (nearDetailLevels()). The DEM source and the terrain mesh keep 0: the mesh near the camera
+    /// is already finer than the view, and it is the draped sources that were stretched over it.
+    uint8_t nearDetail = 0;
     /// Optional; when null the cover is computed against the flat ground plane, as
     /// it was before terrain support.
     const TileElevationProvider* elevationProvider = nullptr;
@@ -82,10 +88,42 @@ struct TileCoverParameters {
 
 int32_t coveringZoomLevel(double z, style::SourceType type, uint16_t tileSize) noexcept;
 
+/// The levels an adaptive cover's near field may go past the view's zoom: the slope just ahead of
+/// a tilted camera is magnified on screen, and drawn from tiles at the view's zoom it blurs.
+uint8_t nearDetailLevels() noexcept;
+
+/// The terrain mesh's last cover, which its DEM source loads instead of a cover of its own: a mesh
+/// tile merged to fit the tile budget needs the DEM tile at its own level. Empty without terrain.
+std::vector<UnwrappedTileID> terrainMeshCover();
+void setTerrainMeshCover(std::vector<UnwrappedTileID> cover);
+
 std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
                                         uint8_t z,
                                         const Range<uint8_t> zoomRange,
                                         const std::optional<uint8_t>& overscaledZ = std::nullopt);
+
+/// One frame's covers, shared by sources asking for the same one.
+/// The key is every input but the frame's camera and detail.
+class TileCoverCache {
+public:
+    std::vector<OverscaledTileID> cover(const TileCoverParameters& state,
+                                        uint8_t z,
+                                        Range<uint8_t> zoomRange,
+                                        const std::optional<uint8_t>& overscaledZ = std::nullopt);
+
+private:
+    using Key = std::tuple<uint8_t,
+                           uint8_t,
+                           uint8_t,
+                           int16_t,
+                           bool,
+                           uint8_t,
+                           size_t,
+                           std::array<double, 2>,
+                           const TileElevationProvider*,
+                           std::optional<std::array<double, 2>>>;
+    std::map<Key, std::vector<OverscaledTileID>> covers;
+};
 
 /// Keep only the tiles whose (elevation-aware) bounds intersect the view frustum.
 /// The terrain mesh is built by subdividing the DEM source's render tiles, which
@@ -101,6 +139,20 @@ std::set<UnwrappedTileID> frustumCull(const TileCoverParameters& state, const st
 /// the order tileCover returned them in. Ties go by tile ID, so the same view keeps the same
 /// tiles from one call to the next.
 void keepNearestTiles(std::vector<OverscaledTileID>& tiles, size_t maxTiles, const std::array<double, 2>& origin);
+
+/// Squared distance from `origin` (normalized web-mercator) to the nearest point of the tile.
+double nearestPointDistance2(const CanonicalTileID& id, int16_t wrap, const std::array<double, 2>& origin);
+
+/// Merge the tiles farthest from `origin` into their parents until no more than `maxTiles` are
+/// left: the far ground goes coarser and the cover stays whole out to the horizon, where
+/// keepNearestTiles cuts it short. The nearest keep their level: no parent is made wider than
+/// twice its distance from `origin`, so the ground near it is never coarsened.
+/// Parents stop at `minZoom`; where that is still too many, the nearest are kept. Ties go by tile
+/// ID, as in keepNearestTiles.
+void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
+                        size_t maxTiles,
+                        const std::array<double, 2>& origin,
+                        uint8_t minZoom);
 std::vector<UnwrappedTileID> tileCover(const LatLngBounds&, uint8_t z);
 std::vector<UnwrappedTileID> tileCover(const Geometry<double>&, uint8_t z);
 

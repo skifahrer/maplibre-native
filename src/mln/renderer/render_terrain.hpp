@@ -101,6 +101,10 @@ public:
     /// layers hand to get_elevation().
     static std::array<float, 3> demTileMapping(const CanonicalTileID& tile, const CanonicalTileID& demTile);
 
+    /// Whether rendered terrain rises above the line from the camera to the map centre, so a
+    /// mountain stands between them. Ground with no DEM loaded is out of view and does not count.
+    bool sightBlocked(const TransformState& state) const;
+
     /// The point the mesh-tile cap measures distance from, in normalized web-mercator [0, 1]:
     /// the ground under the camera (the map centre when the map is not tilted).
     static std::array<double, 2> meshTileCapOrigin(const TransformState& state);
@@ -109,7 +113,19 @@ public:
     /// except one that lies over, or under, a tile the cover already has (whatever its zoom).
     static std::set<UnwrappedTileID> dilateCover(const std::set<UnwrappedTileID>& cover);
 
-    /// The `maxTiles` tiles whose centres lie nearest `origin` (normalized web-mercator), or all
+    /// How far from the ground under the camera, in metres, the capped mesh cover is whole: where
+    /// the first tile the cap dropped begins, eased over frames; infinity when it dropped none.
+    /// The fog is full by then.
+    double getCoverReachMetres() const { return coverReachMetres; }
+
+    /// The tile's longest edge on screen, in points, at the height of the ground at its middle:
+    /// how many texels its drape can show. Corners behind the camera count as at the near plane.
+    double screenEdge(const UnwrappedTileID& id, const TransformState& state) const;
+
+    /// Squared distance from `origin` (normalized web-mercator) to the nearest point of the tile.
+    static double nearestPointDist2(const UnwrappedTileID& id, const std::array<double, 2>& origin);
+
+    /// The `maxTiles` tiles whose nearest points lie nearest `origin` (normalized web-mercator), or all
     /// of them when there are no more than that or `maxTiles` is 0. The mesh-tile cap
     /// (TerrainLoadBudget::maxMeshTiles) that computeMeshCover applies, after
     /// coarsenFarMeshTiles.
@@ -219,10 +235,27 @@ public:
     /// As getElevationForLatLng, but empty where no loaded DEM tile covers the point (rather than 0).
     std::optional<double> findElevationForLatLng(const LatLng& latLng) const;
 
+    /// Where the line of sight through the map centre first meets the drawn terrain, coming from
+    /// the camera: the point and its height in metres (exaggeration applied). Moving the centre
+    /// there keeping the view puts it on the ground actually looked at, so a clamp that follows
+    /// has nothing left to move. Empty with no DEM, at a grazing pitch, or when the line meets no
+    /// ground before passing three times the camera's distance beyond the centre.
+    struct SightGround {
+        double latitude;
+        double longitude;
+        double elevation;
+    };
+    std::optional<SightGround> getSightGround(const TransformState& state) const;
+
     /**
      * @brief Get the terrain exaggeration multiplier
      */
     float getExaggeration() const;
+
+    /**
+     * @brief The height the DEM writes where it has no ground, if it writes one
+     */
+    std::optional<float> getPlane() const { return impl->plane; }
 
     /**
      * @brief Get the source ID providing DEM data
@@ -354,6 +387,16 @@ public:
     Immutable<style::Terrain::Impl> impl;
 
 private:
+    /// The finest DEM zoom loaded, which elevationAt samples at; -1 with none.
+    int elevationSampleZoom() const;
+    double elevationAt(const LatLng& latLng, int sampleZoom) const;
+
+    /// computeMeshCover's last answer for getCoverReachMetres.
+    mutable double coverReachMetres = std::numeric_limits<double>::infinity();
+    /// sightBlocked's last answer, which it holds until the ground is kCutReleaseM below the line.
+    mutable bool cutting = false;
+    static constexpr double kCutReleaseM = 30.0;
+
     /**
      * @brief Generate terrain mesh geometry
      *
@@ -399,6 +442,8 @@ private:
     // whenever terrain::shouldRebind says a better DEM can be bound - a higher tier, or a
     // deeper ancestor within the fallback tier
     std::unordered_map<OverscaledTileID, terrain::DEMBinding> tilesWithDrawables;
+    /// The drape texture each tile's drawable samples: a target made at another size is new.
+    std::unordered_map<OverscaledTileID, const gfx::Texture2D*> boundDrapes;
 
     // Per-drawable scale/offset into the bound DEM texture ({1,0,0,0} unless
     // an ancestor tile's DEM is bound); read by the terrain layer tweaker
@@ -486,6 +531,7 @@ private:
 
     // See getPlaceholderDEMTexture
     std::shared_ptr<gfx::Texture2D> placeholderDEMTexture;
+    std::array<float, 4> placeholderUnpack{};
 
     // Layer index (terrain renders early in 3D pass, use negative index)
     static constexpr int32_t TERRAIN_LAYER_INDEX = -1000;

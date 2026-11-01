@@ -82,6 +82,16 @@ inline float dem_texel(texture2d<float, access::sample> dem, int2 texel, float4 
     return dot(data, dem_unpack);
 }
 
+inline float get_ground_elevation(float2 pos,
+                                  texture2d<float, access::sample> dem,
+                                  float4 dem_coords,
+                                  float4 dem_unpack,
+                                  float dem_dim,
+                                  float dem_exaggeration,
+                                  float no_ground,
+                                  thread float& ground);
+
+// Where the model has no ground (dem_coords.w, its plane), at sea level, as the terrain draws it
 inline float get_elevation(float2 pos,
                            texture2d<float, access::sample> dem,
                            sampler dem_sampler,
@@ -93,16 +103,80 @@ inline float get_elevation(float2 pos,
     if (dem_enabled == 0.0) {
         return 0.0;
     }
+    float ground = 1.0;
+    return get_ground_elevation(pos, dem, dem_coords, dem_unpack, dem_dim, dem_exaggeration, dem_coords.w, ground);
+}
+
+// Ground, unless the DEM's height there is the plane it writes where it has none: exact in
+// Terrarium's 1/256 m steps, and no real surface holds one height over the whole area.
+inline bool dem_has_ground(float height, float no_ground) {
+    return abs(height - no_ground) > 0.002;
+}
+
+// The elevation, and how much of the vertex stands on the model's ground (`ground`, 0 to 1).
+// No ground lies at sea level: a triangle joining it to ground is the clay face of the model.
+inline float get_ground_elevation(float2 pos,
+                                  texture2d<float, access::sample> dem,
+                                  float4 dem_coords,
+                                  float4 dem_unpack,
+                                  float dem_dim,
+                                  float dem_exaggeration,
+                                  float no_ground,
+                                  thread float& ground) {
     const float2 coord = (pos * dem_coords.x + dem_coords.yz) * dem_dim + 2.0;
     const float2 f = fract(coord);
     const int2 c = int2(floor(coord));
     const int2 hi = int2(dem.get_width(), dem.get_height()) - 1;
-    const float tl = dem_texel(dem, clamp(c, int2(0), hi), dem_unpack);
-    const float tr = dem_texel(dem, clamp(c + int2(1, 0), int2(0), hi), dem_unpack);
-    const float bl = dem_texel(dem, clamp(c + int2(0, 1), int2(0), hi), dem_unpack);
-    const float br = dem_texel(dem, clamp(c + int2(1, 1), int2(0), hi), dem_unpack);
-    const float elevation = mix(mix(tl, tr, f.x), mix(bl, br, f.x), f.y);
+    const int2 taps[4] = {c, c + int2(1, 0), c + int2(0, 1), c + int2(1, 1)};
+    const float weights[4] = {(1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y};
+    float on = 0.0;
+    float onWeight = 0.0;
+    float offWeight = 0.0;
+    for (int i = 0; i < 4; i++) {
+        const float height = dem_texel(dem, clamp(taps[i], int2(0), hi), dem_unpack);
+        if (dem_has_ground(height, no_ground)) {
+            on += weights[i] * height;
+            onWeight += weights[i];
+        } else {
+            offWeight += weights[i];
+        }
+    }
+    ground = onWeight / max(onWeight + offWeight, 1e-6);
+    const float elevation = onWeight > 0.0 ? on / onWeight : 0.0;
     return elevation * dem_exaggeration;
+}
+
+// A fragment of a triangle from ground down to none (`none` is 1 at a vertex with no ground)
+inline bool on_clay_face(float none) {
+    return none > 0.001 && none < 0.999;
+}
+
+// Clay grey, or the map's own (premultiplied), darker toward the table it stands on
+inline float4 clay_color(float elevation, float4 chosen) {
+    const float3 clay = chosen.a > 0.0 ? chosen.rgb / chosen.a : float3(0.58, 0.56, 0.53);
+    return float4(clay * mix(0.62, 1.0, saturate(elevation / 1500.0)), 1.0);
+}
+
+// Whether the tile has ground throughout, on a 9 by 9 grid. A tile edge's curtain hangs only
+// in such a tile: one that reaches the model's edge has a neighbour without ground, at another
+// zoom too (whose heights never reach this tile's border), and its curtain stood as a wall.
+inline bool ground_throughout(texture2d<float, access::sample> dem, float4 dem_coords, float dem_dim,
+                              float4 dem_unpack, float no_ground) {
+    // The 1x1 placeholder: no DEM here, past the model's tiles, so nothing for a curtain to join
+    if (dem.get_width() < 2) {
+        return false;
+    }
+    const int2 hi = int2(dem.get_width(), dem.get_height()) - 1;
+    for (int y = 0; y <= 8; y++) {
+        for (int x = 0; x <= 8; x++) {
+            const float2 pos = float2(x, y) * 1024.0;
+            const int2 c = int2(floor((pos * dem_coords.x + dem_coords.yz) * dem_dim + 2.0));
+            if (!dem_has_ground(dem_texel(dem, clamp(c, int2(0), hi), dem_unpack), no_ground)) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 // The camera distance (clip w) the terrain depth pass packed (mtl/terrain_depth.hpp)

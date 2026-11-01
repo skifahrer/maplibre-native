@@ -1,5 +1,8 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -26,6 +29,23 @@ inline bool shouldRebind(const DEMBinding& current, const DEMBinding& available)
         return available.tier > current.tier;
     }
     return available.tier == 1 && available.demZoom > current.demZoom;
+}
+
+/// The RGB texel a DEM decodes to 0 m, for its unpack vector (r * x + g * y + b * z - w):
+/// (1, 134, 160) for Mapbox, (128, 0, 0) for Terrarium.
+inline std::array<uint8_t, 3> seaLevelTexel(const std::array<float, 4>& unpack) {
+    std::array<uint8_t, 3> texel{};
+    double rest = unpack[3];
+    for (std::size_t i = 0; i < 3; ++i) {
+        if (unpack[i] <= 0.0f) {
+            continue;
+        }
+        const double steps = i == 2 ? std::round(rest / unpack[i]) : std::floor(rest / unpack[i]);
+        const double value = std::clamp(steps, 0.0, 255.0);
+        texel[i] = static_cast<uint8_t>(value);
+        rest -= value * unpack[i];
+    }
+    return texel;
 }
 
 /// How one draped layer group covers a drape target.

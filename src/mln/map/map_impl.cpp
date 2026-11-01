@@ -393,6 +393,28 @@ void Map::Impl::anchorCenterOnTerrain() {
     }
 }
 
+double Map::Impl::getSightGroundDistance() const {
+    if (std::isnan(sightGround[2])) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    const auto eye = transform.getState().getFreeCameraOptions().position;
+    if (!eye) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    // Normalized Mercator, in which a metre is 1/(2πR·cos(latitude)) here.
+    const double metre = 1.0 / (util::M2PI * util::EARTH_RADIUS_M * std::cos(util::deg2rad(sightGround[0])));
+    const LatLng point{sightGround[0], sightGround[1]};
+    const Point<double> ground = Projection::project(point, 1.0);
+    const double dx = (*eye)[0] - ground.x / util::tileSize_D;
+    const double dy = (*eye)[1] - ground.y / util::tileSize_D;
+    const double dz = (*eye)[2] - sightGround[2] * metre;
+    return std::sqrt(dx * dx + dy * dy + dz * dz) / metre;
+}
+
+void Map::Impl::onTerrainSightGroundChanged(double latitude, double longitude, double elevationMeters) {
+    sightGround = {{latitude, longitude, elevationMeters}};
+}
+
 bool Map::Impl::setCenterAltitudeKeepingView(double altitudeMeters) {
     const TransformState& state = transform.getState();
     const double rise = altitudeMeters - state.getCenterAltitude();
