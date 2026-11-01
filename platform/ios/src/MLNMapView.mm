@@ -3278,6 +3278,32 @@ static void *windowScreenContext = &windowScreenContext;
   return _mbglMap->getDrawDistance();
 }
 
+- (void)setFogColor:(UIColor *)fogColor {
+  const mln::Color color = fogColor ? fogColor.mgl_color : mln::Color{0, 0, 0, 0};
+  _mbglMap->setFog(color, _mbglMap->getFogStart(), _mbglMap->getFogEnd());
+}
+
+- (UIColor *)fogColor {
+  const mln::Color color = _mbglMap->getFogColor();
+  return color.a > 0 ? [UIColor mgl_colorWithColor:color] : nil;
+}
+
+- (void)setFogStartDistance:(CLLocationDistance)fogStartDistance {
+  _mbglMap->setFog(_mbglMap->getFogColor(), fogStartDistance, _mbglMap->getFogEnd());
+}
+
+- (CLLocationDistance)fogStartDistance {
+  return _mbglMap->getFogStart();
+}
+
+- (void)setFogEndDistance:(CLLocationDistance)fogEndDistance {
+  _mbglMap->setFog(_mbglMap->getFogColor(), _mbglMap->getFogStart(), fogEndDistance);
+}
+
+- (CLLocationDistance)fogEndDistance {
+  return _mbglMap->getFogEnd();
+}
+
 - (void)setCenterClampedToGround:(BOOL)centerClampedToGround {
   _mbglMap->setCenterClampedToGround(centerClampedToGround);
 }

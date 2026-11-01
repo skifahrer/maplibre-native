@@ -43,9 +43,14 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
     /* 20 */ float elevation_offset;
     /* 24 */ float pad1;
     /* 28 */ float pad2;
-    /* 32 */
+    /* 32 */ std::array<float, 4> fog_color; // premultiplied; alpha 0 = no fog
+    /* 48 */ float fog_start;                // view depth (world pixels) where the fog starts
+    /* 52 */ float fog_end;                  // and where it is full
+    /* 56 */ float pad3;
+    /* 60 */ float pad4;
+    /* 64 */
 };
-static_assert(sizeof(TerrainEvaluatedPropsUBO) == 32);
+static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64);
 
 } // namespace shaders
 } // namespace mln
