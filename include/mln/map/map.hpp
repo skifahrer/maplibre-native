@@ -110,6 +110,11 @@ public:
     void setSize(Size);
     void setFrustumOffset(const EdgeInsets&);
     EdgeInsets getFrustumOffset();
+    /// Nothing farther from the camera than this many metres is drawn or loaded: it moves the
+    /// frustum's far plane in, which also bounds every source's tile cover and the terrain
+    /// mesh. Never nearer than the map centre. 0 (the default) keeps the full view.
+    void setDrawDistance(double metres);
+    double getDrawDistance() const;
     MapOptions getMapOptions() const;
 
     // Projection Mode
