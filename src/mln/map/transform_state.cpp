@@ -438,6 +438,13 @@ double TransformState::getDrawDistance() const {
     return drawDistance;
 }
 
+void TransformState::setFog(const Color& color, double startMetres, double endMetres) {
+    const auto metres = [](double value) { return std::isfinite(value) ? std::max(0.0, value) : 0.0; };
+    fogColor = color;
+    fogStart = metres(startMetres);
+    fogEnd = std::max(fogStart, metres(endMetres));
+}
+
 void TransformState::setDrawDistance(double metres) {
     const double clamped = std::isfinite(metres) ? std::max(0.0, metres) : 0.0;
     if (drawDistance != clamped) {

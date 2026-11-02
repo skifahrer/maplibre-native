@@ -1503,7 +1503,12 @@ void RenderTerrain::updateInstancedDepthUBO(PaintParameters& parameters) {
                                                         .exaggeration = getExaggeration(),
                                                         .elevation_offset = elevationOffset,
                                                         .pad1 = 0.0f,
-                                                        .pad2 = 0.0f};
+                                                        .pad2 = 0.0f,
+                                                        .fog_color = {0.0f, 0.0f, 0.0f, 0.0f},
+                                                        .fog_start = 0.0f,
+                                                        .fog_end = 0.0f,
+                                                        .pad3 = 0.0f,
+                                                        .pad4 = 0.0f};
 
     depthLg->visitDrawables([&](gfx::Drawable& drawable) {
         auto& u = drawable.mutableUniformBuffers();

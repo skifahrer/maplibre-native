@@ -597,6 +597,27 @@ MLN_EXPORT
 @property (nonatomic, assign) CLLocationDistance drawDistance;
 
 /**
+ The color 3D terrain fades into with distance, or `nil` for no fog.
+
+ From ``MLNMapView/fogStartDistance`` to ``MLNMapView/fogEndDistance`` from the
+ camera, the terrain fades smoothly into this color, by as much as its alpha.
+ Set it to the style's background color and ``MLNMapView/fogEndDistance`` to
+ ``MLNMapView/drawDistance``, and the view ends in haze rather than on a line.
+ Has no effect when terrain is not enabled.
+
+ The default value of this property is `nil`.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic, nullable) UIColor *fogColor;
+
+/** The distance from the camera, in meters, where the fog starts. Default 0. */
+@property (nonatomic, assign) CLLocationDistance fogStartDistance;
+
+/** The distance from the camera, in meters, where the fog is full. Default 0. */
+@property (nonatomic, assign) CLLocationDistance fogEndDistance;
+
+/**
  Whether the map centre rides the 3D terrain surface rather than sea level.
 
  When this is `YES`, the altitude of the map centre follows the rendered terrain
