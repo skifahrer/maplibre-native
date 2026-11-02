@@ -3237,6 +3237,31 @@ static void *windowScreenContext = &windowScreenContext;
   return _mbglMap->getTileLodZoomShift();
 }
 
+- (void)setTileLodMode:(MLNTileLodMode)tileLodMode {
+  switch (tileLodMode) {
+    case MLNTileLodModeDistance:
+      _mbglMap->setTileLodMode(mln::TileLodMode::Distance);
+      break;
+    case MLNTileLodModeAdaptive:
+      _mbglMap->setTileLodMode(mln::TileLodMode::Adaptive);
+      break;
+    default:
+      _mbglMap->setTileLodMode(mln::TileLodMode::Default);
+      break;
+  }
+}
+
+- (MLNTileLodMode)tileLodMode {
+  switch (_mbglMap->getTileLodMode()) {
+    case mln::TileLodMode::Distance:
+      return MLNTileLodModeDistance;
+    case mln::TileLodMode::Adaptive:
+      return MLNTileLodModeAdaptive;
+    default:
+      return MLNTileLodModeDefault;
+  }
+}
+
 - (void)setFrustumOffset:(UIEdgeInsets)frustumOffset {
   _mbglMap->setFrustumOffset(MLNEdgeInsetsFromNSEdgeInsets(frustumOffset));
 }
