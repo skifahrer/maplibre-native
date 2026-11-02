@@ -1,68 +1,57 @@
 name: terrain-ios
 
-# Builds MapLibre iOS from upstream feature/terrain-3d, with upstream main merged in,
-# whenever either moves.
+# Builds MapLibre iOS from the upstream commits upstream.env pins, with our patches, and
+# tests it on a simulator: on a pull request to check it, on master to release it.
 on:
-  schedule:
-    - cron: "23 2 * * *"
+  push:
+    branches: [master]
+  pull_request:
   workflow_dispatch:
     inputs:
       force:
-        description: Rebuild even if this commit already has a release
+        description: Rebuild and release even if master's pins already have a release
         type: boolean
         default: false
-      branch_sha:
-        description: Build this commit of the terrain branch instead of its head (a pin while the patches are rebased)
-        type: string
-        default: ""
-      main_sha:
-        description: Merge this commit of main instead of its head
-        type: string
-        default: ""
 
 permissions:
   contents: write
 
 concurrency:
-  group: terrain-ios
-  cancel-in-progress: false
+  group: terrain-ios-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 env:
   UPSTREAM: maplibre/maplibre-native
   BRANCH: feature/terrain-3d
   MAIN: main
+  BAZEL_FLAGS: --compilation_mode=opt --//:renderer=metal --features=thin_lto --apple_generate_dsym
 
 jobs:
   check:
     runs-on: ubuntu-latest
     outputs:
-      sha: ${{ steps.head.outputs.sha }}
-      main_sha: ${{ steps.head.outputs.main_sha }}
-      tag: ${{ steps.head.outputs.tag }}
-      build: ${{ steps.head.outputs.build }}
+      sha: ${{ steps.pins.outputs.sha }}
+      main_sha: ${{ steps.pins.outputs.main_sha }}
+      tag: ${{ steps.pins.outputs.tag }}
+      build: ${{ steps.pins.outputs.build }}
+      release: ${{ steps.pins.outputs.release }}
     steps:
       # our patches go into the tag, so a patched build never reuses an unpatched release
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: patches
+          sparse-checkout: |
+            patches
+            upstream.env
+          sparse-checkout-cone-mode: false
           persist-credentials: false
-      - id: head
+      - id: pins
         env:
           GH_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force || false }}
-          PIN_SHA: ${{ inputs.branch_sha || '' }}
-          PIN_MAIN: ${{ inputs.main_sha || '' }}
+          RELEASING: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
         run: |
-          sha=$(git ls-remote "https://github.com/$UPSTREAM.git" "refs/heads/$BRANCH" | cut -f1)
-          if [ -z "$sha" ]; then
-            echo "::notice::$UPSTREAM has no $BRANCH any more (merged or dropped); nothing to build."
-            echo "build=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          main_sha=$(git ls-remote "https://github.com/$UPSTREAM.git" "refs/heads/$MAIN" | cut -f1)
-          # A pin builds an older upstream, for a patch that does not apply to the moved head yet.
-          [ -n "$PIN_SHA" ] && sha="$PIN_SHA"
-          [ -n "$PIN_MAIN" ] && main_sha="$PIN_MAIN"
+          . ./upstream.env
+          sha=$TERRAIN_SHA main_sha=$MAIN_SHA
           tag="terrain-${sha:0:7}-main-${main_sha:0:7}"
           if ls patches/*.patch > /dev/null 2>&1; then
             tag="$tag-p$(cat patches/*.patch | shasum | cut -c1-7)"
@@ -70,7 +59,9 @@ jobs:
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "main_sha=$main_sha" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          if [ "$FORCE" != "true" ] && gh release view "$tag" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+          echo "release=$RELEASING" >> "$GITHUB_OUTPUT"
+          if [ "$RELEASING" = true ] && [ "$FORCE" != true ] &&
+             gh release view "$tag" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "::notice::$tag is already released."
             echo "build=false" >> "$GITHUB_OUTPUT"
           else
@@ -129,7 +120,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: .ours
-          sparse-checkout: patches
+          sparse-checkout: |
+            patches
+            tests
           persist-credentials: false
 
       # What upstream does not have yet, such as iOS switches the core already offers
@@ -140,7 +133,6 @@ jobs:
             echo "applying $patch"
             git apply --index "$patch"
           done
-          rm -rf .ours
           git diff --cached --quiet || git commit -q -m "Our patches"
           git log -1 --format='%H %s'
 
@@ -158,20 +150,12 @@ jobs:
       # The same flags as upstream's ios-release, so the framework is as small as theirs.
       - name: Build the XCFramework
         run: |
+          # shellcheck disable=SC2086
           bazel build --disk_cache="$HOME/.cache/bazel-disk" --experimental_disk_cache_gc_max_size=6G \
-            --compilation_mode=opt --//:renderer=metal \
-            --features=dead_strip,thin_lto --objc_enable_binary_stripping \
-            --apple_generate_dsym --output_groups=+dsyms \
+            $BAZEL_FLAGS --features=dead_strip --objc_enable_binary_stripping \
+            --output_groups=+dsyms \
             //platform/ios:MapLibre.dynamic
           echo "BIN=$(bazel info --compilation_mode=opt bazel-bin)/platform/ios" >> "$GITHUB_ENV"
-
-      # Kept under 6 GB by Bazel, inside the repository's 10 GB of Actions cache.
-      - name: Save the Bazel cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.cache/bazel-disk
-          key: bazel-ios-${{ needs.check.outputs.sha }}-${{ needs.check.outputs.main_sha }}-${{ github.run_id }}
 
       # The zip carries ~570 MB of dSYMs; they go in a release asset of their own.
       - name: Package
@@ -192,9 +176,26 @@ jobs:
           ls -la out
           du -sh x/MapLibre.xcframework/ios-arm64/MapLibre.framework/MapLibre
 
-      # A run from another branch builds to try the workflow, and publishes nothing.
+      # Upstream's iOS tests and ours, on the simulator, with the compiles the build made.
+      - name: Test on a simulator
+        run: |
+          cp -R .ours/tests/ios platform/ios/riki-test
+          # shellcheck disable=SC2086
+          bazel test --disk_cache="$HOME/.cache/bazel-disk" --experimental_disk_cache_gc_max_size=6G \
+            $BAZEL_FLAGS --test_output=errors \
+            //platform/ios/test:ios_test //platform/ios/riki-test:riki_test
+
+      # Kept under 6 GB by Bazel, inside the repository's 10 GB of Actions cache.
+      - name: Save the Bazel cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-ios-${{ needs.check.outputs.sha }}-${{ needs.check.outputs.main_sha }}-${{ github.run_id }}
+
+      # A pull request or another branch builds and tests, and publishes nothing.
       - name: Release
-        if: github.ref == 'refs/heads/nightly'
+        if: needs.check.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.check.outputs.sha }}

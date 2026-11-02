@@ -1,0 +1,99 @@
+name: upstream
+
+# Opens or moves one pull request that pins upstream's newest feature/terrain-3d and main;
+# nothing of upstream reaches master until that pull request is merged.
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: maplibre/maplibre-native
+  BRANCH: feature/terrain-3d
+  MAIN: main
+
+jobs:
+  follow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Open or move the upstream pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          terrain=$(git ls-remote "https://github.com/$UPSTREAM.git" "refs/heads/$BRANCH" | cut -f1)
+          main=$(git ls-remote "https://github.com/$UPSTREAM.git" "refs/heads/$MAIN" | cut -f1)
+          if [ -z "$terrain" ] || [ -z "$main" ]; then
+            echo "::warning::$UPSTREAM has no $BRANCH or $MAIN any more; the pins stay."
+            exit 0
+          fi
+          . ./upstream.env
+          old_terrain=$TERRAIN_SHA old_main=$MAIN_SHA
+          if [ "$terrain" = "$old_terrain" ] && [ "$main" = "$old_main" ]; then
+            echo "master already builds $BRANCH ${terrain:0:7} and $MAIN ${main:0:7}."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          read -r pr branch < <(gh pr list --state open --base master --json number,headRefName \
+            -q '[.[] | select(.headRefName | startswith("upstream/"))][0] | "\(.number) \(.headRefName)"' \
+            2> /dev/null || true)
+          if [ -n "${pr:-}" ] && [ "$pr" != null ]; then
+            git switch -q "$branch"
+            . ./upstream.env
+            if [ "$terrain" = "$TERRAIN_SHA" ] && [ "$main" = "$MAIN_SHA" ]; then
+              echo "#$pr already pins these commits."
+              exit 0
+            fi
+            # the pins are rewritten below, so a conflict on them alone is no conflict
+            if ! git merge -q --no-edit origin/master; then
+              others=$(git diff --name-only --diff-filter=U | grep -vx upstream.env || true)
+              [ -z "$others" ] || { echo "::error::master does not merge into $branch: $others"; exit 1; }
+              git checkout --theirs upstream.env
+              git add upstream.env
+              git commit -q --no-edit
+            fi
+          else
+            branch="upstream/$(date -u +%Y-%m-%d)"
+            git switch -q -c "$branch"
+            git commit -q --allow-empty -m "chore: book ticket"
+            git push -q origin "$branch"
+            pr=$(gh pr create --draft --base master --head "$branch" \
+                   --title "Book: upstream MapLibre moves" --body "Booking.
+
+          @skifahrer" | grep -o '[0-9]*$')
+          fi
+
+          sed -i -E "s/^TERRAIN_SHA=.*/TERRAIN_SHA=$terrain/; s/^MAIN_SHA=.*/MAIN_SHA=$main/" upstream.env
+          sentence="Upstream terrain branch moves to ${terrain:0:7} and main to ${main:0:7}"
+          git commit -q -am "feat: $pr $sentence"
+          git push -q origin "$branch"
+
+          compare="https://github.com/$UPSTREAM/compare"
+          gh pr edit "$pr" --title "$pr $sentence" --body "Moves the pinned upstream commits:
+
+          - \`$BRANCH\`: [${old_terrain:0:7}...${terrain:0:7}]($compare/$old_terrain...$terrain)
+          - \`$MAIN\`: [${old_main:0:7}...${main:0:7}]($compare/$old_main...$main)
+
+          \`terrain-ios\` builds them with our patches and runs upstream's iOS tests and ours (\`tests/ios\`) on a simulator. Merge only when it is green on this pull request's head; the merge to master releases the build.
+
+          @skifahrer"
+          gh pr ready "$pr" 2> /dev/null || true
+          # a push by this token starts no workflow; a dispatch does
+          gh workflow run terrain-ios.yml --ref "$branch"
+          echo "#$pr pins $BRANCH ${terrain:0:7} and $MAIN ${main:0:7}"
