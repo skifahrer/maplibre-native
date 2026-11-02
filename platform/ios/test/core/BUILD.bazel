@@ -51,7 +51,6 @@ ios_application(
         "Info.plist",
     ],
     minimum_os_version = "15.5",
-    provisioning_profile = "//platform/ios:xcode_profile",
     deps = [
         "//platform/ios/test/common:test_app_srcs",
     ],
@@ -60,7 +59,6 @@ ios_application(
 ios_unit_test(
     name = "CppUnitTests",
     minimum_os_version = "15.5",
-    provisioning_profile = "//platform/ios:xcode_profile",
     test_host = "CppUnitTestsApp",
     visibility = ["@rules_xcodeproj//xcodeproj:generated"],
     deps = [
