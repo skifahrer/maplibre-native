@@ -73,7 +73,8 @@ jobs:
   build:
     needs: check
     if: needs.check.outputs.build == 'true'
-    runs-on: macos-26
+    # the arm64 pool drops queued jobs for lack of capacity
+    runs-on: macos-26-intel
     timeout-minutes: 240
     env:
       SHA: ${{ needs.check.outputs.sha }}
@@ -96,10 +97,10 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-ios-${{ needs.check.outputs.sha }}-${{ github.run_id }}
+          key: bazel-ios-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
           restore-keys: |
-            bazel-ios-${{ needs.check.outputs.sha }}-
-            bazel-ios-
+            bazel-ios-${{ runner.arch }}-${{ needs.check.outputs.sha }}-
+            bazel-ios-${{ runner.arch }}-
 
       # The same flags as upstream's ios-release, so the framework is as small as theirs.
       - name: Build the XCFramework
@@ -153,7 +154,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-ios-${{ needs.check.outputs.sha }}-${{ github.run_id }}
+          key: bazel-ios-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
 
       - name: Release
         if: needs.check.outputs.release == 'true'
