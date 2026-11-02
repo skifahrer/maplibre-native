@@ -28,6 +28,8 @@ concurrency:
 env:
   BAZEL_FLAGS: --compilation_mode=opt --//:renderer=metal --features=thin_lto --apple_generate_dsym
   BAZEL_CACHE: --disk_cache=/Users/runner/.cache/bazel-disk --experimental_disk_cache_gc_max_size=6G
+  # one simulator at a time: a 4-core Intel runner fails to boot a second one
+  BAZEL_TEST: --test_output=errors --local_test_jobs=1 --test_timeout=3600
 
 jobs:
   check:
@@ -135,7 +137,7 @@ jobs:
       - name: Test on a simulator
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE --//:renderer=metal --test_output=errors \
+          bazel test $BAZEL_CACHE $BAZEL_TEST --//:renderer=metal \
             //platform/ios/test:ios_test //platform/ios/riki-test:riki_test
 
       # The core's terrain and tile cover tests. Alone: beside the others,
@@ -144,7 +146,7 @@ jobs:
         if: success() || failure()
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE $BAZEL_FLAGS --test_output=errors \
+          bazel test $BAZEL_CACHE $BAZEL_TEST $BAZEL_FLAGS \
             '--test_env=GTEST_FILTER=*Terrain*:*TileCover*:*MeshCover*:*Fog*' \
             //platform/ios/test/core:CppUnitTests
 
