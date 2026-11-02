@@ -105,24 +105,24 @@ inline float get_elevation(float2 pos,
     return elevation * dem_exaggeration;
 }
 
-// Unpack a depth value packed by the terrain depth pass (mtl/terrain_depth.hpp),
-// converted to NDC z, as in the maplibre-gl-js prelude
-inline float unpack_depth(float4 rgba_depth) {
+// The camera distance (clip w) the terrain depth pass packed (mtl/terrain_depth.hpp)
+inline float unpack_distance(float4 rgba_depth) {
     const float4 bit_shift = float4(1.0 / (256.0 * 256.0 * 256.0), 1.0 / (256.0 * 256.0), 1.0 / 256.0, 1.0);
-    return dot(rgba_depth, bit_shift) * 2.0 - 1.0;
+    return dot(rgba_depth, bit_shift) * 16777216.0;
 }
 
-// Opacity of a fragment behind the terrain, in [0, 1]: 1 fully visible, 0 fully
-// hidden, with a soft ramp over ~0.002 NDC depth and a small bias so geometry
-// sitting exactly on the terrain surface (e.g. a label anchored to it) does not
-// occlude itself. Matches the maplibre-gl-js depthOpacity() prelude function.
-inline float depth_opacity(float3 frag,
+// Opacity of a clip-space position behind the terrain, in [0, 1]: 1 fully visible, 0
+// fully hidden. It compares distances from the camera, not NDC z: with the near plane
+// at 1 unit, a ridge and the valley behind it differ in z by less than any fixed bias.
+// Hidden from 3% farther than the terrain, fully at 10%: the mesh is coarser than the
+// DEM a label or circle samples, and bridges the gullies they sit in.
+inline float depth_opacity(float4 pos,
                            texture2d<float, access::sample> depth_texture,
                            sampler depth_sampler) {
-    const float2 uv = frag.xy * 0.5 + 0.5;
-    const float d = unpack_depth(depth_texture.sample(depth_sampler, float2(uv.x, 1.0 - uv.y))) + 0.0001 -
-                    frag.z;
-    return 1.0 - max(0.0, min(1.0, -d * 500.0));
+    const float2 uv = pos.xy / pos.w * 0.5 + 0.5;
+    const float terrain = unpack_distance(depth_texture.sample(depth_sampler, float2(uv.x, 1.0 - uv.y)));
+    const float behind = pos.w / terrain - 1.0;
+    return 1.0 - clamp((behind - 0.03) / 0.07, 0.0, 1.0);
 }
 
 // Whether a clip-space position is visible in front of the terrain, from the
@@ -136,15 +136,14 @@ inline float calculate_visibility(float4 pos,
     if (depth_enabled == 0.0) {
         return 1.0;
     }
-    const float3 frag = pos.xyz / pos.w;
     // check if coordinate is fully visible
-    const float d = depth_opacity(frag, depth_texture, depth_sampler);
+    const float d = depth_opacity(pos, depth_texture, depth_sampler);
     if (d > 0.95) {
         return 1.0;
     }
     // if not, sample some pixels above: a label whose anchor is just behind a
     // ridge still shows if its glyphs poke above it (maplibre-gl-js behaviour)
-    return (d + depth_opacity(frag + float3(0.0, 0.01, 0.0), depth_texture, depth_sampler)) / 2.0;
+    return (d + depth_opacity(pos + float4(0.0, 0.01 * pos.w, 0.0, 0.0), depth_texture, depth_sampler)) / 2.0;
 }
 
 template<class ForwardIt, class T>

@@ -99,13 +99,15 @@ void CircleLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
             drawable.setTexture(
                 terrainData ? terrainData->demTexture : parameters.terrain->getPlaceholderDEMTexture(context),
                 idCircleDEMTexture);
+            // Packed terrain depth, so a circle behind a ridge fades (depth_opacity)
+            drawable.setTexture(parameters.terrain->getDepthTexture(context), idCircleDepthTexture);
         }
 
         // The terrain surface writes depth (so its skirts get occluded); circles
         // are elevated onto that surface and must not depth-test against it, or
         // they would be culled by the ground they sit on. Depth stays on without
-        // terrain. (Circles have no depth-texture occlusion path, so they simply
-        // draw on top of the terrain, as in maplibre-gl-js.)
+        // terrain. Their occlusion comes from the terrain depth texture instead
+        // (Metal only; the other backends still draw them on top).
         drawable.setEnableDepth(!terrainEnabled);
 
 #if MLN_UBO_CONSOLIDATION
@@ -134,7 +136,7 @@ void CircleLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
             .dem_dim = terrainData ? terrainData->demDim : 0.0f,
             .dem_exaggeration = parameters.terrain ? parameters.terrain->getExaggeration() : 0.0f,
             .dem_enabled = terrainData ? 1.0f : 0.0f,
-            .pad4 = 0
+            .depth_enabled = terrainEnabled ? 1.0f : 0.0f
         };
 #if MLN_UBO_CONSOLIDATION
         drawable.setUBOIndex(i++);
