@@ -1,5 +1,5 @@
 diff --git a/include/mln/mtl/context.hpp b/include/mln/mtl/context.hpp
-index 7adcf1ecb9..5dc4b486d5 100644
+index d4ba3315a77..471ff1cb391 100644
 --- a/include/mln/mtl/context.hpp
 +++ b/include/mln/mtl/context.hpp
 @@ -14,6 +14,7 @@
@@ -10,7 +10,7 @@ index 7adcf1ecb9..5dc4b486d5 100644
  #include <vector>
  
  namespace mln {
-@@ -183,6 +184,10 @@ private:
+@@ -190,6 +191,10 @@ private:
      bool clipMaskUniformsBufferUsed = false;
      const gfx::Renderable* stencilStateRenderable = nullptr;
  
@@ -22,10 +22,10 @@ index 7adcf1ecb9..5dc4b486d5 100644
  };
  
 diff --git a/src/mln/mtl/context.cpp b/src/mln/mtl/context.cpp
-index e6d9348e86..41954cd23c 100644
+index 53af4468574..ae3ce258d0a 100644
 --- a/src/mln/mtl/context.cpp
 +++ b/src/mln/mtl/context.cpp
-@@ -613,6 +613,7 @@ MTLDepthStencilStatePtr Context::makeDepthStencilState(const gfx::DepthMode& dep
+@@ -628,6 +628,7 @@ MTLDepthStencilStatePtr Context::makeDepthStencilState(const gfx::DepthMode& dep
  
      auto& device = backend.getDevice();
      const auto& renderableResource = renderable.getResource<RenderableResource>();
@@ -33,7 +33,7 @@ index e6d9348e86..41954cd23c 100644
      if (const auto& rpd = renderableResource.getRenderPassDescriptor()) {
          // Setting depth/stencil properties when the corresponding target textures aren't set causes, e.g.:
          // `Draw Errors Validation MTLDepthStencilDescriptor sets depth test but MTLRenderPassDescriptor has a nil
-@@ -620,6 +621,8 @@ MTLDepthStencilStatePtr Context::makeDepthStencilState(const gfx::DepthMode& dep
+@@ -635,6 +636,8 @@ MTLDepthStencilStatePtr Context::makeDepthStencilState(const gfx::DepthMode& dep
          if (auto* depthTarget = rpd->depthAttachment()) {
              if (depthTarget->texture()) {
                  applyDepthMode(depthMode, depthStencilDescriptor.get());
@@ -42,7 +42,7 @@ index e6d9348e86..41954cd23c 100644
              }
          }
          if (auto* stencilTarget = rpd->stencilAttachment()) {
-@@ -633,11 +636,24 @@ MTLDepthStencilStatePtr Context::makeDepthStencilState(const gfx::DepthMode& dep
+@@ -648,11 +651,24 @@ MTLDepthStencilStatePtr Context::makeDepthStencilState(const gfx::DepthMode& dep
  
                  depthStencilDescriptor->setFrontFaceStencil(stencilDescriptor.get());
                  depthStencilDescriptor->setBackFaceStencil(stencilDescriptor.get());

@@ -1,7 +1,8 @@
-diff -ru a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
---- a/platform/ios/src/MLNMapView.h	2026-10-26 22:49:29
-+++ b/platform/ios/src/MLNMapView.h	2026-10-26 22:49:29
-@@ -607,6 +607,19 @@
+diff --git a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
+index 0e0c4a9d60e..aa6060af174 100644
+--- a/platform/ios/src/MLNMapView.h
++++ b/platform/ios/src/MLNMapView.h
+@@ -607,6 +607,19 @@ MLN_EXPORT
   */
  @property (nonatomic, assign) MLNTerrainLoadMode terrainLoadMode;
  
@@ -21,10 +22,11 @@ diff -ru a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
  // MARK: Displaying the User’s Location
  
  /**
-diff -ru a/platform/ios/src/MLNMapView.mm b/platform/ios/src/MLNMapView.mm
---- a/platform/ios/src/MLNMapView.mm	2026-10-26 22:49:29
-+++ b/platform/ios/src/MLNMapView.mm	2026-10-26 22:49:29
-@@ -3278,6 +3278,10 @@
+diff --git a/platform/ios/src/MLNMapView.mm b/platform/ios/src/MLNMapView.mm
+index 70a6e31a479..0ac064ea9b2 100644
+--- a/platform/ios/src/MLNMapView.mm
++++ b/platform/ios/src/MLNMapView.mm
+@@ -3278,6 +3278,10 @@ static void *windowScreenContext = &windowScreenContext;
    return _mbglMap->getCenterClampedToGround();
  }
  

@@ -1,7 +1,8 @@
-diff -ru a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
---- a/platform/ios/src/MLNMapView.h	2026-10-26 22:03:15
-+++ b/platform/ios/src/MLNMapView.h	2026-10-26 22:03:16
-@@ -118,6 +118,20 @@
+diff --git a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
+index 072f4c3146c..5efbf57752e 100644
+--- a/platform/ios/src/MLNMapView.h
++++ b/platform/ios/src/MLNMapView.h
+@@ -118,6 +118,20 @@ typedef NS_ENUM(NSUInteger, MLNPanScrollingMode) {
    MLNPanScrollingModeDefault
  };
  
@@ -22,11 +23,10 @@ diff -ru a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
  /** Options for ``MLNMapView/preferredFramesPerSecond``. */
  typedef NSInteger MLNMapViewPreferredFramesPerSecond NS_TYPED_EXTENSIBLE_ENUM;
  
-@@ -554,6 +568,19 @@
-  This property is experimental and subject to change.
+@@ -555,6 +569,19 @@ MLN_EXPORT
   */
  @property (nonatomic, assign, getter=isCenterClampedToGround) BOOL centerClampedToGround;
-+
+ 
 +/**
 + How much 3D terrain the map draws and builds per frame.
 +
@@ -39,13 +39,15 @@ diff -ru a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
 + This property is experimental and subject to change.
 + */
 +@property (nonatomic, assign) MLNTerrainLoadMode terrainLoadMode;
- 
++
  // MARK: Displaying the User’s Location
  
-diff -ru a/platform/ios/src/MLNMapView.mm b/platform/ios/src/MLNMapView.mm
---- a/platform/ios/src/MLNMapView.mm	2026-10-26 22:03:15
-+++ b/platform/ios/src/MLNMapView.mm	2026-10-26 22:03:16
-@@ -3253,6 +3253,31 @@
+ /**
+diff --git a/platform/ios/src/MLNMapView.mm b/platform/ios/src/MLNMapView.mm
+index be0a21e4499..ebb20254c0b 100644
+--- a/platform/ios/src/MLNMapView.mm
++++ b/platform/ios/src/MLNMapView.mm
+@@ -3253,6 +3253,31 @@ static void *windowScreenContext = &windowScreenContext;
    return _mbglMap->getCenterClampedToGround();
  }
  

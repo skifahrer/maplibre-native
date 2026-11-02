@@ -1,5 +1,5 @@
 diff --git a/include/mln/shaders/circle_layer_ubo.hpp b/include/mln/shaders/circle_layer_ubo.hpp
-index bc2d47a44a..0517a903f2 100644
+index bc2d47a44a9..0517a903f20 100644
 --- a/include/mln/shaders/circle_layer_ubo.hpp
 +++ b/include/mln/shaders/circle_layer_ubo.hpp
 @@ -27,7 +27,7 @@ struct alignas(16) CircleDrawableUBO {
@@ -12,7 +12,7 @@ index bc2d47a44a..0517a903f2 100644
  };
  static_assert(sizeof(CircleDrawableUBO) == 10 * 16);
 diff --git a/include/mln/shaders/mtl/circle.hpp b/include/mln/shaders/mtl/circle.hpp
-index 09dbd44313..74c7d22df9 100644
+index 09dbd44313e..74c7d22df90 100644
 --- a/include/mln/shaders/mtl/circle.hpp
 +++ b/include/mln/shaders/mtl/circle.hpp
 @@ -37,7 +37,7 @@ struct alignas(16) CircleDrawableUBO {
@@ -80,7 +80,7 @@ index 09dbd44313..74c7d22df9 100644
  )";
  };
 diff --git a/include/mln/shaders/mtl/common.hpp b/include/mln/shaders/mtl/common.hpp
-index 0c99770dd8..ccdb968162 100644
+index 0c99770dd81..ccdb968162c 100644
 --- a/include/mln/shaders/mtl/common.hpp
 +++ b/include/mln/shaders/mtl/common.hpp
 @@ -105,24 +105,24 @@ inline float get_elevation(float2 pos,
@@ -140,7 +140,7 @@ index 0c99770dd8..ccdb968162 100644
  
  template<class ForwardIt, class T>
 diff --git a/include/mln/shaders/mtl/terrain_depth.hpp b/include/mln/shaders/mtl/terrain_depth.hpp
-index cb1ae0a093..32193cca8a 100644
+index cb1ae0a093e..32193cca8ae 100644
 --- a/include/mln/shaders/mtl/terrain_depth.hpp
 +++ b/include/mln/shaders/mtl/terrain_depth.hpp
 @@ -28,6 +28,7 @@ struct VertexStage {
@@ -174,7 +174,7 @@ index cb1ae0a093..32193cca8a 100644
      const float4 bit_mask = float4(0.0, 1.0 / 256.0, 1.0 / 256.0, 1.0 / 256.0);
      float4 res = fract(depth * bit_shift);
 diff --git a/include/mln/shaders/shader_defines.hpp b/include/mln/shaders/shader_defines.hpp
-index c21657deae..dc36770870 100644
+index c21657deaea..dc367708700 100644
 --- a/include/mln/shaders/shader_defines.hpp
 +++ b/include/mln/shaders/shader_defines.hpp
 @@ -313,6 +313,7 @@ enum {
@@ -186,7 +186,7 @@ index c21657deae..dc36770870 100644
  };
  
 diff --git a/src/mln/renderer/layers/circle_layer_tweaker.cpp b/src/mln/renderer/layers/circle_layer_tweaker.cpp
-index bc8fcd9d59..e527059de1 100644
+index bc8fcd9d59e..e527059de1c 100644
 --- a/src/mln/renderer/layers/circle_layer_tweaker.cpp
 +++ b/src/mln/renderer/layers/circle_layer_tweaker.cpp
 @@ -99,13 +99,15 @@ void CircleLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
@@ -217,7 +217,7 @@ index bc8fcd9d59..e527059de1 100644
  #if MLN_UBO_CONSOLIDATION
          drawable.setUBOIndex(i++);
 diff --git a/src/mln/shaders/mtl/circle.cpp b/src/mln/shaders/mtl/circle.cpp
-index 074f8a3ace..e46744d7e1 100644
+index 074f8a3acec..e46744d7e19 100644
 --- a/src/mln/shaders/mtl/circle.cpp
 +++ b/src/mln/shaders/mtl/circle.cpp
 @@ -18,8 +18,9 @@ const std::array<AttributeInfo, 8> CircleShaderSource::attributes = {

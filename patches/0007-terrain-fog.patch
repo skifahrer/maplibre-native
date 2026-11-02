@@ -1,5 +1,5 @@
 diff --git a/include/mln/map/map.hpp b/include/mln/map/map.hpp
-index 7967883532..8af9ea7eea 100644
+index 08ffaeaa72e..c071976977d 100644
 --- a/include/mln/map/map.hpp
 +++ b/include/mln/map/map.hpp
 @@ -11,6 +11,7 @@
@@ -26,7 +26,7 @@ index 7967883532..8af9ea7eea 100644
  
      // Projection Mode
 diff --git a/include/mln/shaders/mtl/terrain.hpp b/include/mln/shaders/mtl/terrain.hpp
-index 477b431a42..127965af77 100644
+index 477b431a421..127965af77b 100644
 --- a/include/mln/shaders/mtl/terrain.hpp
 +++ b/include/mln/shaders/mtl/terrain.hpp
 @@ -38,9 +38,14 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
@@ -81,7 +81,7 @@ index 477b431a42..127965af77 100644
  )";
  };
 diff --git a/include/mln/shaders/terrain_layer_ubo.hpp b/include/mln/shaders/terrain_layer_ubo.hpp
-index d1cda507f3..e6f796a733 100644
+index d1cda507f32..e6f796a7333 100644
 --- a/include/mln/shaders/terrain_layer_ubo.hpp
 +++ b/include/mln/shaders/terrain_layer_ubo.hpp
 @@ -43,9 +43,14 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
@@ -102,7 +102,7 @@ index d1cda507f3..e6f796a733 100644
  } // namespace shaders
  } // namespace mln
 diff --git a/platform/ios/src/MLNMapView.h b/platform/ios/src/MLNMapView.h
-index b6f39d21e6..f1cd7e018a 100644
+index b6f39d21e6f..f1cd7e018ae 100644
 --- a/platform/ios/src/MLNMapView.h
 +++ b/platform/ios/src/MLNMapView.h
 @@ -596,6 +596,27 @@ MLN_EXPORT
@@ -134,7 +134,7 @@ index b6f39d21e6..f1cd7e018a 100644
   Whether the map centre rides the 3D terrain surface rather than sea level.
  
 diff --git a/platform/ios/src/MLNMapView.mm b/platform/ios/src/MLNMapView.mm
-index b9503fadaa..87e0c3b743 100644
+index b9503fadaa0..87e0c3b743f 100644
 --- a/platform/ios/src/MLNMapView.mm
 +++ b/platform/ios/src/MLNMapView.mm
 @@ -3278,6 +3278,32 @@ static void *windowScreenContext = &windowScreenContext;
@@ -171,10 +171,10 @@ index b9503fadaa..87e0c3b743 100644
    _mbglMap->setCenterClampedToGround(centerClampedToGround);
  }
 diff --git a/src/mln/map/map.cpp b/src/mln/map/map.cpp
-index 81b52f6267..f2a68f8c1e 100644
+index 26bfb7e54dd..86bb18595d9 100644
 --- a/src/mln/map/map.cpp
 +++ b/src/mln/map/map.cpp
-@@ -398,6 +398,23 @@ double Map::getDrawDistance() const {
+@@ -403,6 +403,23 @@ double Map::getDrawDistance() const {
      return impl->transform.getDrawDistance();
  }
  
@@ -199,10 +199,10 @@ index 81b52f6267..f2a68f8c1e 100644
      impl->transform.setNorthOrientation(orientation);
      impl->onUpdate();
 diff --git a/src/mln/map/transform.cpp b/src/mln/map/transform.cpp
-index daae5d2716..e90b63fc96 100644
+index ae1ec0a906c..7aa5fd559d4 100644
 --- a/src/mln/map/transform.cpp
 +++ b/src/mln/map/transform.cpp
-@@ -497,6 +497,10 @@ double Transform::getDrawDistance() const {
+@@ -513,6 +513,10 @@ double Transform::getDrawDistance() const {
      return state.getDrawDistance();
  }
  
@@ -214,10 +214,10 @@ index daae5d2716..e90b63fc96 100644
  
  void Transform::rotateBy(const ScreenCoordinate& first,
 diff --git a/src/mln/map/transform.hpp b/src/mln/map/transform.hpp
-index 2eee6650dd..6c155b88b2 100644
+index eedd8160287..4d0804ad2b4 100644
 --- a/src/mln/map/transform.hpp
 +++ b/src/mln/map/transform.hpp
-@@ -143,6 +143,7 @@ public:
+@@ -150,6 +150,7 @@ public:
      EdgeInsets getFrustumOffset();
      void setDrawDistance(double metres);
      double getDrawDistance() const;
@@ -226,7 +226,7 @@ index 2eee6650dd..6c155b88b2 100644
  private:
      TransformObserver& observer;
 diff --git a/src/mln/map/transform_state.cpp b/src/mln/map/transform_state.cpp
-index 84b9ef8fce..43ffdb6b20 100644
+index a5295689856..df9c26ccca3 100644
 --- a/src/mln/map/transform_state.cpp
 +++ b/src/mln/map/transform_state.cpp
 @@ -438,6 +438,13 @@ double TransformState::getDrawDistance() const {
@@ -244,7 +244,7 @@ index 84b9ef8fce..43ffdb6b20 100644
      const double clamped = std::isfinite(metres) ? std::max(0.0, metres) : 0.0;
      if (drawDistance != clamped) {
 diff --git a/src/mln/map/transform_state.hpp b/src/mln/map/transform_state.hpp
-index 3675c61c2b..d5e4111930 100644
+index 88885a34c8e..e2eba64404a 100644
 --- a/src/mln/map/transform_state.hpp
 +++ b/src/mln/map/transform_state.hpp
 @@ -3,6 +3,7 @@
@@ -280,7 +280,7 @@ index 3675c61c2b..d5e4111930 100644
      mat4 coordinatePointMatrix(const mat4& projMatrix) const;
      mat4 getPixelMatrix() const;
 diff --git a/src/mln/renderer/layers/terrain_layer_tweaker.cpp b/src/mln/renderer/layers/terrain_layer_tweaker.cpp
-index f6c5451d90..ff008bc887 100644
+index f6c5451d904..ff008bc887c 100644
 --- a/src/mln/renderer/layers/terrain_layer_tweaker.cpp
 +++ b/src/mln/renderer/layers/terrain_layer_tweaker.cpp
 @@ -10,6 +10,7 @@
@@ -319,10 +319,10 @@ index f6c5451d90..ff008bc887 100644
  
  #if MLN_UBO_CONSOLIDATION
 diff --git a/src/mln/renderer/render_terrain.cpp b/src/mln/renderer/render_terrain.cpp
-index df77275ce5..d582ac2ba9 100644
+index eb0dda3e50c..823e87e2306 100644
 --- a/src/mln/renderer/render_terrain.cpp
 +++ b/src/mln/renderer/render_terrain.cpp
-@@ -1319,7 +1319,12 @@ void RenderTerrain::updateInstancedDepthUBO(PaintParameters& parameters) {
+@@ -1503,7 +1503,12 @@ void RenderTerrain::updateInstancedDepthUBO(PaintParameters& parameters) {
                                                          .exaggeration = getExaggeration(),
                                                          .elevation_offset = elevationOffset,
                                                          .pad1 = 0.0f,

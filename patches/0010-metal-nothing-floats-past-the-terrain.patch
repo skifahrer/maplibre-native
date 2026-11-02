@@ -1,5 +1,5 @@
 diff --git a/include/mln/shaders/mtl/common.hpp b/include/mln/shaders/mtl/common.hpp
-index ccdb968..740197b 100644
+index ccdb968162c..740197b89e8 100644
 --- a/include/mln/shaders/mtl/common.hpp
 +++ b/include/mln/shaders/mtl/common.hpp
 @@ -116,15 +116,29 @@ inline float unpack_distance(float4 rgba_depth) {
