@@ -582,6 +582,21 @@ MLN_EXPORT
 @property (nonatomic, assign) UIEdgeInsets frustumOffset;
 
 /**
+ The distance from the camera, in meters, beyond which the map draws and loads
+ nothing.
+
+ It moves the camera's far plane in, so the tiles past it are not loaded and the
+ view ends on a straight line rather than on tile edges. With a steep pitch,
+ especially over 3D terrain, this bounds the work of drawing to the horizon. It
+ never cuts nearer than the map's center.
+
+ The default value of this property is 0, which draws the full view.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic, assign) CLLocationDistance drawDistance;
+
+/**
  Whether the map centre rides the 3D terrain surface rather than sea level.
 
  When this is `YES`, the altitude of the map centre follows the rendered terrain

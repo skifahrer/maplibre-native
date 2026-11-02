@@ -3270,6 +3270,14 @@ static void *windowScreenContext = &windowScreenContext;
   return NSEdgeInsetsFromMLNEdgeInsets(_mbglMap->getFrustumOffset());
 }
 
+- (void)setDrawDistance:(CLLocationDistance)drawDistance {
+  _mbglMap->setDrawDistance(drawDistance);
+}
+
+- (CLLocationDistance)drawDistance {
+  return _mbglMap->getDrawDistance();
+}
+
 - (void)setCenterClampedToGround:(BOOL)centerClampedToGround {
   _mbglMap->setCenterClampedToGround(centerClampedToGround);
 }
