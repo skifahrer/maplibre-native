@@ -1,0 +1,18 @@
+load("@rules_apple//apple:ios.bzl", "ios_unit_test")
+load("@rules_swift//swift:swift.bzl", "swift_library")
+
+swift_library(
+    name = "riki_test_srcs",
+    testonly = True,
+    srcs = glob(["*.swift"]),
+    deps = ["//platform:ios-sdk"],
+)
+
+# hosted, so the map view sits in a window and draws on the simulator
+ios_unit_test(
+    name = "riki_test",
+    timeout = "long",
+    minimum_os_version = "15.5",
+    runner = "@rules_apple//apple/testing/default_runner:ios_xctestrun_ordered_runner",
+    deps = [":riki_test_srcs"],
+)

@@ -1,0 +1,763 @@
+#include <mln/math/angles.hpp>
+#include <mln/math/log2.hpp>
+#include <mln/util/bounding_volumes.hpp>
+#include <mln/util/constants.hpp>
+#include <mln/util/interpolate.hpp>
+#include <mln/util/tile_coordinate.hpp>
+#include <mln/util/tile_cover.hpp>
+
+#include <atomic>
+#include <mln/util/tile_cover_impl.hpp>
+#include <mln/util/tile_lod.hpp>
+
+#include <algorithm>
+#include <optional>
+#include <functional>
+#include <list>
+#include <mutex>
+#include <queue>
+#include <set>
+
+using namespace std::numbers;
+
+namespace mln {
+
+namespace {
+
+using ScanLine = const std::function<void(int32_t x0, int32_t x1, int32_t y)>;
+
+// Taken from polymaps src/Layer.js
+// https://github.com/simplegeo/polymaps/blob/master/src/Layer.js#L333-L383
+struct edge {
+    double x0 = 0, y0 = 0;
+    double x1 = 0, y1 = 0;
+    double dx = 0, dy = 0;
+
+    edge(Point<double> a, Point<double> b) {
+        if (a.y > b.y) std::swap(a, b);
+        x0 = a.x;
+        y0 = a.y;
+        x1 = b.x;
+        y1 = b.y;
+        dx = b.x - a.x;
+        dy = b.y - a.y;
+    }
+};
+
+// scan-line conversion
+void scanSpans(edge e0, edge e1, int32_t ymin, int32_t ymax, ScanLine& scanLine) {
+    const double y0 = ::fmax(ymin, std::floor(e1.y0));
+    const double y1 = ::fmin(ymax, std::ceil(e1.y1));
+
+    // sort edges by x-coordinate
+    if ((e0.x0 == e1.x0 && e0.y0 == e1.y0) ? (e0.x0 + e1.dy / e0.dy * e0.dx < e1.x1)
+                                           : (e0.x1 - e1.dy / e0.dy * e0.dx < e1.x0)) {
+        std::swap(e0, e1);
+    }
+
+    // scan lines!
+    const double m0 = e0.dx / e0.dy;
+    const double m1 = e1.dx / e1.dy;
+    const double d0 = e0.dx > 0; // use y + 1 to compute x0
+    const double d1 = e1.dx < 0; // use y + 1 to compute x1
+    // NOLINTNEXTLINE(clang-analyzer-security.FloatLoopCounter,bugprone-float-loop-counter,cert-flp30-c)
+    for (double y = y0; y < y1; y++) {
+        double x0 = m0 * ::fmax(0, ::fmin(e0.dy, y + d0 - e0.y0)) + e0.x0;
+        double x1 = m1 * ::fmax(0, ::fmin(e1.dy, y + d1 - e1.y0)) + e1.x0;
+        scanLine(static_cast<int32_t>(std::floor(x1)), static_cast<int32_t>(std::ceil(x0)), static_cast<int32_t>(y));
+    }
+}
+
+// scan-line conversion
+void scanTriangle(const Point<double>& a,
+                  const Point<double>& b,
+                  const Point<double>& c,
+                  int32_t ymin,
+                  int32_t ymax,
+                  ScanLine& scanLine) {
+    edge ab = edge(a, b);
+    edge bc = edge(b, c);
+    edge ca = edge(c, a);
+
+    // sort edges by y-length
+    if (ab.dy > bc.dy) {
+        std::swap(ab, bc);
+    }
+    if (ab.dy > ca.dy) {
+        std::swap(ab, ca);
+    }
+    if (bc.dy > ca.dy) {
+        std::swap(bc, ca);
+    }
+
+    // scan span! scan span!
+    if (ab.dy) scanSpans(ca, ab, ymin, ymax, scanLine);
+    if (bc.dy) scanSpans(ca, bc, ymin, ymax, scanLine);
+}
+
+} // namespace
+
+namespace util {
+
+namespace {
+
+std::vector<UnwrappedTileID> tileCover(const Point<double>& tl,
+                                       const Point<double>& tr,
+                                       const Point<double>& br,
+                                       const Point<double>& bl,
+                                       const Point<double>& c,
+                                       uint8_t z) {
+    const int32_t tiles = 1 << z;
+
+    struct ID {
+        int32_t x, y;
+        double sqDist;
+    };
+
+    std::vector<ID> t;
+
+    // skip the first few allocations, assuming we usually end up with at least a few tiles
+    t.reserve(8);
+
+    auto scanLine = [&](int32_t x0, int32_t x1, int32_t y) {
+        int32_t x;
+        if (y >= 0 && y <= tiles) {
+            for (x = x0; x < x1; ++x) {
+                const auto dx = x + 0.5 - c.x;
+                const auto dy = y + 0.5 - c.y;
+                t.emplace_back(ID{.x = x, .y = y, .sqDist = dx * dx + dy * dy});
+            }
+        }
+    };
+
+    // Divide the screen up in two triangles and scan each of them:
+    // \---+
+    // | \ |
+    // +---\.
+    scanTriangle(tl, tr, br, 0, tiles, scanLine);
+    scanTriangle(br, bl, tl, 0, tiles, scanLine);
+
+    // Sort first by distance, then by x/y.
+    std::sort(t.begin(), t.end(), [](const ID& a, const ID& b) noexcept {
+        return std::tie(a.sqDist, a.x, a.y) < std::tie(b.sqDist, b.x, b.y);
+    });
+
+    // Erase duplicate tile IDs (they typically occur at the common side of both triangles).
+    t.erase(std::unique(t.begin(), t.end(), [](const ID& a, const ID& b) { return a.x == b.x && a.y == b.y; }),
+            t.end());
+
+    std::vector<UnwrappedTileID> result;
+    result.reserve(t.size());
+    for (const auto& id : t) {
+        result.emplace_back(z, id.x, id.y);
+    }
+    return result;
+}
+
+} // namespace
+
+uint8_t nearDetailLevels() noexcept {
+    return 2;
+}
+
+namespace {
+std::mutex terrainMeshCoverMutex;
+std::vector<UnwrappedTileID> lastTerrainMeshCover;
+} // namespace
+
+std::vector<UnwrappedTileID> terrainMeshCover() {
+    std::lock_guard<std::mutex> lock(terrainMeshCoverMutex);
+    return lastTerrainMeshCover;
+}
+
+void setTerrainMeshCover(std::vector<UnwrappedTileID> cover) {
+    std::lock_guard<std::mutex> lock(terrainMeshCoverMutex);
+    lastTerrainMeshCover = std::move(cover);
+}
+
+int32_t coveringZoomLevel(double zoom, style::SourceType type, uint16_t size) noexcept {
+    zoom += util::log2(util::tileSize_D / size);
+    if (type == style::SourceType::Raster || type == style::SourceType::RasterDEM || type == style::SourceType::Video) {
+        return static_cast<int32_t>(std::round(zoom));
+    } else {
+        return static_cast<int32_t>(std::floor(zoom));
+    }
+}
+
+std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
+                                        uint8_t z,
+                                        const Range<uint8_t> zoomRange,
+                                        const std::optional<uint8_t>& overscaledZ) {
+    struct Node {
+        AABB aabb;
+        uint8_t zoom;
+        uint32_t x, y;
+        int16_t wrap;
+        bool fullyVisible;
+    };
+
+    struct ResultTile {
+        OverscaledTileID id;
+        double sqrDist;
+    };
+
+    auto childrenOf = [](const Node& node) -> std::vector<Node> {
+        std::vector<Node> children(4);
+        for (int i = 0; i < 4; i++) {
+            const uint32_t childX = (node.x << 1) + (i % 2);
+            const uint32_t childY = (node.y << 1) + (i >> 1);
+
+            children[i] = node;
+            children[i].aabb = node.aabb.quadrant(i);
+            children[i].zoom = node.zoom + 1;
+            children[i].x = childX;
+            children[i].y = childY;
+        }
+        return children;
+    };
+
+    const auto& transform = state.transformState;
+    const double numTiles = std::pow(2.0, z);
+    const double worldSize = Projection::worldSize(transform.getScale());
+    const bool adaptiveLod = state.tileLodMode == TileLodMode::Adaptive;
+    // GL JS puts the Mercator cover on the variable-zoom function whenever terrain is
+    // present, not only past a pitch threshold, so selecting Adaptive is itself the opt-in.
+    const bool allowVariableZoom = adaptiveLod || transform.getPitch() > state.tileLodPitchThreshold;
+    const uint8_t minZoom = allowVariableZoom ? zoomRange.min : z;
+    const bool variableZoomMode = state.tileLodMode == TileLodMode::Distance || adaptiveLod;
+    // Adaptive goes no finer than the zoom the view asks for: under a steep pitch gl-js's
+    // function sends the ground at the camera to the source's max zoom, and a few hundred such
+    // tiles cost more than a tile budget allows. Only the ground within kNearDetailMetres of the
+    // camera may go state.nearDetail levels finer.
+    constexpr double kNearDetailMetres = 1500.0;
+    const uint8_t adaptiveMax = std::min<uint8_t>(zoomRange.max, static_cast<uint8_t>(z + state.nearDetail));
+    const uint8_t maxZoom = (variableZoomMode && allowVariableZoom) ? (adaptiveLod ? adaptiveMax : zoomRange.max) : z;
+    const uint8_t overscaledZoom = std::max(overscaledZ.value_or(z), maxZoom);
+    const bool flippedY = transform.getViewportMode() == ViewportMode::FlippedY;
+
+    const auto centerPoint = TileCoordinate::fromScreenCoordinate(
+                                 transform, z, {transform.getSize().width / 2.0, transform.getSize().height / 2.0})
+                                 .p;
+
+    const vec3 centerCoord = {{centerPoint.x, centerPoint.y, 0.0}};
+    // Where the distance-based level of detail below measures from: the map centre, or
+    // `tileLodOrigin` when the caller gives one.
+    const vec3 lodCoord = state.tileLodOrigin
+                              ? vec3{{(*state.tileLodOrigin)[0] * numTiles, (*state.tileLodOrigin)[1] * numTiles, 0.0}}
+                              : centerCoord;
+
+    assert(transform.getFreeCameraOptions().position);
+    const vec3 cameraPositionMercator = *transform.getFreeCameraOptions().position;
+    const double nominalScale = std::pow(2.0, z);
+    const vec3 cameraCoord = vec3Scale(cameraPositionMercator, nominalScale);
+    const double cameraToCenterDistanceMercator = vec3Length(vec3Sub(cameraCoord, centerCoord)) / worldSize;
+
+    const Frustum frustum = Frustum::fromInvProjMatrix(transform.getInvProjectionMatrix(), worldSize, z, flippedY);
+
+    // GL JS's tile zoom function takes its distances in Mercator units at zoom 0, so the
+    // tile-unit coordinates above are divided back down by numTiles. The terms that depend
+    // only on the camera are computed once for the whole cover.
+    // GL JS measures this to the terrain surface under the map center, not to z = 0:
+    // centerCoord is fromLngLat(center, transform.elevation). Metres to normalized Mercator
+    // is 1 / (cos(lat) * 2pi * R).
+    const double centerAltitudeMercator = state.transformState.getCenterAltitude() /
+                                          (std::cos(util::deg2rad(transform.getLatLng().latitude())) * util::M2PI *
+                                           util::EARTH_RADIUS_M);
+    const double distanceToCenterZ = std::abs(centerAltitudeMercator - cameraCoord[2] / numTiles);
+    const double distanceToCenter2d = std::hypot(centerCoord[0] - cameraCoord[0], centerCoord[1] - cameraCoord[1]) /
+                                      numTiles;
+    const double distanceToCenter3d = std::hypot(distanceToCenter2d, distanceToCenterZ);
+    // The zoom the view asks for, before any source max-zoom clamp: GL JS passes
+    // `transform.zoom + log2(transform.tileSize / source.tileSize)` and clamps the function's
+    // *result* to maxZoom. `z` arrives already clamped, so using it here would shift every
+    // tile down by the amount of the clamp.
+    const auto unclampedZ = static_cast<double>(overscaledZ.value_or(z));
+    const double requestedCenterZoom = transform.getZoom() + (unclampedZ - std::floor(transform.getZoom()));
+    const util::TileZoomFunction tileZoom(util::rad2deg(transform.getFieldOfView()));
+
+    // Elevation has to reach the frustum in the frustum's own z units. Renderable heights are in
+    // meters, and Camera::getWorldToCamera converts them to pixels (pixelsPerMeter) *inside* the
+    // projection matrix, so unprojecting the clip-space corners through its inverse
+    // (Frustum::fromInvProjMatrix) gives corner z in meters, which fromInvProjMatrix then scales
+    // by numTiles / worldSize like x and y. A height therefore enters the frustum test as
+    // meters * numTiles / worldSize - not converted to pixels first. Converting it (the previous
+    // numTiles / (cos(lat) * 2pi * R)) shrank every elevated box by pixelsPerMeter (~0.13 at z13
+    // over Victoria): a 2000 m plateau tested as ~260 m, and with the camera high and steeply
+    // pitched the near field was judged off-screen and left out of the cover.
+    const double metersToFrustumZ = numTiles / worldSize;
+
+    // The tile's bounds including its terrain: the flat footprint given the height of
+    // the DEM covering it. Relief rising towards the camera takes up screen space that
+    // the flat footprint does not, so a tile can be in view when its footprint is not;
+    // testing the flat box is what leaves the terrain mesh with tiles no source ever
+    // requested, and nothing to drape onto them.
+    //
+    // Only the frustum tests use this. The LOD heuristics below keep using the flat
+    // box, matching gl-js, whose distanceToTile2d takes only x and y: elevation should
+    // decide what is visible, not how finely it is subdivided. It also keeps this
+    // change from perturbing tile selection on maps that have no terrain-shaped reason
+    // to change.
+    const auto elevatedAABB = [&](const Node& node) -> AABB {
+        if (!state.elevationProvider) {
+            return node.aabb;
+        }
+        const auto range = state.elevationProvider->getTileElevationRange(CanonicalTileID(node.zoom, node.x, node.y));
+        if (!range) {
+            return node.aabb; // no DEM loaded here yet: flat, as before
+        }
+        AABB elevated = node.aabb;
+        elevated.min[2] = range->min * metersToFrustumZ;
+        elevated.max[2] = range->max * metersToFrustumZ;
+        return elevated;
+    };
+
+    // There should always be a certain number of maximum zoom level tiles
+    // surrounding the center location
+    assert(state.tileLodMinRadius >= 1);
+    const double radiusOfMaxLvlLodInTiles = std::max(1.0, state.tileLodMinRadius);
+
+    const auto newRootTile = [&](int16_t wrap) -> Node {
+        return {.aabb = AABB({{wrap * numTiles, 0.0, 0.0}}, {{(wrap + 1) * numTiles, numTiles, 0.0}}),
+                .zoom = uint8_t(0),
+                .x = uint16_t(0),
+                .y = uint16_t(0),
+                .wrap = wrap,
+                .fullyVisible = false};
+    };
+
+    const double nearRadius = kNearDetailMetres / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
+                                                   util::M2PI * util::EARTH_RADIUS_M);
+
+    // Perform depth-first traversal on tile tree to find visible tiles
+    std::vector<Node> stack;
+    std::vector<ResultTile> result;
+    stack.reserve(128);
+
+    // With a tile limit the walk is nearest first instead: a heap of nodes, keyed by the nearest a
+    // tile below them can be to `tileLimitOrigin`, and of the visible tiles found, keyed by their
+    // own distance. Whatever comes off the heap as a tile is the nearest of those left, so the
+    // walk stops at the limit having read only the nodes near the origin.
+    const bool limited = state.tileLimit > 0;
+    struct QueueItem {
+        double key; // squared distance to the origin: of the nearest point below a node, or of a tile
+        bool tile;
+        Node node;
+    };
+    std::vector<QueueItem> queue;
+    const auto tileIdOf = [&](const Node& node) {
+        return OverscaledTileID{
+            node.zoom == maxZoom ? overscaledZoom : node.zoom, node.wrap, node.zoom, node.x, node.y};
+    };
+    // Distance from the origin to a tile's center, in normalized web-mercator.
+    const auto tileKey = [&](const Node& node) {
+        const double scale = static_cast<double>(1u << node.zoom);
+        const double dx = (static_cast<double>(node.x) + 0.5) / scale + node.wrap - state.tileLimitOrigin[0];
+        const double dy = (static_cast<double>(node.y) + 0.5) / scale - state.tileLimitOrigin[1];
+        return dx * dx + dy * dy;
+    };
+    // Distance from the origin to the nearest point of a node's box, which no tile below it beats.
+    const auto nodeKey = [&](const Node& node) {
+        const double size = 1.0 / static_cast<double>(1u << node.zoom);
+        const double minX = static_cast<double>(node.x) * size + node.wrap;
+        const double minY = static_cast<double>(node.y) * size;
+        const double dx = std::max({minX - state.tileLimitOrigin[0], 0.0, state.tileLimitOrigin[0] - (minX + size)});
+        const double dy = std::max({minY - state.tileLimitOrigin[1], 0.0, state.tileLimitOrigin[1] - (minY + size)});
+        return dx * dx + dy * dy;
+    };
+    // The heap's top is the smallest key. At equal keys a node comes before a tile, so every tile
+    // at a distance is in the heap before the first of them is taken, and tiles at one distance
+    // come in ID order.
+    const auto later = [&](const QueueItem& a, const QueueItem& b) {
+        if (a.key != b.key) return a.key > b.key;
+        if (a.tile != b.tile) return a.tile;
+        return a.tile && tileIdOf(b.node) < tileIdOf(a.node);
+    };
+    const auto pushNode = [&](Node node) {
+        if (limited) {
+            const double key = nodeKey(node);
+            queue.push_back({key, false, std::move(node)});
+            std::push_heap(queue.begin(), queue.end(), later);
+        } else {
+            stack.push_back(std::move(node));
+        }
+    };
+
+    // World copies shall be rendered three times on both sides from closest to farthest
+    for (int i = 1; i <= 3; i++) {
+        pushNode(newRootTile(-i));
+        pushNode(newRootTile(i));
+    }
+
+    pushNode(newRootTile(0));
+
+    while (limited ? !queue.empty() : !stack.empty()) {
+        Node node;
+        if (limited) {
+            std::pop_heap(queue.begin(), queue.end(), later);
+            QueueItem item = std::move(queue.back());
+            queue.pop_back();
+            if (item.tile) {
+                result.push_back({.id = tileIdOf(item.node), .sqrDist = item.key});
+                if (result.size() >= state.tileLimit) break;
+                continue;
+            }
+            node = std::move(item.node);
+        } else {
+            node = stack.back();
+            stack.pop_back();
+        }
+
+        // Use cached visibility information of ancestor nodes
+        bool elevated = false;
+        if (!node.fullyVisible) {
+            // The flat fast path (frustum.intersects) asserts a zero-elevation box, so
+            // an elevated node has to take the 3D path. Nodes stay flat, and keep the
+            // cheaper test, until a DEM gives them height via elevatedAABB.
+            const AABB testAABB = elevatedAABB(node);
+            elevated = testAABB.min[2] != 0.0 || testAABB.max[2] != 0.0;
+            const IntersectionResult intersection = elevated ? frustum.intersectsElevated(testAABB)
+                                                             : frustum.intersects(testAABB);
+
+            if (intersection == IntersectionResult::Separate) continue;
+
+            node.fullyVisible = intersection == IntersectionResult::Contains;
+        }
+
+        bool shouldSplitTile;
+        if (adaptiveLod) {
+            // gl-js distanceToTile2d takes only x and y - elevation decides what is visible,
+            // not how finely it is subdivided - so this reads the flat box, like the branches
+            // below, rather than elevatedAABB.
+            const vec3 camToTile = node.aabb.distanceXYZ(cameraCoord);
+            const double distanceToTile2d = std::hypot(camToTile[0], camToTile[1]) / numTiles;
+            const double rawZoom = tileZoom(
+                requestedCenterZoom, distanceToTile2d, distanceToCenterZ, distanceToCenter3d) -
+                                  std::log2(std::max(1.0, state.tileLodScale));
+            const double desiredZoom = state.roundZoom ? std::round(rawZoom) : std::floor(rawZoom);
+            const uint8_t cap = distanceToTile2d < nearRadius ? maxZoom : std::min(maxZoom, z);
+            shouldSplitTile = node.zoom < std::clamp(desiredZoom, 0.0, static_cast<double>(cap));
+        } else if (state.tileLodMode == TileLodMode::Distance) {
+            const vec3 camToTileMercator = vec3Scale(node.aabb.distanceXYZ(cameraCoord), 1.0 / worldSize);
+            const double distanceToTileMercator = vec3Length(camToTileMercator);
+            const double cosPitchToTile = std::max(0.0, camToTileMercator[2] / distanceToTileMercator);
+            const double pitchExponent =
+                0.5; // 0: constant screen width, 1/2: constant screen area, 1: constant screen height
+            double tileScale = std::pow(2.0, node.zoom);
+            shouldSplitTile = distanceToTileMercator * tileScale < std::pow(cosPitchToTile, pitchExponent) *
+                                                                       cameraToCenterDistanceMercator /
+                                                                       state.tileLodScale * nominalScale;
+        } else {
+            const vec3 distanceXyz = node.aabb.distanceXYZ(lodCoord);
+            const double* longestDim = std::max_element(distanceXyz.data(), distanceXyz.data() + distanceXyz.size());
+            assert(longestDim);
+
+            // We're using distance based heuristics to determine if a tile should
+            // be split into quadrants or not. radiusOfMaxLvlLodInTiles defines that
+            // there's always a certain number of maxLevel tiles next to the map
+            // center. Using the fact that a parent node in quadtree is twice the
+            // size of its children (per dimension) we can define distance
+            // thresholds for each relative level:
+            // f(k) = offset + 2 + 4 + 8 + 16 + ... + 2^k
+            // This is the same as:
+            // f(k) = offset + 2^(k+1)-2
+            const double distToSplit = radiusOfMaxLvlLodInTiles + (1 << (maxZoom - node.zoom)) - 2;
+            shouldSplitTile = *longestDim * state.tileLodScale < distToSplit;
+        }
+
+        // Have we reached the target depth or is the tile too far away to be any split further?
+        if (node.zoom == maxZoom || (!shouldSplitTile && node.zoom >= minZoom)) {
+            // Perform precise intersection test between the frustum and aabb.
+            // This will cull < 1% false positives missed by the original test
+            // A node that is not fully visible got here because the frustum test above said it
+            // intersects. For an elevated node that test was already the exact 3D one
+            // (intersectsElevated on the same box), so asking again would only repeat the
+            // elevation lookup and the answer. A flat node's box is node.aabb, which
+            // intersectsPrecise reads in x and y only.
+            const bool visible = node.fullyVisible || elevated ||
+                                 frustum.intersectsPrecise(node.aabb, true) != IntersectionResult::Separate;
+            if (visible) {
+                const OverscaledTileID id = {
+                    node.zoom == maxZoom ? overscaledZoom : node.zoom, node.wrap, node.zoom, node.x, node.y};
+                vec3 coordToLoadFirst = (state.tileLodMode == TileLodMode::Distance) ? cameraCoord : centerCoord;
+                const double dx = node.wrap * numTiles + node.x + 0.5 - coordToLoadFirst[0];
+                const double dy = node.y + 0.5 - coordToLoadFirst[1];
+
+                if (limited) {
+                    const double key = tileKey(node);
+                    queue.push_back({key, true, std::move(node)});
+                    std::push_heap(queue.begin(), queue.end(), later);
+                } else {
+                    result.push_back({.id = id, .sqrDist = dx * dx + dy * dy});
+                }
+            }
+        } else {
+            std::vector<Node> children = childrenOf(node);
+            if (limited) {
+                for (auto& child : children) pushNode(std::move(child));
+            } else {
+                stack.insert(stack.end(), children.begin(), children.end());
+            }
+        }
+    }
+
+    bool centreAdded = false;
+    // Over terrain, the tile under the map centre is covered even when it is out of view: a
+    // camera that sank below the ground looks past it, so its height never loaded and the
+    // centre could not be put back on the ground (Map::setCenterClampedToGround).
+    if (state.elevationProvider) {
+        const auto centre = TileCoordinate::fromLatLng(z, transform.getLatLng()).p;
+        const auto cx = static_cast<int64_t>(std::floor(centre.x));
+        const auto cy = static_cast<int64_t>(std::floor(centre.y));
+        const auto n = static_cast<int64_t>(numTiles);
+        if (cy >= 0 && cy < n) {
+            const auto wrap = static_cast<int16_t>(cx >= 0 ? cx / n : (cx - n + 1) / n);
+            const auto x = static_cast<uint32_t>(cx - wrap * n);
+            const auto y = static_cast<uint32_t>(cy);
+            const bool covered = std::any_of(result.begin(), result.end(), [&](const ResultTile& tile) {
+                const auto& c = tile.id.canonical;
+                return tile.id.wrap == wrap && c.z <= z && (x >> (z - c.z)) == c.x && (y >> (z - c.z)) == c.y;
+            });
+            if (!covered) {
+                result.push_back({OverscaledTileID{z, wrap, z, x, y}, 0.0});
+                centreAdded = true;
+            }
+        }
+    }
+
+    // Sort results by distance (a limited walk already found them in order)
+    if (!limited || centreAdded) {
+        std::sort(result.begin(), result.end(), [](const ResultTile& a, const ResultTile& b) {
+            return a.sqrDist < b.sqrDist;
+        });
+    }
+
+    std::vector<OverscaledTileID> ids;
+    ids.reserve(result.size());
+
+    for (const auto& tile : result) {
+        ids.push_back(tile.id);
+    }
+
+    return ids;
+}
+
+std::set<UnwrappedTileID> frustumCull(const TileCoverParameters& state, const std::set<UnwrappedTileID>& tiles) {
+    if (tiles.empty()) {
+        return {};
+    }
+    const auto& transform = state.transformState;
+    const bool flippedY = transform.getViewportMode() == ViewportMode::FlippedY;
+
+    // Express every tile in the units of the deepest one, so its aabb is that tile's
+    // footprint scaled up (never down) - the same tile-units-at-a-zoom space the
+    // frustum is built in.
+    uint8_t refZ = 0;
+    for (const auto& id : tiles) {
+        refZ = std::max(refZ, id.canonical.z);
+    }
+    const double numTiles = std::exp2(static_cast<double>(refZ));
+    const double worldSize = Projection::worldSize(transform.getScale());
+    const Frustum frustum = Frustum::fromInvProjMatrix(transform.getInvProjectionMatrix(), worldSize, refZ, flippedY);
+    // Meters to the frustum's z units at refZ; see the same conversion in tileCover.
+    const double metersToFrustumZ = numTiles / worldSize;
+
+    std::set<UnwrappedTileID> result;
+    for (const auto& id : tiles) {
+        const double span = std::exp2(static_cast<double>(refZ - id.canonical.z));
+        const double x0 = (id.canonical.x + id.wrap * std::exp2(static_cast<double>(id.canonical.z))) * span;
+        const double y0 = id.canonical.y * span;
+        AABB aabb({{x0, y0, 0.0}}, {{x0 + span, y0 + span, 0.0}});
+
+        if (state.elevationProvider) {
+            if (const auto range = state.elevationProvider->getTileElevationRange(id.canonical)) {
+                aabb.min[2] = range->min * metersToFrustumZ;
+                aabb.max[2] = range->max * metersToFrustumZ;
+            }
+        }
+
+        const bool elevated = aabb.min[2] != 0.0 || aabb.max[2] != 0.0;
+        const IntersectionResult intersection = elevated ? frustum.intersectsElevated(aabb) : frustum.intersects(aabb);
+        if (intersection != IntersectionResult::Separate) {
+            result.insert(id);
+        }
+    }
+    return result;
+}
+
+std::vector<OverscaledTileID> TileCoverCache::cover(const TileCoverParameters& state,
+                                                    uint8_t z,
+                                                    Range<uint8_t> zoomRange,
+                                                    const std::optional<uint8_t>& overscaledZ) {
+    const Key key{z,
+                  zoomRange.min,
+                  zoomRange.max,
+                  overscaledZ ? int16_t{*overscaledZ} : int16_t{-1},
+                  state.roundZoom,
+                  state.nearDetail,
+                  state.tileLimit,
+                  state.tileLimitOrigin,
+                  state.elevationProvider,
+                  state.tileLodOrigin};
+    auto found = covers.find(key);
+    if (found == covers.end()) {
+        found = covers.emplace(key, tileCover(state, z, zoomRange, overscaledZ)).first;
+    }
+    return found->second;
+}
+
+std::vector<UnwrappedTileID> tileCover(const LatLngBounds& bounds_, uint8_t z) {
+    if (bounds_.isEmpty() || bounds_.south() > util::LATITUDE_MAX || bounds_.north() < -util::LATITUDE_MAX) {
+        return {};
+    }
+
+    const LatLngBounds bounds = LatLngBounds::hull({std::max(bounds_.south(), -util::LATITUDE_MAX), bounds_.west()},
+                                                   {std::min(bounds_.north(), util::LATITUDE_MAX), bounds_.east()});
+
+    return tileCover(Projection::project(bounds.northwest(), z),
+                     Projection::project(bounds.northeast(), z),
+                     Projection::project(bounds.southeast(), z),
+                     Projection::project(bounds.southwest(), z),
+                     Projection::project(bounds.center(), z),
+                     z);
+}
+
+std::vector<UnwrappedTileID> tileCover(const Geometry<double>& geometry, uint8_t z) {
+    std::vector<UnwrappedTileID> result;
+    TileCover tc(geometry, z, true);
+    while (tc.hasNext()) {
+        result.push_back(*tc.next());
+    };
+
+    return result;
+}
+
+// Taken from https://github.com/mapbox/sphericalmercator#xyzbbox-zoom-tms_style-srs
+// Computes the projected tiles for the lower left and upper right points of the bounds
+// and uses that to compute the tile cover count
+uint64_t tileCount(const LatLngBounds& bounds, uint8_t zoom) noexcept {
+    if (zoom == 0) {
+        return 1;
+    }
+    const auto sw = Projection::project(bounds.southwest(), zoom);
+    const auto ne = Projection::project(bounds.northeast(), zoom);
+    const auto maxTile = std::pow(2.0, zoom);
+    const auto x1 = floor(sw.x);
+    const auto x2 = ceil(ne.x) - 1;
+    const auto y1 = util::clamp(floor(sw.y), 0.0, maxTile - 1);
+    const auto y2 = util::clamp(floor(ne.y), 0.0, maxTile - 1);
+
+    const auto dx = x1 > x2 ? (maxTile - x1) + x2 : x2 - x1;
+    const auto dy = y1 - y2;
+    return static_cast<uint64_t>((dx + 1) * (dy + 1));
+}
+
+uint64_t tileCount(const Geometry<double>& geometry, uint8_t z) {
+    uint64_t tileCount = 0;
+
+    TileCover tc(geometry, z, true);
+    while (tc.next()) {
+        tileCount++;
+    };
+    return tileCount;
+}
+
+TileCover::TileCover(const LatLngBounds& bounds_, uint8_t z) {
+    LatLngBounds bounds = LatLngBounds::hull({std::max(bounds_.south(), -util::LATITUDE_MAX), bounds_.west()},
+                                             {std::min(bounds_.north(), util::LATITUDE_MAX), bounds_.east()});
+
+    if (bounds.isEmpty() || bounds.south() > util::LATITUDE_MAX || bounds.north() < -util::LATITUDE_MAX) {
+        bounds = LatLngBounds::world();
+    }
+
+    const auto sw = Projection::project(bounds.southwest(), z);
+    const auto ne = Projection::project(bounds.northeast(), z);
+    const auto se = Projection::project(bounds.southeast(), z);
+    const auto nw = Projection::project(bounds.northwest(), z);
+
+    const Polygon<double> p({{sw, nw, ne, se, sw}});
+    impl = std::make_unique<TileCover::Impl>(z, p, false);
+}
+
+TileCover::TileCover(const Geometry<double>& geom, uint8_t z, bool project /* = true*/)
+    : impl(std::make_unique<TileCover::Impl>(z, geom, project)) {}
+
+TileCover::~TileCover() = default;
+
+std::optional<UnwrappedTileID> TileCover::next() {
+    return impl->next();
+}
+
+bool TileCover::hasNext() {
+    return impl->hasNext();
+}
+
+void keepNearestTiles(std::vector<OverscaledTileID>& tiles, size_t maxTiles, const std::array<double, 2>& origin) {
+    if (maxTiles == 0 || tiles.size() <= maxTiles) {
+        return;
+    }
+    const auto dist2 = [&](const OverscaledTileID& id) {
+        const double scale = static_cast<double>(1u << id.canonical.z);
+        const double dx = (static_cast<double>(id.canonical.x) + 0.5) / scale + id.wrap - origin[0];
+        const double dy = (static_cast<double>(id.canonical.y) + 0.5) / scale - origin[1];
+        return dx * dx + dy * dy;
+    };
+    const auto keep = tiles.begin() + static_cast<std::ptrdiff_t>(maxTiles);
+    std::partial_sort(tiles.begin(), keep, tiles.end(), [&](const OverscaledTileID& a, const OverscaledTileID& b) {
+        const double da = dist2(a);
+        const double db = dist2(b);
+        return da < db || (da == db && a < b);
+    });
+    tiles.erase(keep, tiles.end());
+}
+
+double nearestPointDistance2(const CanonicalTileID& id, int16_t wrap, const std::array<double, 2>& origin) {
+    const double scale = static_cast<double>(1u << id.z);
+    const double x0 = static_cast<double>(id.x) / scale + wrap;
+    const double y0 = static_cast<double>(id.y) / scale;
+    const double dx = std::max({0.0, x0 - origin[0], origin[0] - (x0 + 1.0 / scale)});
+    const double dy = std::max({0.0, y0 - origin[1], origin[1] - (y0 + 1.0 / scale)});
+    return dx * dx + dy * dy;
+}
+
+void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
+                        size_t maxTiles,
+                        const std::array<double, 2>& origin,
+                        uint8_t minZoom) {
+    if (maxTiles == 0 || tiles.size() <= maxTiles) {
+        return;
+    }
+    // Thousands of tiles at a source's deep minzoom cannot merge past it; the nearest are enough.
+    keepNearestTiles(tiles, maxTiles * 4, origin);
+    std::set<OverscaledTileID> alive(tiles.begin(), tiles.end());
+    const auto distance2 = [&](const OverscaledTileID& id) {
+        return nearestPointDistance2(id.canonical, id.wrap, origin);
+    };
+    // Farthest first; a parent goes back in at its own, nearer distance.
+    using Entry = std::pair<double, OverscaledTileID>;
+    std::priority_queue<Entry> farthest;
+    for (const auto& id : alive) {
+        farthest.emplace(distance2(id), id);
+    }
+    while (alive.size() > maxTiles && !farthest.empty()) {
+        const OverscaledTileID tile = farthest.top().second;
+        farthest.pop();
+        if (!alive.contains(tile) || tile.overscaledZ <= minZoom) {
+            continue;
+        }
+        const OverscaledTileID parent = tile.scaledTo(tile.overscaledZ - 1);
+        // No parent wider than twice its distance: merging on swallowed the near ground, 1043
+        // tiles at 79° became two z11 tiles spanning the camera and the drape there drew nothing.
+        const double parentSize = 1.0 / static_cast<double>(1u << parent.canonical.z);
+        if (parentSize * parentSize > 4 * distance2(parent)) {
+            continue;
+        }
+        std::erase_if(alive, [&](const OverscaledTileID& id) { return id == parent || id.isChildOf(parent); });
+        alive.insert(parent);
+        farthest.emplace(distance2(parent), parent);
+    }
+    tiles.assign(alive.begin(), alive.end());
+    keepNearestTiles(tiles, maxTiles, origin);
+}
+
+} // namespace util
+} // namespace mln
