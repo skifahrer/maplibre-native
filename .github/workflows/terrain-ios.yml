@@ -136,8 +136,8 @@ jobs:
           bazel test $BAZEL_CACHE $BAZEL_FLAGS --test_output=errors \
             //platform/ios/test:ios_test //platform/ios/riki-test:riki_test
 
-      # Of the core's tests, the terrain and tile cover ones. A step of its own: started beside
-      # the others, its simulator was made while xcodebuild listed devices, and was not found.
+      # The core's terrain and tile cover tests. Alone: beside the others,
+      # xcodebuild missed the simulator Bazel had just made for them.
       - name: Test the terrain core on a simulator
         if: success() || failure()
         run: |
