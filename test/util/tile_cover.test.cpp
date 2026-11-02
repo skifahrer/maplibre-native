@@ -935,3 +935,42 @@ TEST(TileCover, CacheSharesOnlyTheSameCover) {
     params.nearDetail = 0;
     EXPECT_EQ(util::tileCover(params, 12, zoomRange), cache.cover(params, 12, zoomRange));
 }
+
+namespace {
+class HighGround : public util::TileElevationProvider {
+public:
+    std::optional<Range<double>> getTileElevationRange(const CanonicalTileID&) const override {
+        return Range<double>{2000.0, 2600.0};
+    }
+};
+} // namespace
+
+// Each was once left out of the key, and a source got a cover made for other inputs for a frame:
+// the 3D hill shading blinked coarse after a drag.
+TEST(TileCover, CacheKeysOnTheLimitTheGroundAndTheDetailOrigin) {
+    Transform transform;
+    transform.resize({1024, 768});
+    transform.jumpTo(CameraOptions().withCenter(LatLng{49.16, 20.01}).withZoom(13.5).withPitch(75.0));
+    util::TileCoverParameters params{transform.getState()};
+    const Range<uint8_t> range{0, 14};
+    util::TileCoverCache cache;
+    const auto expectFresh = [&](const char* what) {
+        EXPECT_EQ(util::tileCover(params, 13, range), cache.cover(params, 13, range)) << what;
+    };
+
+    expectFresh("first");
+    params.tileLimit = 12;
+    params.tileLimitOrigin = {{0.5557, 0.3540}};
+    expectFresh("a tile limit");
+    params.tileLimit = 30;
+    expectFresh("another tile limit");
+    params.tileLimitOrigin = {{0.5558, 0.3541}};
+    expectFresh("another limit origin");
+    HighGround ground;
+    params.elevationProvider = &ground;
+    expectFresh("over terrain");
+    params.tileLodOrigin = std::array<double, 2>{{0.5557, 0.3542}};
+    expectFresh("a detail origin");
+    params.tileLodOrigin = std::array<double, 2>{{0.5559, 0.3539}};
+    expectFresh("another detail origin");
+}
