@@ -129,11 +129,12 @@ jobs:
           ls -la out
           du -sh x/MapLibre.xcframework/ios-arm64/MapLibre.framework/MapLibre
 
-      # Upstream's iOS tests and ours, on the simulator, with the compiles the build made.
+      # Upstream's iOS tests and ours, on the simulator; not opt, whose NDEBUG drops the
+      # assertions upstream's tests expect to throw.
       - name: Test on a simulator
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE $BAZEL_FLAGS --test_output=errors \
+          bazel test $BAZEL_CACHE --//:renderer=metal --test_output=errors \
             //platform/ios/test:ios_test //platform/ios/riki-test:riki_test
 
       # Kept under 6 GB by Bazel, inside the repository's 10 GB of Actions cache.
