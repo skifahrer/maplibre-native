@@ -1,0 +1,223 @@
+#pragma once
+
+#include <mln/tile/tile_id.hpp>
+#include <mln/util/color.hpp>
+#include <mln/util/containers.hpp>
+#include <mln/util/hash.hpp>
+
+#include <cstddef>
+#include <string>
+
+namespace mln {
+
+namespace style {
+class Style;
+class SymbolLayer;
+} // namespace style
+
+namespace gfx {
+
+struct RenderingStats {
+    bool isZero() const;
+
+    /// Frame CPU encoding time (seconds)
+    double encodingTime = 0.0;
+    /// Frame CPU rendering time (seconds)
+    double renderingTime = 0.0;
+
+    /// Number of frames rendered
+    int numFrames = 0;
+    /// Number of draw calls (`glDrawElements`, `drawIndexedPrimitives`, etc.) executed during the most recent frame
+    int numDrawCalls = 0;
+    /// Total number of draw calls executed during all the frames
+    int totalDrawCalls = 0;
+
+    /// Total number of textures created
+    int numCreatedTextures = 0;
+    /// Net textures
+    int numActiveTextures = 0;
+    /// Net texture bindings
+    int numTextureBindings = 0;
+    /// Number of times a texture was updated
+    int numTextureUpdates = 0;
+    /// Number of bytes used in texture updates
+    std::size_t textureUpdateBytes = 0;
+
+    /// Number of buffers created
+    std::size_t totalBuffers = 0;
+    /// Number of SDK-specific buffers created
+    std::size_t totalBufferObjs = 0;
+    /// Number of times a buffer is updated
+    std::size_t bufferUpdates = 0;
+    /// Number of times an SDK-specific buffer is updated
+    std::size_t bufferObjUpdates = 0;
+    /// Sum of update sizes
+    std::size_t bufferUpdateBytes = 0;
+
+    /// Number of active buffers
+    int numBuffers = 0;
+    /// Number of active offscreen frame buffers
+    int numFrameBuffers = 0;
+
+    /// Number of active index buffers
+    int numIndexBuffers = 0;
+    /// Sum of index buffers update sizes
+    std::size_t indexUpdateBytes = 0;
+
+    /// Number of active vertex buffers
+    int numVertexBuffers = 0;
+    /// Sum of vertex buffers update sizes
+    std::size_t vertexUpdateBytes = 0;
+
+    /// Number of active uniform buffers
+    int numUniformBuffers = 0;
+    /// Number of times a uniform buffer is updated
+    int numUniformUpdates = 0;
+    /// Sum of uniform buffers update sizes
+    std::size_t uniformUpdateBytes = 0;
+
+    /// Total texture memory (int64_t: terrain scenes can track more than 2GB)
+    int64_t memTextures = 0;
+    /// Total buffer memory
+    int memBuffers = 0;
+    /// Total index buffer memory
+    int memIndexBuffers = 0;
+    /// Total vertex buffer memory
+    int memVertexBuffers = 0;
+    /// Total uniform buffer memory
+    int memUniformBuffers = 0;
+
+    /// Number of stencil buffer clears
+    int stencilClears = 0;
+    /// Number of stencil buffer updates
+    int stencilUpdates = 0;
+
+    /// Number of terrain drape targets actually re-rendered this frame (cache
+    /// misses); panning a static terrain scene should keep this at 0
+    int numDrapeTargetsRendered = 0;
+
+    /// Number of terrain drape targets that ran the full per-target coverage scan
+    /// this frame (i.e. did not hit the global-signature fast path). Should be ~0
+    /// on a static scene; if it stays high, the short-circuit is not engaging
+    int numDrapeCoverageScans = 0;
+
+    /// Tile clipping masks drawn inside terrain drape targets, and masks skipped because the
+    /// tile does not overlap the target. Drawn masks scale with the tiles overlapping a target,
+    /// not with the tiles of the source
+    int numDrapeMasksDrawn = 0;
+    int numDrapeMasksSkipped = 0;
+    /// Terrain depth passes (the symbol-occlusion depth texture) rendered; one per frame in
+    /// which the camera or the mesh set changed, none for a still frame
+    int numDepthPasses = 0;
+
+    /// Per-phase CPU time of the terrain path this frame (seconds), for profiling
+    /// where the terrain overhead goes when nothing re-renders
+    double terrainUpdateTime = 0.0;  ///< RenderTerrain::update (tile/DEM/drawable management)
+    double terrainTweakerTime = 0.0; ///< terrain layer tweaker (surface + depth groups)
+    double terrainDepthTime = 0.0;   ///< terrain depth pass render
+    struct NDCBound {
+        // NDC positive is up/right
+        double minX = std::numeric_limits<double>::max();
+        double maxX = std::numeric_limits<double>::lowest();
+        double minY = std::numeric_limits<double>::max();
+        double maxY = std::numeric_limits<double>::lowest();
+
+        /// Expand to include the other bounds
+        void include(const NDCBound& other) {
+            minX = std::min(minX, other.minX);
+            maxX = std::max(maxX, other.maxX);
+            minY = std::min(minY, other.minY);
+            maxY = std::max(maxY, other.maxY);
+        }
+    };
+
+    struct FeatureInfo {
+        // The bounding box for this feature
+        NDCBound ndcBound;
+
+        // The tiles in which this item was rendered (including overdraw)
+        mln::unordered_set<OverscaledTileID> tileIDs;
+
+        void mergeFrom(const NDCBound& bound, const mln::unordered_set<OverscaledTileID>& ids) {
+            ndcBound.include(bound);
+            tileIDs.insert(ids.begin(), ids.end());
+        }
+        void mergeFrom(const FeatureInfo& other) { mergeFrom(other.ndcBound, other.tileIDs); }
+    };
+
+    struct SourceLayerID {
+        std::string sourceID;
+        std::string layerID;
+
+        bool operator<(const SourceLayerID& other) const {
+            return std::tie(sourceID, layerID) < std::tie(other.sourceID, other.layerID);
+        }
+        bool operator==(const SourceLayerID& other) const = default;
+    };
+    struct SourceLayerIDHash {
+        std::size_t operator()(const SourceLayerID& id) const noexcept {
+            return mln::util::hash(id.sourceID, id.layerID);
+        }
+    };
+
+    /// Collected feature information by layer, if enabled via `MapOptions::withRenderedFeatureInfo()`
+    using LayerFeaturesMap = mln::unordered_map<std::string, FeatureInfo>;
+    using FrameRenderedFeaturesMap = mln::unordered_map<SourceLayerID, LayerFeaturesMap, SourceLayerIDHash>;
+    FrameRenderedFeaturesMap frameRenderedFeatures{};
+
+    RenderingStats& operator+=(const RenderingStats&);
+
+#ifndef NDEBUG
+    std::string toString(std::string_view separator) const;
+#endif
+};
+
+class RenderingStatsView final {
+public:
+    struct Options {
+        float updateInterval = 0.25f;
+        bool verbose = false;
+        Color textColor = Color::red();
+        float textSize = 4.0f;
+        // A rendered frame slower than this counts as "jank". 1/60 s: a frame that missed the
+        // 60 Hz budget is a perceptible hitch even on a faster display. Used for the worst-frame
+        // / jank lines that expose the frame-time spikes an average FPS hides (e.g. the
+        // per-frame loading spikes the terrain load-mode budgets trade against).
+        double jankThreshold = 1.0 / 60.0;
+    };
+
+    RenderingStatsView() = default;
+    RenderingStatsView(const Options& options_)
+        : options(options_) {}
+    ~RenderingStatsView() = default;
+
+    void create(style::Style& style);
+    void destroy(style::Style& style);
+
+    mln::style::SymbolLayer* getLayer(style::Style& style);
+
+    void update(style::Style& style, const gfx::RenderingStats& stats);
+
+protected:
+    const std::string layerID = "rendering-stats";
+    const std::string sourceID = layerID + "-source";
+
+    Options options;
+
+    double lastUpdate = 0.0;
+    uint32_t frameCount = 0;
+    double encodingTime = 0.0;
+    double renderingTime = 0.0;
+
+    // Per-frame wall-clock timing, aggregated over the refresh interval, for the worst-frame /
+    // jank lines. lastFrameTime is the previous frame's timestamp; maxFrameTime is the slowest
+    // frame this interval; jankFrames counts frames over Options::jankThreshold; maxEncodingTime
+    // is the largest single-frame CPU encode cost (the work the load-mode budgets throttle).
+    double lastFrameTime = 0.0;
+    double maxFrameTime = 0.0;
+    uint32_t jankFrames = 0;
+    double maxEncodingTime = 0.0;
+};
+
+} // namespace gfx
+} // namespace mln

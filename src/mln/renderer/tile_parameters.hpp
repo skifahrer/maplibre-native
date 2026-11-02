@@ -1,0 +1,76 @@
+#pragma once
+
+#include <mln/map/mode.hpp>
+#include <mln/actor/scheduler.hpp>
+#include <mln/util/feature.hpp>
+#include <mln/tile/tile_id.hpp>
+
+#include <array>
+#include <memory>
+#include <numbers>
+#include <optional>
+#include <vector>
+
+#include <mapbox/std/weak.hpp>
+
+namespace mln {
+
+class TransformState;
+class FileSource;
+class AnnotationManager;
+class ImageManager;
+class GlyphManager;
+
+namespace gfx {
+class DynamicTextureAtlas;
+using DynamicTextureAtlasPtr = std::shared_ptr<gfx::DynamicTextureAtlas>;
+} // namespace gfx
+
+namespace util {
+class TileElevationProvider;
+class TileCoverCache;
+} // namespace util
+
+class TileParameters {
+public:
+    const float pixelRatio;
+    const MapDebugOptions debugOptions;
+    const TransformState& transformState;
+    std::shared_ptr<FileSource> fileSource;
+    const MapMode mode;
+    mapbox::base::WeakPtr<AnnotationManager> annotationManager;
+    std::shared_ptr<ImageManager> imageManager;
+    std::shared_ptr<GlyphManager> glyphManager;
+    const uint8_t prefetchZoomDelta;
+    TaggedScheduler threadPool;
+    double tileLodMinRadius = 3;
+    double tileLodScale = 1;
+    double tileLodPitchThreshold = (60.0 / 180.0) * std::numbers::pi;
+    double tileLodZoomShift = 0;
+    TileLodMode tileLodMode = TileLodMode::Default;
+    gfx::DynamicTextureAtlasPtr dynamicTextureAtlas;
+    std::shared_ptr<const GlobalStateMap> globalState = nullptr;
+    /// Terrain elevation for the tile cover; null when there is no terrain, which
+    /// leaves the cover flat. See util::TileElevationProvider.
+    const util::TileElevationProvider* elevationProvider = nullptr;
+    /// Where the distance-based level of detail measures from (normalized web-mercator), in place
+    /// of the map centre; see util::TileCoverParameters::tileLodOrigin.
+    std::optional<std::array<double, 2>> tileLodOrigin = std::nullopt;
+
+    /// This frame's covers, shared across sources; null computes each source's own.
+    util::TileCoverCache* coverCache = nullptr;
+    bool isUpdateSynchronous = false;
+    bool captureRenderedFeatures = false;
+    /// With terrain on: the most tiles one source covers (ideal and prefetch covers each),
+    /// keeping those nearest `coverTileLimitOrigin`. A source whose minzoom is deeper than the
+    /// far field needs is covered at that minzoom to the horizon, thousands of tiles at a steep
+    /// pitch however few the mesh draws there. 0 = no limit.
+    size_t coverTileLimit = 0;
+    /// Where coverTileLimit measures from (normalized web-mercator): the ground under the
+    /// camera, RenderTerrain::meshTileCapOrigin, the same point the mesh-tile cap uses.
+    std::array<double, 2> coverTileLimitOrigin{{0.0, 0.0}};
+    /// For the terrain's DEM source: the mesh's last cover, loaded instead of the DEM's own.
+    std::vector<UnwrappedTileID> terrainMeshCover;
+};
+
+} // namespace mln

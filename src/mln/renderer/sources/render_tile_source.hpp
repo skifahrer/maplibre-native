@@ -1,0 +1,129 @@
+#pragma once
+
+#include <mln/renderer/render_source.hpp>
+#include <mln/renderer/source_state.hpp>
+#include <mln/renderer/tile_pyramid.hpp>
+#include <mln/style/sources/tile_source_impl.hpp>
+#include <mln/renderer/render_tree.hpp>
+
+#include <mln/gfx/context.hpp>
+
+namespace mln {
+
+/**
+ * @brief Base class for render sources that provide render tiles.
+ */
+class RenderTileSource : public RenderSource {
+public:
+    ~RenderTileSource() override;
+
+    bool isLoaded() const override;
+
+    std::unique_ptr<RenderItem> createRenderItem() override;
+    void prepare(const SourcePrepareParameters&) override;
+    void updateFadingTiles() override;
+    bool hasFadingTiles() const override;
+
+    RenderTiles getRenderTiles() const override;
+    RenderTiles getRenderTilesSortedByYPosition() const override;
+    const Tile* getRenderedTile(const UnwrappedTileID&) const override;
+    Immutable<std::vector<RenderTile>> getRawRenderTiles() const override { return renderTiles; }
+    /// Whether the tile was asked for and came back with nothing to draw, as past a sparse
+    /// pyramid's edge.
+    bool tileHasNoData(const UnwrappedTileID&) const;
+
+    std::unordered_map<std::string, std::vector<Feature>> queryRenderedFeatures(
+        const ScreenLineString& geometry,
+        const TransformState& transformState,
+        const std::unordered_map<std::string, const RenderLayer*>& layers,
+        const RenderedQueryOptions& options,
+        const GlobalStateMap* globalState,
+        const mat4& projMatrix) const override;
+
+    std::vector<Feature> querySourceFeatures(const SourceQueryOptions&, const GlobalStateMap*) const override;
+
+    void setFeatureState(const std::optional<std::string>&, const std::string&, const FeatureState&) override;
+
+    void getFeatureState(FeatureState& state, const std::optional<std::string>&, const std::string&) const override;
+
+    void removeFeatureState(const std::optional<std::string>&,
+                            const std::optional<std::string>&,
+                            const std::optional<std::string>&) override;
+
+    void setCacheEnabled(bool) override;
+    void reduceMemoryUse() override;
+    void dumpDebugLogs() const override;
+
+protected:
+    RenderTileSource(Immutable<style::Source::Impl>, const TaggedScheduler&);
+    TilePyramid tilePyramid;
+    Immutable<std::vector<RenderTile>> renderTiles;
+    mutable RenderTiles filteredRenderTiles;
+    mutable RenderTiles renderTilesSortedByY;
+
+private:
+    float bearing = 0.0F;
+    SourceFeatureState featureState;
+};
+
+/**
+ * @brief Base class for render sources that use tile sets.
+ */
+class RenderTileSetSource : public RenderTileSource {
+protected:
+    RenderTileSetSource(Immutable<style::Source::Impl>, const TaggedScheduler&);
+    ~RenderTileSetSource() override;
+
+    virtual void updateInternal(const Tileset&,
+                                const std::vector<Immutable<style::LayerProperties>>&,
+                                bool needsRendering,
+                                bool needsRelayout,
+                                const TileParameters&) = 0;
+    /// The fetched TileJSON's `tileSize` when it declares one, else `declared`: TileJSON wins,
+    /// as in maplibre-gl-js.
+    uint16_t resolveTileSize(uint16_t declared) const;
+
+    // Returns tileset from the current impl.
+    virtual const std::optional<Tileset>& getTileset() const = 0;
+
+    /// The tileset the tile pyramid's tiles come from.
+    const std::optional<Tileset>& getCachedTileset() const { return cachedTileset; }
+
+    /// Called when the tileset changes, once the tiles of the old one have been dropped, so that
+    /// anything kept from them can go too.
+    virtual void onTilesetChanged() {}
+
+private:
+    uint8_t getMaxZoom() const final;
+    void update(Immutable<style::Source::Impl>,
+                const std::vector<Immutable<style::LayerProperties>>&,
+                bool needsRendering,
+                bool needsRelayout,
+                const TileParameters&) final;
+
+    std::optional<Tileset> cachedTileset;
+};
+
+class PolylineLayerTweaker;
+
+class TileSourceRenderItem : public RenderItem {
+public:
+    TileSourceRenderItem(Immutable<std::vector<RenderTile>> renderTiles_, std::string name_)
+        : renderTiles(std::move(renderTiles_)),
+          name(std::move(name_)) {}
+
+private:
+    void upload(gfx::UploadPass&) const override;
+    void render(PaintParameters&) const override {}
+    bool hasRenderPass(RenderPass) const override { return false; }
+    const std::string& getName() const override { return name; }
+
+    void updateDebugDrawables(DebugLayerGroupMap&, PaintParameters&) const override;
+
+    Immutable<std::vector<RenderTile>> renderTiles;
+    std::string name;
+
+    mutable std::shared_ptr<PolylineLayerTweaker> layerTweaker;
+};
+
+} // namespace mln
