@@ -1,0 +1,39 @@
+diff --git a/include/mln/shaders/mtl/common.hpp b/include/mln/shaders/mtl/common.hpp
+index 0375f073a37..abec089493b 100644
+--- a/include/mln/shaders/mtl/common.hpp
++++ b/include/mln/shaders/mtl/common.hpp
+@@ -213,10 +213,8 @@ inline float depth_opacity(float4 pos,
+     return depth_opacity(pos, depth_texture, depth_sampler, 0.0);
+ }
+ 
+-// Whether a clip-space position is visible in front of the terrain, from the
+-// packed terrain depth texture, matching maplibre-gl-js calculate_visibility().
+-// Unlike gl-js (global terrain uniforms), the depth texture and enable flag are
+-// passed as arguments.
++// Whether a clip-space position is visible in front of the terrain, from the packed
++// terrain depth texture. The depth texture and enable flag are passed as arguments.
+ inline float calculate_visibility(float4 pos,
+                                   texture2d<float, access::sample> depth_texture,
+                                   sampler depth_sampler,
+@@ -224,15 +222,13 @@ inline float calculate_visibility(float4 pos,
+     if (depth_enabled == 0.0) {
+         return 1.0;
+     }
+-    // check if coordinate is fully visible
+-    const float d = depth_opacity(pos, depth_texture, depth_sampler);
+-    if (d > 0.95) {
+-        return 1.0;
++    // Behind nearer ground it is hidden: a name hangs below its anchor, nothing pokes up.
++    const float d = depth_opacity(pos, depth_texture, depth_sampler, -1.0);
++    if (d >= 0.0) {
++        return d;
+     }
+-    // if not, sample some pixels above: a label whose anchor is just behind a
+-    // ridge still shows if its glyphs poke above it (maplibre-gl-js behaviour)
+-    // Above a summit is open sky, which must not dim the summit's own label
+-    return (d + depth_opacity(pos + float4(0.0, 0.01 * pos.w, 0.0, 0.0), depth_texture, depth_sampler, 1.0)) / 2.0;
++    // Over no terrain: a summit above the coarser mesh shows, ground not drawn does not.
++    return depth_opacity(pos - float4(0.0, 0.01 * pos.w, 0.0, 0.0), depth_texture, depth_sampler, 0.0);
+ }
+ 
+ template<class ForwardIt, class T>
