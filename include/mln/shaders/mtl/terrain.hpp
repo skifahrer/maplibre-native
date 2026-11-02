@@ -36,16 +36,30 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
     /*  0 */ float4 unpack; // DEM unpack vector for the source's encoding
     /* 16 */ float exaggeration;
     /* 20 */ float elevation_offset;
-    /* 24 */ float pad1;
-    /* 28 */ float pad2;
+    /* 24 */ float no_ground;
+    /* 28 */ float cut_ndc_x;
     /* 32 */ float4 fog_color;
     /* 48 */ float fog_start;
     /* 52 */ float fog_end;
-    /* 56 */ float pad3;
-    /* 60 */ float pad4;
-    /* 64 */
+    /* 56 */ float cut_depth;
+    /* 60 */ float cut_ndc_y;
+    /* 64 */ float4 clay_color;
+    /* 80 */
 };
-static_assert(sizeof(TerrainEvaluatedPropsUBO) == 64, "wrong size");
+static_assert(sizeof(TerrainEvaluatedPropsUBO) == 80, "wrong size");
+
+// Terrain the camera must see through: what stands nearer than the centre in a window over it,
+// so the mountains to the sides stay. The curtains under the cut tiles' edges go with it.
+inline bool cut_away(device const TerrainEvaluatedPropsUBO& props, float3 clip_xyw, float depth, float skirt) {
+    if (props.cut_depth <= 0.0) {
+        return false;
+    }
+    // Deepest over the centre, none at the window's edge: the cut follows the ground, no seam.
+    const float2 ndc = clip_xyw.xy / clip_xyw.z;
+    const float2 off = (ndc - float2(props.cut_ndc_x, props.cut_ndc_y)) / float2(0.5, ndc.y > props.cut_ndc_y ? 1.0 : 0.3);
+    const float reach = 1.0 - dot(off, off);
+    return reach > 0.0 && (depth < props.cut_depth * reach || skirt > 0.5);
+}
 
 )";
 
@@ -71,6 +85,10 @@ struct FragmentStage {
     float2 uv;
     float elevation;
     float depth; // view depth, for the fog
+    float3 clip_xyw; // clip y and w, for the cutaway in front of the centre
+    float skirt;    // 1 on the curtain below a tile edge
+    float ground;   // 1 where the height model has ground, 0 where it has none
+    float none;     // 1 at a vertex with no ground under it at all
 };
 
 FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
@@ -91,8 +109,13 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     // NEAREST and interpolated after decoding, matching maplibre-gl-js and the
     // elevated layers). Map into the bound DEM tile; an ancestor tile is bound as
     // a fallback while this tile's own DEM loads. dem_coords.w = DEM dimension.
-    float elevation = get_elevation(pos, demTexture, demSampler, drawable.dem_coords, props.unpack,
-                                    drawable.dem_coords.w, props.exaggeration, 1.0);
+    float ground = 1.0;
+    float elevation = get_ground_elevation(pos, demTexture, drawable.dem_coords, props.unpack,
+                                           drawable.dem_coords.w, props.exaggeration, props.no_ground, ground);
+    if (vertx.pos.z == 1 && !ground_throughout(demTexture, drawable.dem_coords, drawable.dem_coords.w,
+                                                props.unpack, props.no_ground)) {
+        ground = 0.0;
+    }
 
     // Skirt vertices hang below the surface by elevation_offset, forming a curtain
     // that hides the cracks between neighbouring tiles at different zoom levels
@@ -105,6 +128,10 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
         .uv        = uv,
         .elevation = elevation,
         .depth     = position.w,
+        .clip_xyw  = position.xyw,
+        .skirt     = float(vertx.pos.z),
+        .ground    = ground,
+        .none      = ground < 0.001 ? 1.0 : 0.0,
     };
 }
 
@@ -122,7 +149,15 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     // 1.0 - uv.y. Metal's NDC is Y-up, so the RTT is stored upright and the V must NOT
     // be flipped here - sampling 1.0 - uv.y flips the draped map vertically (north/south
     // swapped about the view). Sample uv.y directly on Metal.
-    float4 color = mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
+    if (cut_away(props, in.clip_xyw, in.depth, in.skirt)) {
+        discard_fragment();
+    }
+    // The curtains under ground the model does not have
+    if (in.skirt > 0.5 && in.ground < 0.999) {
+        discard_fragment();
+    }
+    float4 color = on_clay_face(in.none) ? clay_color(in.elevation, props.clay_color)
+                                         : mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
 
     // Fog: from fog_start to fog_end the surface fades into the fog colour, straight (not
     // premultiplied) and opaque, by as much as the colour's alpha.

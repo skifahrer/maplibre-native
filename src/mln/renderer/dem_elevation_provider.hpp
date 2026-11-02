@@ -5,6 +5,7 @@
 #include <mln/util/tile_cover.hpp>
 
 #include <optional>
+#include <unordered_map>
 
 namespace mln {
 
@@ -38,13 +39,21 @@ class DEMElevationProvider final : public util::TileElevationProvider {
 public:
     /// `demSource` may be null (no terrain, or its source not yet resolved), in which
     /// case every query reports unknown and the cover stays flat.
-    explicit DEMElevationProvider(const RenderSource* demSource, double exaggeration);
+    /// `plane` is the height the DEM writes where it has no ground, drawn at sea level.
+    explicit DEMElevationProvider(const RenderSource* demSource,
+                                  double exaggeration,
+                                  std::optional<float> plane = std::nullopt);
 
     std::optional<Range<double>> getTileElevationRange(const CanonicalTileID&) const override;
 
 private:
+    std::optional<Range<double>> lookUp(const CanonicalTileID&) const;
+
     const RenderRasterDEMSource* demSource;
     double exaggeration;
+    std::optional<float> plane;
+    /// Every source's cover asks about the same tiles in a frame, each an ancestor walk.
+    mutable std::unordered_map<CanonicalTileID, std::optional<Range<double>>> answers;
 };
 
 } // namespace mln

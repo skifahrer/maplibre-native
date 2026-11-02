@@ -3,11 +3,13 @@
 #include <mln/map/mode.hpp>
 #include <mln/actor/scheduler.hpp>
 #include <mln/util/feature.hpp>
+#include <mln/tile/tile_id.hpp>
 
 #include <array>
 #include <memory>
 #include <numbers>
 #include <optional>
+#include <vector>
 
 #include <mapbox/std/weak.hpp>
 
@@ -26,6 +28,7 @@ using DynamicTextureAtlasPtr = std::shared_ptr<gfx::DynamicTextureAtlas>;
 
 namespace util {
 class TileElevationProvider;
+class TileCoverCache;
 } // namespace util
 
 class TileParameters {
@@ -53,6 +56,9 @@ public:
     /// Where the distance-based level of detail measures from (normalized web-mercator), in place
     /// of the map centre; see util::TileCoverParameters::tileLodOrigin.
     std::optional<std::array<double, 2>> tileLodOrigin = std::nullopt;
+
+    /// This frame's covers, shared across sources; null computes each source's own.
+    util::TileCoverCache* coverCache = nullptr;
     bool isUpdateSynchronous = false;
     bool captureRenderedFeatures = false;
     /// With terrain on: the most tiles one source covers (ideal and prefetch covers each),
@@ -63,6 +69,8 @@ public:
     /// Where coverTileLimit measures from (normalized web-mercator): the ground under the
     /// camera, RenderTerrain::meshTileCapOrigin, the same point the mesh-tile cap uses.
     std::array<double, 2> coverTileLimitOrigin{{0.0, 0.0}};
+    /// For the terrain's DEM source: the mesh's last cover, loaded instead of the DEM's own.
+    std::vector<UnwrappedTileID> terrainMeshCover;
 };
 
 } // namespace mln

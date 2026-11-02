@@ -2,6 +2,7 @@
 
 #include <mln/style/terrain.hpp>
 #include <mln/util/immutable.hpp>
+#include <optional>
 #include <string>
 
 namespace mln {
@@ -17,9 +18,11 @@ public:
 
     std::string sourceID;
     float exaggeration;
+    /// The height the DEM writes where it has no ground; nil when it writes none.
+    std::optional<float> plane;
 
     bool operator==(const Impl& other) const {
-        return sourceID == other.sourceID && exaggeration == other.exaggeration;
+        return sourceID == other.sourceID && exaggeration == other.exaggeration && plane == other.plane;
     }
 };
 

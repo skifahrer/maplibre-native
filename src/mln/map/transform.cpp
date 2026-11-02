@@ -201,7 +201,7 @@ void Transform::easeTo(const CameraOptions& inputCamera, const AnimationOptions&
                                      util::interpolate(startEdgeInsets.right(), padding.right(), t)});
             }
             double maxPitch = getMaxPitchForEdgeInsets(state.getEdgeInsets());
-            if (pitch != startPitch || maxPitch < startPitch) {
+            if (pitch != startPitch || maxPitch < state.getPitch()) {
                 state.setPitch(std::min(maxPitch, util::interpolate(startPitch, pitch, t)));
             }
             if (roll != startRoll) {
@@ -401,8 +401,9 @@ void Transform::flyTo(const CameraOptions& inputCamera,
                                      util::interpolate(startEdgeInsets.right(), padding.right(), k)});
             }
 
-            if (pitch != startPitch) {
-                state.setPitch(util::interpolate(startPitch, pitch, k));
+            const double maxPitch = getMaxPitchForEdgeInsets(state.getEdgeInsets());
+            if (pitch != startPitch || maxPitch < state.getPitch()) {
+                state.setPitch(std::min(maxPitch, util::interpolate(startPitch, pitch, k)));
             }
             if (roll != startRoll) {
                 state.setPitch(util::interpolate(startRoll, roll, k));
@@ -515,6 +516,10 @@ double Transform::getDrawDistance() const {
 
 void Transform::setFog(const Color& color, double startMetres, double endMetres) {
     state.setFog(color, startMetres, endMetres);
+}
+
+void Transform::setClayColor(const Color& color) {
+    state.setClayColor(color);
 }
 
 // MARK: - Bearing

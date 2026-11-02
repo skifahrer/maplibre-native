@@ -9,14 +9,20 @@
 #include <Foundation/Foundation.hpp>
 #endif // MLN_RENDER_BACKEND_METAL
 
+#include <array>
 #include <map>
+#include <set>
+#include <mln/map/mode.hpp>
 #include <memory>
+#include <limits>
 #include <string>
 #include <mln/tile/tile_id.hpp>
 
 namespace mln {
 
 class RendererObserver;
+class RenderTerrain;
+class TransformState;
 class RenderStaticData;
 class RenderTree;
 
@@ -67,6 +73,24 @@ private:
     // back to 1 to save GPU memory on constrained devices (each step is 4x memory/target).
     static constexpr uint32_t drapeTileSize = 512;
     static constexpr uint32_t drapeQualityFactor = 2;
+    // Drape targets are sized to the tile on screen, in steps of drapeTileSize up to this.
+    static constexpr uint32_t maxDrapeSide = 4096;
+    // Texels all drape targets may hold together: about what the 1024 targets held before.
+    static constexpr std::size_t drapeTexelBudget(TerrainLoadMode mode) {
+        switch (mode) {
+            case TerrainLoadMode::Balanced:
+                return 64u << 20;
+            case TerrainLoadMode::Performance:
+                return 24u << 20;
+            case TerrainLoadMode::Quality:
+            default:
+                return 96u << 20;
+        }
+    }
+    std::map<UnwrappedTileID, uint32_t> drapeSides(const RenderTerrain& terrain,
+                                                   const std::set<UnwrappedTileID>& tiles,
+                                                   const TransformState& state,
+                                                   TerrainLoadMode mode) const;
     TexturePool texturePool{drapeTileSize * drapeQualityFactor};
 
     gfx::RendererBackend& backend;
@@ -108,8 +132,12 @@ private:
     /// Last terrain height reported under the map centre, so an unchanged surface does not
     /// post an observer message every frame.
     double lastReportedCenterElevation = 0.0;
+    const RenderTerrain* reportedTerrain = nullptr;
     double lastReportedEyeElevation = std::numeric_limits<double>::quiet_NaN();
     double lastReportedTargetElevation = std::numeric_limits<double>::quiet_NaN();
+    /// The sight ground last reported, NaN for none, so it is posted only when it moves.
+    std::array<double, 3> lastReportedSightGround{
+        {std::numeric_limits<double>::quiet_NaN(), 0.0, std::numeric_limits<double>::quiet_NaN()}};
 
     enum class RenderState {
         Never,

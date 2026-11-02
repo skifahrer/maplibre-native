@@ -620,6 +620,14 @@ MLN_EXPORT
 @property (nonatomic, assign) CLLocationDistance fogEndDistance;
 
 /**
+ The color of the clay face 3D terrain shows where it stands past its height model,
+ or `nil` for the built-in light clay. Match it to a dark style so the face is not bright.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic, nullable) UIColor *clayColor;
+
+/**
  Whether the map centre rides the 3D terrain surface rather than sea level.
 
  When this is `YES`, the altitude of the map centre follows the rendered terrain
@@ -657,6 +665,20 @@ MLN_EXPORT
  This method is experimental and subject to change.
  */
 - (void)anchorCenterOnTerrain;
+
+/**
+ The distance in meters from the camera to the 3D terrain at the centre of the
+ view, where the line of sight meets the ground.
+
+ While a gesture runs the map centre stays at the height the gesture started
+ on, so the camera's ``MLNMapCamera/viewingDistance`` is to a point above or
+ below the ground looked at; this is to the ground. Measured as the map
+ renders, a frame behind a moving camera. `NaN` when terrain is not enabled or
+ the line of sight meets no ground.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic, readonly) CLLocationDistance sightGroundDistance;
 
 // MARK: Displaying the User’s Location
 

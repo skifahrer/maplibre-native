@@ -14,7 +14,11 @@ public:
     std::shared_ptr<RenderTarget> getRenderTarget(const UnwrappedTileID& id) const;
     std::shared_ptr<RenderTarget> getRenderTargetAncestorOrDescendant(
         const UnwrappedTileID& id, std::optional<UnwrappedTileID>& terrainTileID) const;
-    void createRenderTarget(gfx::Context& context, const UnwrappedTileID& id, const Color& backgroundColor);
+    /// `size` 0 is the pool's own; a target of another size is made anew.
+    void createRenderTarget(gfx::Context& context,
+                            const UnwrappedTileID& id,
+                            const Color& backgroundColor,
+                            uint32_t size = 0);
 
     /// Remove render targets for tiles that are no longer part of the given set
     void removeStaleRenderTargets(const std::set<UnwrappedTileID>& currentTiles);

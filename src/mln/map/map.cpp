@@ -420,6 +420,15 @@ double Map::getFogEnd() const {
     return impl->transform.getState().getFogEnd();
 }
 
+void Map::setClayColor(const Color& color) {
+    impl->transform.setClayColor(color);
+    impl->onUpdate();
+}
+
+Color Map::getClayColor() const {
+    return impl->transform.getState().getClayColor();
+}
+
 void Map::setNorthOrientation(NorthOrientation orientation) {
     impl->transform.setNorthOrientation(orientation);
     impl->onUpdate();
@@ -679,6 +688,10 @@ bool Map::setCenterAltitudeKeepingView(double altitudeMeters) {
     }
     impl->onUpdate();
     return moved;
+}
+
+double Map::getSightGroundDistance() const {
+    return impl->getSightGroundDistance();
 }
 
 void Map::setCenterClampedToGround(bool clamped) {

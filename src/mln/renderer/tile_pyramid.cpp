@@ -17,6 +17,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <set>
 
 namespace mln {
 
@@ -117,8 +118,16 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
         .tileLodPitchThreshold = parameters.tileLodPitchThreshold,
         .tileLodMode = parameters.tileLodMode,
         .roundZoom = type == SourceType::Raster || type == SourceType::Video,
+        .nearDetail = type == SourceType::RasterDEM ? uint8_t{0} : util::nearDetailLevels(),
         .elevationProvider = parameters.elevationProvider,
         .tileLodOrigin = parameters.tileLodOrigin};
+
+    const auto cover = [&](int32_t z, const std::optional<uint8_t>& overscaledZ) {
+        const auto coverZ = static_cast<uint8_t>(z);
+        return parameters.coverCache
+                   ? parameters.coverCache->cover(tileCoverParameters, coverZ, zoomRange, overscaledZ)
+                   : util::tileCover(tileCoverParameters, coverZ, zoomRange, overscaledZ);
+    };
 
     if (std::cmp_greater_equal(overscaledZoom, zoomRange.min)) {
         int32_t idealZoom = std::min<int32_t>(zoomRange.max, overscaledZoom);
@@ -140,11 +149,11 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
             }
 
             if (panZoom < idealZoom) {
-                panTiles = util::tileCover(tileCoverParameters, panZoom, zoomRange);
+                panTiles = cover(panZoom, std::nullopt);
             }
         }
 
-        idealTiles = util::tileCover(tileCoverParameters, idealZoom, zoomRange, tileZoom);
+        idealTiles = cover(idealZoom, tileZoom);
         if (parameters.mode == MapMode::Tile && type != SourceType::Raster && type != SourceType::RasterDEM &&
             idealTiles.size() > 1) {
             mln::Log::Warning(mln::Event::General,
@@ -155,8 +164,19 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
     }
 
     if (parameters.coverTileLimit > 0) {
-        util::keepNearestTiles(idealTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin);
+        util::mergeFarthestTiles(
+            idealTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin, zoomRange.min);
         util::keepNearestTiles(panTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin);
+    }
+    // The terrain's DEM loads the tiles its mesh is drawn on, far ones merged to fit the budget.
+    if (!parameters.terrainMeshCover.empty()) {
+        // A mesh tile past the DEM's maxzoom samples its ancestor there (demTileMapping).
+        std::set<OverscaledTileID> demTiles;
+        for (const auto& id : parameters.terrainMeshCover) {
+            const auto z = std::min(id.canonical.z, zoomRange.max);
+            demTiles.emplace(z, id.wrap, id.canonical.scaledTo(z));
+        }
+        idealTiles.assign(demTiles.begin(), demTiles.end());
     }
 
     // Stores a list of all the tiles that we're definitely going to retain.

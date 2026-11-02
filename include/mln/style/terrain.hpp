@@ -1,6 +1,7 @@
 #pragma once
 
 #include <mln/util/immutable.hpp>
+#include <optional>
 #include <string>
 
 namespace mln {
@@ -41,6 +42,18 @@ public:
      * @param exaggeration Multiplier for elevation values (e.g., 1.5 = 50% more dramatic)
      */
     void setExaggeration(float exaggeration);
+
+    /**
+     * @brief The height the DEM writes where it has no ground, as a flat plane past its data
+     * @return The height in metres, or nullopt when every texel is ground
+     */
+    std::optional<float> getPlane() const;
+
+    /**
+     * @brief Set the height the DEM writes where it has no ground: the mesh is not drawn
+     * where it joins such texels to ground, so the edge of the data stands as no wall
+     */
+    void setPlane(std::optional<float> plane);
 
     // Internal implementation
     class Impl;

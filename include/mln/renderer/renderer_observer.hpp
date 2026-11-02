@@ -85,6 +85,12 @@ public:
     /// covers it (UpdateParameters::transitionTargetCenter), and whenever a finer one changes it.
     virtual void onTerrainTransitionTargetElevationChanged(double /*elevationMeters*/) {}
 
+    /// Where the line of sight through the centre meets the terrain moved: the camera or the
+    /// ground changed. The point and its height; a NaN height when the line meets no ground.
+    virtual void onTerrainSightGroundChanged(double /*latitude*/,
+                                             double /*longitude*/,
+                                             double /*elevationMeters*/) {}
+
     /// Style is missing an image
     using StyleImageMissingCallback = std::function<void()>;
     virtual void onStyleImageMissing(const std::string&, const StyleImageMissingCallback& done) { done(); }

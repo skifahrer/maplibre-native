@@ -1,5 +1,7 @@
 #include <mln/renderer/renderer_impl.hpp>
 
+#include <cmath>
+
 #include <mln/geometry/line_atlas.hpp>
 #include <mln/gfx/backend_scope.hpp>
 #include <mln/gfx/context.hpp>
@@ -8,6 +10,7 @@
 #include <mln/gfx/renderer_backend.hpp>
 #include <mln/gfx/renderable.hpp>
 #include <mln/gfx/upload_pass.hpp>
+#include <mln/math/angles.hpp>
 #include <mln/renderer/paint_parameters.hpp>
 #include <mln/renderer/pattern_atlas.hpp>
 #include <mln/renderer/renderer_observer.hpp>
@@ -264,14 +267,18 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // permanent blankness in single-frame still renders (the render tests).
         terrain->prepareSource(orchestrator);
         const std::set<UnwrappedTileID> demTileIDs = terrain->computeMeshCover(state, updateParameters);
+        const auto sides = drapeSides(*terrain, demTileIDs, state, updateParameters->terrainLoadMode);
         for (const auto& id : demTileIDs) {
-            texturePool.createRenderTarget(context, id, renderTreeParameters.backgroundColor);
+            texturePool.createRenderTarget(context, id, renderTreeParameters.backgroundColor, sides.at(id));
         }
         texturePool.removeStaleRenderTargets(demTileIDs);
         frameDrapeTargetCount = demTileIDs.size();
         // Hand the exact cover to RenderTerrain so its mesh matches this pool
         terrain->setFrameMeshCover(demTileIDs);
+        // ...and to the DEM source, which loads the levels the mesh is drawn at.
+        util::setTerrainMeshCover({demTileIDs.begin(), demTileIDs.end()});
     } else {
+        util::setTerrainMeshCover({});
         // The pool persists across frames, so release the drape targets when
         // terrain is disabled instead of holding their textures indefinitely
         texturePool.removeStaleRenderTargets({});
@@ -745,7 +752,13 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     // Report the rendered terrain height under the map centre. Only the render side has the
     // DEM, so this is the channel; whether the camera acts on it is the map's call
     // (Map::setCenterClampedToGround). Gated so a still map does not post a message a frame.
-    if (auto* terrain = orchestrator.getRenderTerrain()) {
+    auto* terrain = orchestrator.getRenderTerrain();
+    // A reloaded style drops the centre to sea level: report as the first terrain did.
+    if (terrain != reportedTerrain) {
+        reportedTerrain = terrain;
+        lastReportedCenterElevation = 0.0;
+    }
+    if (terrain) {
         const double centerElevation = terrain->getElevationForLatLng(updateParameters->transformState.getLatLng());
         if (std::abs(centerElevation - lastReportedCenterElevation) > 0.25) {
             lastReportedCenterElevation = centerElevation;
@@ -776,6 +789,20 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         } else {
             lastReportedTargetElevation = std::numeric_limits<double>::quiet_NaN();
         }
+        const auto sight = terrain->getSightGround(updateParameters->transformState);
+        const std::array<double, 3> ground =
+            sight ? std::array<double, 3>{{sight->latitude, sight->longitude, sight->elevation}}
+                  : std::array<double, 3>{
+                        {std::numeric_limits<double>::quiet_NaN(), 0.0, std::numeric_limits<double>::quiet_NaN()}};
+        const auto& last = lastReportedSightGround;
+        // Under a centimetre of ground, or NaN again: nothing moved.
+        const bool same = (std::isnan(ground[2]) && std::isnan(last[2])) ||
+                          (std::abs(ground[0] - last[0]) < 1e-7 && std::abs(ground[1] - last[1]) < 1e-7 &&
+                           std::abs(ground[2] - last[2]) < 0.01);
+        if (!same) {
+            lastReportedSightGround = ground;
+            observer->onTerrainSightGroundChanged(ground[0], ground[1], ground[2]);
+        }
     }
 
     auto stats = std::make_shared<gfx::RenderingStats>(context.threadSafeCopyRenderingStats());
@@ -802,6 +829,54 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
 
     frameCount += 1;
     MLN_END_FRAME();
+}
+
+std::map<UnwrappedTileID, uint32_t> Renderer::Impl::drapeSides(const RenderTerrain& terrain,
+                                                               const std::set<UnwrappedTileID>& tiles,
+                                                               const TransformState& state,
+                                                               TerrainLoadMode mode) const {
+    // Each tile drapes at the density it shows at on screen, so the ground in front of the camera
+    // is as sharp as the 2D map; one far off, a few pixels tall, takes the smallest target.
+    struct Wanted {
+        UnwrappedTileID id;
+        uint32_t side;
+        double edge;
+    };
+    std::vector<Wanted> wanted;
+    wanted.reserve(tiles.size());
+    std::size_t texels = 0;
+    for (const auto& id : tiles) {
+        const double edge = terrain.screenEdge(id, state) * pixelRatio;
+        auto side = static_cast<uint32_t>(std::ceil(edge / drapeTileSize)) * drapeTileSize;
+        side = std::clamp(side, drapeTileSize, maxDrapeSide);
+        // A size changes only by two steps, so a pan does not remake textures each frame.
+        if (const auto target = texturePool.getRenderTarget(id)) {
+            const uint32_t current = target->getTexture()->getSize().width;
+            if (side + 2 * drapeTileSize > current && side < current + 2 * drapeTileSize) {
+                side = current;
+            }
+        }
+        wanted.push_back({id, side, edge});
+        texels += std::size_t{side} * side;
+    }
+    // Over the budget, the largest give way first, a step at a time.
+    const std::size_t budget = drapeTexelBudget(mode);
+    while (texels > budget) {
+        auto largest = std::max_element(wanted.begin(), wanted.end(), [](const Wanted& a, const Wanted& b) {
+            return a.side < b.side || (a.side == b.side && a.edge > b.edge);
+        });
+        if (largest->side <= drapeTileSize) {
+            break;
+        }
+        texels -= std::size_t{largest->side} * largest->side;
+        largest->side -= drapeTileSize;
+        texels += std::size_t{largest->side} * largest->side;
+    }
+    std::map<UnwrappedTileID, uint32_t> sides;
+    for (const auto& tile : wanted) {
+        sides.emplace(tile.id, tile.side);
+    }
+    return sides;
 }
 
 void Renderer::Impl::reduceMemoryUse() {
