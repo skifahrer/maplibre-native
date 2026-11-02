@@ -77,6 +77,8 @@ public:
     Layer* getLayer(const std::string& id) const;
 
     Layer* addLayer(std::unique_ptr<Layer>, const std::optional<std::string>& beforeLayerID = std::nullopt);
+    /// Throws when the layer's source cannot draw a layer of its type.
+    void checkSourceSupports(const Layer&) const;
     std::unique_ptr<Layer> removeLayer(const std::string& layerID);
 
     std::string getName() const;

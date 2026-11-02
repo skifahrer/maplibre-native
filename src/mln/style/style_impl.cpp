@@ -115,8 +115,19 @@ void Style::Impl::parse(const std::string& json_) {
         addSource(std::move(source));
     }
 
+    // One by one, each layer searched every id before it and copied every layer's impl.
+    std::vector<std::unique_ptr<Layer>> parsed;
+    parsed.reserve(parser.layers.size());
     for (auto& layer : parser.layers) {
-        addLayer(std::move(layer));
+        checkSourceSupports(*layer);
+        layer->reevaluateVisibility(*globalState);
+        layer->setObserver(this);
+        parsed.push_back(std::move(layer));
+    }
+    // The parser already dropped repeated ids.
+    layers.append(std::move(parsed));
+    if (layers.size() > 0) {
+        observer->onUpdate();
     }
 
     name = parser.name;
@@ -298,17 +309,21 @@ Layer* Style::Impl::getLayer(const std::string& id) const {
     return layers.get(id);
 }
 
-Layer* Style::Impl::addLayer(std::unique_ptr<Layer> layer, const std::optional<std::string>& before) {
+void Style::Impl::checkSourceSupports(const Layer& layer) const {
     // TODO: verify source
-    if (Source* source = sources.get(layer->getSourceID())) {
-        if (!source->supportsLayerType(layer->baseImpl->getTypeInfo())) {
+    if (Source* source = sources.get(layer.getSourceID())) {
+        if (!source->supportsLayerType(layer.baseImpl->getTypeInfo())) {
             std::ostringstream message;
-            message << "Layer '" << layer->getID() << "' is not compatible with source '" << layer->getSourceID()
+            message << "Layer '" << layer.getID() << "' is not compatible with source '" << layer.getSourceID()
                     << "'";
 
             throw std::runtime_error(message.str());
         }
     }
+}
+
+Layer* Style::Impl::addLayer(std::unique_ptr<Layer> layer, const std::optional<std::string>& before) {
+    checkSourceSupports(*layer);
 
     if (layers.get(layer->getID())) {
         throw std::runtime_error(std::string{"Layer "} + layer->getID() + " already exists");

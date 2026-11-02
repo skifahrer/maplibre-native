@@ -48,6 +48,7 @@ public:
 protected:
     std::size_t index(const std::string&) const;
     T* add(std::size_t wrapperIndex, std::size_t implIndex, std::unique_ptr<T> wrapper);
+    void append(std::vector<std::unique_ptr<T>> added);
     std::unique_ptr<T> remove(std::size_t wrapperIndex, std::size_t implIndex);
     // Must be called whenever an element of the collection is internally
     // mutated. Typically, each element permits registration of an observer, and
@@ -70,6 +71,8 @@ public:
         std::size_t idx = before ? Base::index(*before) : Base::size();
         return Base::add(idx, idx, std::move(wrapper));
     }
+    /// Adds wrappers at the end without checking their ids, so the caller vouches they are new.
+    void append(std::vector<std::unique_ptr<T>> added) { Base::append(std::move(added)); }
     std::unique_ptr<T> remove(const std::string& id) {
         std::size_t idx = Base::index(id);
         return Base::remove(idx, idx);
@@ -149,6 +152,20 @@ T* CollectionBase<T>::add(std::size_t wrapperIndex, std::size_t implIndex, std::
     mutate(impls, [&](auto& impls_) { impls_.emplace(impls_.begin() + implIndex, wrapper->baseImpl); });
 
     return wrappers.emplace(wrappers.begin() + wrapperIndex, std::move(wrapper))->get();
+}
+
+template <class T>
+void CollectionBase<T>::append(std::vector<std::unique_ptr<T>> added) {
+    mutate(impls, [&](auto& impls_) {
+        impls_.reserve(impls_.size() + added.size());
+        for (const auto& wrapper : added) {
+            impls_.push_back(wrapper->baseImpl);
+        }
+    });
+    wrappers.reserve(wrappers.size() + added.size());
+    for (auto& wrapper : added) {
+        wrappers.push_back(std::move(wrapper));
+    }
 }
 
 template <class T>
