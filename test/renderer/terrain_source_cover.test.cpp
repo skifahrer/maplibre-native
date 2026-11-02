@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <numbers>
 #include <set>
 #include <string>
@@ -282,4 +283,65 @@ TEST(TerrainSourceCover, ASourceKeepsItsWholeCoverWithoutTerrain) {
     test.nearestCover(test.cameraGround(), 0, coverSize, false);
     ASSERT_GT(coverSize, test.sourceTileLimit()) << "the view has to cover more than the cap would allow";
     EXPECT_EQ(test.parcelTiles.size(), coverSize);
+}
+
+namespace {
+
+// The finest mesh tile and the one nearest the ground under the camera, which is off screen.
+struct MeshDetail {
+    uint8_t finest = 0;
+    uint8_t nearestTheCamera = 0;
+};
+
+MeshDetail meshDetail(const std::array<double, 2>& ground) {
+    MeshDetail detail;
+    double nearest = std::numeric_limits<double>::max();
+    for (const UnwrappedTileID& tile : util::terrainMeshCover()) {
+        detail.finest = std::max(detail.finest, tile.canonical.z);
+        const double scale = static_cast<double>(1u << tile.canonical.z);
+        const double dx = (tile.canonical.x + 0.5) / scale + tile.wrap - ground[0];
+        const double dy = (tile.canonical.y + 0.5) / scale - ground[1];
+        if (dx * dx + dy * dy < nearest) {
+            nearest = dx * dx + dy * dy;
+            detail.nearestTheCamera = tile.canonical.z;
+        }
+    }
+    return detail;
+}
+
+} // namespace
+
+// Once loaded, a camera that stands still draws the same mesh and asks for nothing new: a frame
+// that swapped in other tiles is the 3D shading blinking with nothing moving.
+TEST(TerrainSourceCover, AStillCameraKeepsItsMeshAndItsDEM) {
+    TerrainSourceCoverTest test({.demMinZoom = 0, .demMaxZoom = 13, .mode = TerrainLoadMode::Balanced});
+    test.settleDEM();
+    const auto settled = util::terrainMeshCover();
+    ASSERT_FALSE(settled.empty());
+    test.demTiles.clear();
+    for (int frame = 0; frame < 20; ++frame) {
+        test.render(1);
+        ASSERT_EQ(util::terrainMeshCover(), settled) << "frame " << frame;
+    }
+    EXPECT_TRUE(test.demTiles.empty()) << test.demTiles.size() << " DEM tiles asked for again";
+}
+
+// A short drag keeps the ground under the camera at the finest detail in every frame, not just
+// once the DEM has settled again: one coarse frame is the blink the 2658 build fixed.
+TEST(TerrainSourceCover, ASmallPanKeepsTheGroundNearestTheCameraFineInEveryFrame) {
+    TerrainSourceCoverTest test({.demMinZoom = 0, .demMaxZoom = 13, .mode = TerrainLoadMode::Balanced, .pitch = 75.0});
+    test.settleDEM();
+    const MeshDetail before = meshDetail(test.cameraGround());
+    ASSERT_EQ(before.nearestTheCamera, before.finest) << "the settled mesh is coarse nearest the camera";
+
+    const LatLng centre = *test.map.getCameraOptions({}).center;
+    for (int step = 1; step <= 10; ++step) {
+        test.map.jumpTo(
+            CameraOptions().withCenter(LatLng{centre.latitude() + step * 0.0004, centre.longitude() - step * 0.0002}));
+        test.render(1);
+        const MeshDetail now = meshDetail(test.cameraGround());
+        EXPECT_EQ(now.nearestTheCamera, before.finest) << "step " << step << ": the ground nearest the camera went coarse";
+    }
+    test.settleDEM();
+    EXPECT_EQ(meshDetail(test.cameraGround()).nearestTheCamera, before.finest);
 }
