@@ -1,0 +1,166 @@
+name: terrain-ios
+
+# Builds MapLibre iOS from this repository and tests it on a simulator: on a pull request, or a
+# dispatch for an upstream one, to check it; on master to release it.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Test this pull request merged into master (the upstream workflow's)
+        type: string
+        default: ""
+      force:
+        description: Rebuild and release even if this commit already has a release
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  statuses: write
+
+concurrency:
+  group: terrain-ios-${{ inputs.pr || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' || inputs.pr != '' }}
+
+env:
+  BAZEL_FLAGS: --compilation_mode=opt --//:renderer=metal --features=thin_lto --apple_generate_dsym
+  BAZEL_CACHE: --disk_cache=/Users/runner/.cache/bazel-disk --experimental_disk_cache_gc_max_size=6G
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      ref: ${{ steps.plan.outputs.ref }}
+      tag: ${{ steps.plan.outputs.tag }}
+      build: ${{ steps.plan.outputs.build }}
+      release: ${{ steps.plan.outputs.release }}
+    steps:
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr || '' }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha || '' }}
+          FORCE: ${{ inputs.force || false }}
+        run: |
+          release=false build=true
+          if [ -n "$PR" ]; then
+            sha=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
+            ref="refs/pull/$PR/merge"
+          elif [ -n "$PR_HEAD" ]; then
+            sha=$PR_HEAD ref=$GITHUB_REF
+          else
+            sha=$GITHUB_SHA ref=$GITHUB_SHA
+            [ "$GITHUB_REF" = refs/heads/master ] && release=true
+          fi
+          tag="terrain-${sha:0:7}"
+          if [ "$release" = true ] && [ "$FORCE" != true ] &&
+             gh release view "$tag" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::notice::$tag is already released."
+            build=false
+          fi
+          {
+            echo "sha=$sha"
+            echo "ref=$ref"
+            echo "tag=$tag"
+            echo "build=$build"
+            echo "release=$release"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: macos-26
+    timeout-minutes: 240
+    env:
+      SHA: ${{ needs.check.outputs.sha }}
+      GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      # one status for our pull requests and upstream's, so one required check covers both
+      - name: Mark the commit pending
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=pending -f context=terrain-ios \
+            -f target_url="$RUN_URL" -f description="Building and testing on a simulator" || true
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.ref }}
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Restore the Bazel cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-ios-${{ needs.check.outputs.sha }}-${{ github.run_id }}
+          restore-keys: |
+            bazel-ios-${{ needs.check.outputs.sha }}-
+            bazel-ios-
+
+      # The same flags as upstream's ios-release, so the framework is as small as theirs.
+      - name: Build the XCFramework
+        run: |
+          # shellcheck disable=SC2086
+          bazel build $BAZEL_CACHE $BAZEL_FLAGS \
+            --features=dead_strip --objc_enable_binary_stripping --output_groups=+dsyms \
+            //platform/ios:MapLibre.dynamic
+          echo "BIN=$(bazel info --compilation_mode=opt bazel-bin)/platform/ios" >> "$GITHUB_ENV"
+
+      # The zip carries ~570 MB of dSYMs; they go in a release asset of their own.
+      - name: Package
+        run: |
+          mkdir -p out x
+          unzip -q "$BIN/MapLibre.dynamic.xcframework.zip" -d x
+          chmod -R u+w x
+          rm -rf x/MapLibre.xcframework/*/dSYMs
+          for i in 0 1 2 3; do
+            /usr/libexec/PlistBuddy -c "Delete :AvailableLibraries:$i:DebugSymbolsPath" \
+              x/MapLibre.xcframework/Info.plist 2> /dev/null || true
+          done
+          cp LICENSE.md x/MapLibre.xcframework/
+          (cd x && ditto -c -k --keepParent MapLibre.xcframework ../out/MapLibre.xcframework.zip)
+          (cd "$BIN/MapLibre.dynamic_dsyms" &&
+            ditto -c -k --keepParent MapLibre_ios_device.framework.dSYM "$GITHUB_WORKSPACE/out/MapLibre.framework.dSYM.zip")
+          swift package compute-checksum out/MapLibre.xcframework.zip > out/checksum.txt
+          ls -la out
+          du -sh x/MapLibre.xcframework/ios-arm64/MapLibre.framework/MapLibre
+
+      # Upstream's iOS tests and ours, on the simulator, with the compiles the build made.
+      - name: Test on a simulator
+        run: |
+          # shellcheck disable=SC2086
+          bazel test $BAZEL_CACHE $BAZEL_FLAGS --test_output=errors \
+            //platform/ios/test:ios_test //platform/ios/riki-test:riki_test
+
+      # Kept under 6 GB by Bazel, inside the repository's 10 GB of Actions cache.
+      - name: Save the Bazel cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-ios-${{ needs.check.outputs.sha }}-${{ github.run_id }}
+
+      - name: Release
+        if: needs.check.outputs.release == 'true'
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          gh release delete "$TAG" -R "$GITHUB_REPOSITORY" --cleanup-tag --yes 2> /dev/null || true
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$SHA" \
+            --title "iOS terrain build ${SHA:0:7}" \
+            --notes "MapLibre Native iOS from [${SHA:0:7}](https://github.com/$GITHUB_REPOSITORY/commit/$SHA): $(git log -1 --format=%s "$SHA")
+
+          Checksum: \`$(cat out/checksum.txt)\`" \
+            out/MapLibre.xcframework.zip out/MapLibre.framework.dSYM.zip out/checksum.txt
+
+      - name: Mark the commit done
+        if: always()
+        env:
+          STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state="$STATE" -f context=terrain-ios \
+            -f target_url="$RUN_URL" -f description="Build and simulator tests: $STATE" || true
