@@ -1,0 +1,3 @@
+test/results/
+test/fixtures/
+scripts/style-spec-reference/

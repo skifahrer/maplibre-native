@@ -1,7 +1,7 @@
 name: upstream
 
-# Opens or moves one pull request that pins upstream's newest feature/terrain-3d and main;
-# nothing of upstream reaches master until that pull request is merged.
+# Keeps a pull request open from each upstream branch we follow into master, and has
+# terrain-ios test each new upstream head on a simulator. Nothing merges on its own.
 on:
   schedule:
     - cron: "23 2 * * *"
@@ -9,8 +9,9 @@ on:
 
 permissions:
   actions: write
-  contents: write
   pull-requests: write
+  statuses: read
+  contents: read
 
 concurrency:
   group: upstream
@@ -18,82 +19,61 @@ concurrency:
 
 env:
   UPSTREAM: maplibre/maplibre-native
-  BRANCH: feature/terrain-3d
-  MAIN: main
+  BRANCHES: main feature/terrain-3d
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
   follow:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: master
-          fetch-depth: 0
-
-      - name: Open or move the upstream pull request
-        env:
-          GH_TOKEN: ${{ github.token }}
+      # upstream's files stay as they are, so its workflows are switched off, not deleted
+      - name: Keep upstream's own workflows off
         run: |
-          terrain=$(git ls-remote "https://github.com/$UPSTREAM.git" "refs/heads/$BRANCH" | cut -f1)
-          main=$(git ls-remote "https://github.com/$UPSTREAM.git" "refs/heads/$MAIN" | cut -f1)
-          if [ -z "$terrain" ] || [ -z "$main" ]; then
-            echo "::warning::$UPSTREAM has no $BRANCH or $MAIN any more; the pins stay."
-            exit 0
-          fi
-          . ./upstream.env
-          old_terrain=$TERRAIN_SHA old_main=$MAIN_SHA
-          if [ "$terrain" = "$old_terrain" ] && [ "$main" = "$old_main" ]; then
-            echo "master already builds $BRANCH ${terrain:0:7} and $MAIN ${main:0:7}."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows" \
+            -q '.workflows[] | select(.state == "active") | "\(.id) \(.path)"' |
+            while read -r id path; do
+              case "$path" in
+                .github/workflows/terrain-ios.yml | .github/workflows/upstream.yml) ;;
+                .github/workflows/*)
+                  echo "disabling $path"
+                  gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/$id/disable"
+                  ;;
+              esac
+            done
 
-          read -r pr branch < <(gh pr list --state open --base master --json number,headRefName \
-            -q '[.[] | select(.headRefName | startswith("upstream/"))][0] | "\(.number) \(.headRefName)"' \
-            2> /dev/null || true)
-          if [ -n "${pr:-}" ] && [ "$pr" != null ]; then
-            git switch -q "$branch"
-            . ./upstream.env
-            if [ "$terrain" = "$TERRAIN_SHA" ] && [ "$main" = "$MAIN_SHA" ]; then
-              echo "#$pr already pins these commits."
-              exit 0
+      - name: Open the upstream pull requests and test their heads
+        run: |
+          owner=${UPSTREAM%%/*}
+          for branch in $BRANCHES; do
+            ahead=$(gh api "repos/$GITHUB_REPOSITORY/compare/master...$owner:$branch" -q .ahead_by)
+            if [ "$ahead" = 0 ]; then
+              echo "master has all of $branch."
+              continue
             fi
-            # the pins are rewritten below, so a conflict on them alone is no conflict
-            if ! git merge -q --no-edit origin/master; then
-              others=$(git diff --name-only --diff-filter=U | grep -vx upstream.env || true)
-              [ -z "$others" ] || { echo "::error::master does not merge into $branch: $others"; exit 1; }
-              git checkout --theirs upstream.env
-              git add upstream.env
-              git commit -q --no-edit
-            fi
-          else
-            branch="upstream/$(date -u +%Y-%m-%d)"
-            git switch -q -c "$branch"
-            git commit -q --allow-empty -m "chore: book ticket"
-            git push -q origin "$branch"
-            pr=$(gh pr create --draft --base master --head "$branch" \
-                   --title "Book: upstream MapLibre moves" --body "Booking.
+            pr=$(gh pr list -R "$GITHUB_REPOSITORY" --state open --base master \
+                   --json number,headRepositoryOwner,headRefName \
+                   -q "[.[] | select(.headRepositoryOwner.login == \"$owner\" and .headRefName == \"$branch\")][0].number // empty")
+            if [ -z "$pr" ]; then
+              pr=$(gh pr create -R "$GITHUB_REPOSITORY" --base master --head "$owner:$branch" \
+                     --title "Upstream $branch comes in" --body "Booking." | grep -o '[0-9]*$')
+              gh pr edit "$pr" -R "$GITHUB_REPOSITORY" --title "$pr Upstream $branch comes in" --body "$UPSTREAM's \`$branch\`, straight from upstream. It follows the branch as it moves.
 
-          @skifahrer" | grep -o '[0-9]*$')
-          fi
+          The \`terrain-ios\` status builds it merged into master and runs upstream's iOS tests and ours on a simulator, again each time upstream moves. Merge only when it is green on the head.
 
-          sed -i -E "s/^TERRAIN_SHA=.*/TERRAIN_SHA=$terrain/; s/^MAIN_SHA=.*/MAIN_SHA=$main/" upstream.env
-          sentence="Upstream terrain branch moves to ${terrain:0:7} and main to ${main:0:7}"
-          git commit -q -am "feat: $pr $sentence"
-          git push -q origin "$branch"
-
-          compare="https://github.com/$UPSTREAM/compare"
-          gh pr edit "$pr" --title "$pr $sentence" --body "Moves the pinned upstream commits:
-
-          - \`$BRANCH\`: [${old_terrain:0:7}...${terrain:0:7}]($compare/$old_terrain...$terrain)
-          - \`$MAIN\`: [${old_main:0:7}...${main:0:7}]($compare/$old_main...$main)
-
-          \`terrain-ios\` builds them with our patches and runs upstream's iOS tests and ours (\`tests/ios\`) on a simulator. Merge only when it is green on this pull request's head; the merge to master releases the build.
+          On a conflict with our changes: branch off master, \`git pull https://github.com/$UPSTREAM.git $branch\`, resolve, build, and open a pull request from that branch instead.
 
           @skifahrer"
-          gh pr ready "$pr" 2> /dev/null || true
-          # a push by this token starts no workflow; a dispatch does
-          gh workflow run terrain-ios.yml --ref "$branch"
-          echo "#$pr pins $BRANCH ${terrain:0:7} and $MAIN ${main:0:7}"
+              echo "opened #$pr for $branch"
+            fi
+            head=$(gh pr view "$pr" -R "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
+            state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/status" \
+                      -q '[.statuses[] | select(.context == "terrain-ios")][0].state // empty')
+            if [ -z "$state" ]; then
+              # a pull request by this token starts no workflow; a dispatch does
+              gh workflow run terrain-ios.yml -R "$GITHUB_REPOSITORY" --ref master -f pr="$pr"
+              echo "testing #$pr at ${head:0:7}"
+            else
+              echo "#$pr at ${head:0:7} is $state"
+            fi
+          done

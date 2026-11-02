@@ -1,149 +1,103 @@
 name: terrain-ios
 
-# Builds MapLibre iOS from the upstream commits upstream.env pins, with our patches, and
-# tests it on a simulator: on a pull request to check it, on master to release it.
+# Builds MapLibre iOS from this repository and tests it on a simulator: on a pull request, or a
+# dispatch for an upstream one, to check it; on master to release it.
 on:
   push:
     branches: [master]
   pull_request:
   workflow_dispatch:
     inputs:
+      pr:
+        description: Test this pull request merged into master (the upstream workflow's)
+        type: string
+        default: ""
       force:
-        description: Rebuild and release even if master's pins already have a release
+        description: Rebuild and release even if this commit already has a release
         type: boolean
         default: false
 
 permissions:
   contents: write
+  statuses: write
 
 concurrency:
-  group: terrain-ios-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+  group: terrain-ios-${{ inputs.pr || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' || inputs.pr != '' }}
 
 env:
-  UPSTREAM: maplibre/maplibre-native
-  BRANCH: feature/terrain-3d
-  MAIN: main
   BAZEL_FLAGS: --compilation_mode=opt --//:renderer=metal --features=thin_lto --apple_generate_dsym
+  BAZEL_CACHE: --disk_cache=/Users/runner/.cache/bazel-disk --experimental_disk_cache_gc_max_size=6G
 
 jobs:
   check:
     runs-on: ubuntu-latest
     outputs:
-      sha: ${{ steps.pins.outputs.sha }}
-      main_sha: ${{ steps.pins.outputs.main_sha }}
-      tag: ${{ steps.pins.outputs.tag }}
-      build: ${{ steps.pins.outputs.build }}
-      release: ${{ steps.pins.outputs.release }}
+      sha: ${{ steps.plan.outputs.sha }}
+      ref: ${{ steps.plan.outputs.ref }}
+      tag: ${{ steps.plan.outputs.tag }}
+      build: ${{ steps.plan.outputs.build }}
+      release: ${{ steps.plan.outputs.release }}
     steps:
-      # our patches go into the tag, so a patched build never reuses an unpatched release
-      - uses: actions/checkout@v4
-        with:
-          sparse-checkout: |
-            patches
-            upstream.env
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
-      - id: pins
+      - id: plan
         env:
           GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr || '' }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha || '' }}
           FORCE: ${{ inputs.force || false }}
-          RELEASING: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
         run: |
-          . ./upstream.env
-          sha=$TERRAIN_SHA main_sha=$MAIN_SHA
-          tag="terrain-${sha:0:7}-main-${main_sha:0:7}"
-          if ls patches/*.patch > /dev/null 2>&1; then
-            tag="$tag-p$(cat patches/*.patch | shasum | cut -c1-7)"
+          release=false build=true
+          if [ -n "$PR" ]; then
+            sha=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
+            ref="refs/pull/$PR/merge"
+          elif [ -n "$PR_HEAD" ]; then
+            sha=$PR_HEAD ref=$GITHUB_REF
+          else
+            sha=$GITHUB_SHA ref=$GITHUB_SHA
+            [ "$GITHUB_REF" = refs/heads/master ] && release=true
           fi
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "main_sha=$main_sha" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "release=$RELEASING" >> "$GITHUB_OUTPUT"
-          if [ "$RELEASING" = true ] && [ "$FORCE" != true ] &&
+          tag="terrain-${sha:0:7}"
+          if [ "$release" = true ] && [ "$FORCE" != true ] &&
              gh release view "$tag" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "::notice::$tag is already released."
-            echo "build=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "build=true" >> "$GITHUB_OUTPUT"
+            build=false
           fi
+          {
+            echo "sha=$sha"
+            echo "ref=$ref"
+            echo "tag=$tag"
+            echo "build=$build"
+            echo "release=$release"
+          } >> "$GITHUB_OUTPUT"
 
   build:
     needs: check
     if: needs.check.outputs.build == 'true'
     runs-on: macos-26
-    timeout-minutes: 180
+    timeout-minutes: 240
+    env:
+      SHA: ${{ needs.check.outputs.sha }}
+      GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          repository: ${{ env.UPSTREAM }}
-          ref: ${{ needs.check.outputs.sha }}
-          persist-credentials: false
-          # deepened to the merge base with main below; blobs only for what the merge touches
-          fetch-depth: 1
-          filter: blob:none
-
-      # main's fixes in; its changelog lines are the only conflict we resolve
-      - name: Merge upstream main
-        env:
-          SHA: ${{ needs.check.outputs.sha }}
-          MAIN_SHA: ${{ needs.check.outputs.main_sha }}
+      # one status for our pull requests and upstream's, so one required check covers both
+      - name: Mark the commit pending
         run: |
-          # Homebrew's git 2.56 lazily fetches an object no upstream ref reaches during the
-          # merge, which GitHub refuses ("not our ref"); Apple's git merges the same commits.
-          git() { /usr/bin/git "$@"; }
-          git --version
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch --no-tags --filter=blob:none --depth=1 origin "$MAIN_SHA"
-          # Both histories only as deep as the commit they share, not all of upstream's
-          for _ in $(seq 1 40); do
-            git merge-base HEAD "$MAIN_SHA" > /dev/null 2>&1 && break
-            git fetch --no-tags --filter=blob:none --deepen=250 origin "$SHA" "$MAIN_SHA"
-          done
-          git merge-base HEAD "$MAIN_SHA" > /dev/null 2>&1 || git fetch --no-tags --filter=blob:none --unshallow origin "$SHA" "$MAIN_SHA"
-          if ! git merge --no-edit -m "Merge $MAIN ${MAIN_SHA:0:7} into $BRANCH" "$MAIN_SHA"; then
-            others=$(git diff --name-only --diff-filter=U | grep -v 'CHANGELOG\.md$' || true)
-            if [ -n "$others" ]; then
-              echo "::error::$MAIN does not merge into $BRANCH: $others"
-              exit 1
-            fi
-            git diff --name-only --diff-filter=U | xargs git checkout --ours --
-            git add -A
-            git commit --no-edit
-          fi
-          # Each submodule at its pinned commit only, all at once
-          git submodule update --init --recursive --depth 1 --jobs 8 ||
-            git submodule update --init --recursive --jobs 8
-          git log -1 --format='%H %s'
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=pending -f context=terrain-ios \
+            -f target_url="$RUN_URL" -f description="Building and testing on a simulator" || true
 
       - uses: actions/checkout@v4
         with:
-          path: .ours
-          sparse-checkout: |
-            patches
-            tests
+          ref: ${{ needs.check.outputs.ref }}
+          submodules: recursive
           persist-credentials: false
 
-      # What upstream does not have yet, such as iOS switches the core already offers
-      - name: Apply our patches
-        run: |
-          for patch in .ours/patches/*.patch; do
-            [ -e "$patch" ] || continue
-            echo "applying $patch"
-            git apply --index "$patch"
-          done
-          git diff --cached --quiet || git commit -q -m "Our patches"
-          git log -1 --format='%H %s'
-
-      # Every compile the last build did; a patch or a moved main reuses all it did not touch.
       - name: Restore the Bazel cache
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-ios-${{ needs.check.outputs.sha }}-${{ needs.check.outputs.main_sha }}-${{ github.run_id }}
+          key: bazel-ios-${{ needs.check.outputs.sha }}-${{ github.run_id }}
           restore-keys: |
-            bazel-ios-${{ needs.check.outputs.sha }}-${{ needs.check.outputs.main_sha }}-
             bazel-ios-${{ needs.check.outputs.sha }}-
             bazel-ios-
 
@@ -151,9 +105,8 @@ jobs:
       - name: Build the XCFramework
         run: |
           # shellcheck disable=SC2086
-          bazel build --disk_cache="$HOME/.cache/bazel-disk" --experimental_disk_cache_gc_max_size=6G \
-            $BAZEL_FLAGS --features=dead_strip --objc_enable_binary_stripping \
-            --output_groups=+dsyms \
+          bazel build $BAZEL_CACHE $BAZEL_FLAGS \
+            --features=dead_strip --objc_enable_binary_stripping --output_groups=+dsyms \
             //platform/ios:MapLibre.dynamic
           echo "BIN=$(bazel info --compilation_mode=opt bazel-bin)/platform/ios" >> "$GITHUB_ENV"
 
@@ -179,10 +132,8 @@ jobs:
       # Upstream's iOS tests and ours, on the simulator, with the compiles the build made.
       - name: Test on a simulator
         run: |
-          cp -R .ours/tests/ios platform/ios/riki-test
           # shellcheck disable=SC2086
-          bazel test --disk_cache="$HOME/.cache/bazel-disk" --experimental_disk_cache_gc_max_size=6G \
-            $BAZEL_FLAGS --test_output=errors \
+          bazel test $BAZEL_CACHE $BAZEL_FLAGS --test_output=errors \
             //platform/ios/test:ios_test //platform/ios/riki-test:riki_test
 
       # Kept under 6 GB by Bazel, inside the repository's 10 GB of Actions cache.
@@ -191,22 +142,25 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-ios-${{ needs.check.outputs.sha }}-${{ needs.check.outputs.main_sha }}-${{ github.run_id }}
+          key: bazel-ios-${{ needs.check.outputs.sha }}-${{ github.run_id }}
 
-      # A pull request or another branch builds and tests, and publishes nothing.
       - name: Release
         if: needs.check.outputs.release == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ needs.check.outputs.sha }}
-          MAIN_SHA: ${{ needs.check.outputs.main_sha }}
           TAG: ${{ needs.check.outputs.tag }}
         run: |
           gh release delete "$TAG" -R "$GITHUB_REPOSITORY" --cleanup-tag --yes 2> /dev/null || true
-          subject=$(git log -1 --format=%s "$SHA")
-          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "iOS terrain build ${SHA:0:7} + main ${MAIN_SHA:0:7}" \
-            --notes "MapLibre Native iOS from [$UPSTREAM@${SHA:0:7}](https://github.com/$UPSTREAM/commit/$SHA) on \`$BRANCH\`: $subject, with \`$MAIN\` at [${MAIN_SHA:0:7}](https://github.com/$UPSTREAM/commit/$MAIN_SHA) merged in
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$SHA" \
+            --title "iOS terrain build ${SHA:0:7}" \
+            --notes "MapLibre Native iOS from [${SHA:0:7}](https://github.com/$GITHUB_REPOSITORY/commit/$SHA): $(git log -1 --format=%s "$SHA")
 
           Checksum: \`$(cat out/checksum.txt)\`" \
             out/MapLibre.xcframework.zip out/MapLibre.framework.dSYM.zip out/checksum.txt
+
+      - name: Mark the commit done
+        if: always()
+        env:
+          STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state="$STATE" -f context=terrain-ios \
+            -f target_url="$RUN_URL" -f description="Build and simulator tests: $STATE" || true

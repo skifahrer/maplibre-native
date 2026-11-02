@@ -1,0 +1,156 @@
+#include <mln/renderer/layers/terrain_layer_tweaker.hpp>
+
+#include <mln/gfx/context.hpp>
+#include <mln/gfx/drawable.hpp>
+#include <mln/renderer/layer_group.hpp>
+#include <mln/renderer/paint_parameters.hpp>
+#include <mln/renderer/render_terrain.hpp>
+#include <mln/shaders/terrain_layer_ubo.hpp>
+#include <mln/shaders/shader_defines.hpp>
+#include <mln/util/constants.hpp>
+#include <mln/util/convert.hpp>
+#include <mln/util/mat4.hpp>
+#include <mln/util/projection.hpp>
+#include <mln/util/logging.hpp>
+
+#include <algorithm>
+#include <cmath>
+
+namespace mln {
+
+using namespace shaders;
+
+void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParameters& parameters) {
+    if (layerGroup.empty() || !terrain) {
+        return;
+    }
+
+    auto& context = parameters.context;
+
+#if defined(DEBUG)
+    const auto label = layerGroup.getName() + "-update-uniforms";
+    const auto debugGroup = parameters.encoder->createDebugGroup(label.c_str());
+#endif
+
+    // Get terrain properties; per the style spec, exaggeration is applied as-is
+    // (default 1.0 renders true-scale elevation)
+    const float exaggeration = terrain->getExaggeration();
+
+    // Skirt depth (u_ele_delta): the shader drops the mesh's skirt vertices by
+    // this many metres into a curtain that hides the cracks between neighbouring
+    // tiles at different zoom levels. ~1/5 of the tile's world width at this zoom,
+    // matching maplibre-gl-js Terrain.getSkirtLength().
+    const auto zoom = std::max(parameters.state.getZoom(), 0.0);
+    const float elevationOffset = static_cast<float>(util::M2PI * util::EARTH_RADIUS_M / std::pow(2.0, zoom) / 5.0);
+
+
+    // Fog, as view depth in world pixels: 1 unit is 1 pixel at the centre, as the far plane.
+    const Color fogColor = parameters.state.getFogColor();
+    const Color clayColor = parameters.state.getClayColor();
+    const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(parameters.state.getLatLng().latitude(),
+                                                                          parameters.state.getZoom());
+    const auto fogDepth = [&](double metres) { return static_cast<float>(metres / metresPerPixel); };
+    // Where the tile cap cut the cover short, the haze is full before the cut, so the terrain
+    // fades into the sky there instead of ending in a wall of skirts.
+    double fogStart = parameters.state.getFogStart();
+    double fogEnd = parameters.state.getFogEnd();
+    if (fogEnd > 0.0 && std::isfinite(terrain->getCoverReachMetres())) {
+        fogEnd = std::min(fogEnd, 0.9 * terrain->getCoverReachMetres());
+        fogStart = std::min(fogStart, 0.5 * fogEnd);
+    }
+
+    // No cutaway: a mountain between the camera and the centre hides it, as it would.
+    const float cutDepth = 0.0f;
+    const auto size = parameters.state.getSize();
+    const auto& insets = parameters.state.getEdgeInsets();
+    const float cutNdcX = size.width > 0 ? static_cast<float>((insets.left() - insets.right()) / size.width) : 0.0f;
+    const float cutNdcY = size.height > 0
+                              ? static_cast<float>(-(parameters.state.getEdgeInsets().top() - parameters.state.getEdgeInsets().bottom()) /
+                                                   size.height)
+                              : 0.0f;
+
+    // Populate layer-level UBO with terrain properties
+    auto& layerUniforms = layerGroup.mutableUniformBuffers();
+    const TerrainEvaluatedPropsUBO propsUBO = {.unpack = terrain->getDEMUnpackVector(),
+                                               .exaggeration = exaggeration,
+                                               .elevation_offset = elevationOffset,
+                                               .no_ground = terrain->getPlane().value_or(-1.0e9f),
+                                               .cut_ndc_x = cutNdcX,
+                                               .fog_color = {fogColor.r, fogColor.g, fogColor.b, fogColor.a},
+                                               .fog_start = fogDepth(fogStart),
+                                               .fog_end = fogDepth(fogEnd),
+                                               .cut_depth = cutDepth,
+                                               .cut_ndc_y = cutNdcY,
+                                               .clay_color = {clayColor.r, clayColor.g, clayColor.b, clayColor.a}};
+    layerUniforms.createOrUpdate(idTerrainEvaluatedPropsUBO, &propsUBO, context);
+
+#if MLN_UBO_CONSOLIDATION
+    int i = 0;
+    std::vector<TerrainDrawableUBO> drawableUBOVector(layerGroup.getDrawableCount());
+#endif
+
+    // Visit each drawable to populate per-drawable UBOs
+    visitLayerGroupDrawables(layerGroup, [&](gfx::Drawable& drawable) {
+        if (!drawable.getTileID()) {
+            return;
+        }
+
+        const UnwrappedTileID tileID = drawable.getTileID()->toUnwrapped();
+
+        // Calculate transformation matrix for this terrain tile
+        // This uses the same matrix calculation as other layers. The metres->world
+        // pixels elevation scale (pixelsPerMeter) is baked into the projection matrix
+        // in TransformState::getProjMatrix, so it applies here and to the elevated
+        // symbol / circle layers consistently, matching maplibre-gl-js.
+        mat4 matrix = parameters.matrixForTile(tileID);
+
+#if !MLN_RENDER_BACKEND_OPENGL
+        // matrixForTile builds a GL-convention projection (clip z in [-1, 1]); Vulkan,
+        // Metal and WebGPU clip to [0, 1]. Remap clip z from [-1, 1] to [0, 1] the usual
+        // way, z' = (z + w) / 2, so terrain that projects into the near half of the GL
+        // clip volume (z < 0) is not clipped away on those backends. Matches
+        // LayerTweaker::getTileMatrix and clipMatrixForTile, which remap the draped / RTT
+        // matrices for the same reason. Monotonic, so skirt-vs-surface depth ordering and
+        // the packed depth texture used for symbol occlusion are preserved; GL unchanged.
+        matrix[2] = 0.5 * (matrix[2] + matrix[3]);
+        matrix[6] = 0.5 * (matrix[6] + matrix[7]);
+        matrix[10] = 0.5 * (matrix[10] + matrix[11]);
+        matrix[14] = 0.5 * (matrix[14] + matrix[15]);
+#endif
+
+#if !MLN_UBO_CONSOLIDATION
+        auto& drawableUniforms = drawable.mutableUniformBuffers();
+#endif
+
+#if MLN_UBO_CONSOLIDATION
+        drawableUBOVector[i] = {
+#else
+        const TerrainDrawableUBO drawableUBO = {
+#endif
+            .matrix = util::cast<float>(matrix),
+            .dem_coords = terrain->getDrawableDemCoords(*drawable.getTileID())
+        };
+
+#if !MLN_UBO_CONSOLIDATION
+        drawableUniforms.createOrUpdate(idTerrainDrawableUBO, &drawableUBO, context);
+#endif
+
+#if MLN_UBO_CONSOLIDATION
+        drawable.setUBOIndex(i++);
+#endif
+    });
+
+#if MLN_UBO_CONSOLIDATION
+    const size_t drawableUBOVectorSize = sizeof(TerrainDrawableUBO) * drawableUBOVector.size();
+    if (!drawableUniformBuffer || drawableUniformBuffer->getSize() < drawableUBOVectorSize) {
+        drawableUniformBuffer = context.createUniformBuffer(
+            drawableUBOVector.data(), drawableUBOVectorSize, false, true);
+    } else {
+        drawableUniformBuffer->update(drawableUBOVector.data(), drawableUBOVectorSize);
+    }
+
+    layerUniforms.set(idTerrainDrawableUBO, drawableUniformBuffer);
+#endif
+}
+
+} // namespace mln
