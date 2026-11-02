@@ -51,7 +51,24 @@ jobs:
           release=false build=true
           if [ -n "$PR" ]; then
             sha=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
-            ref="refs/pull/$PR/merge"
+            master=$(gh api "repos/$GITHUB_REPOSITORY/commits/master" -q .sha)
+            # GitHub remakes the merge commit lazily; an old one tests an older master
+            ref=""
+            for _ in $(seq 1 30); do
+              read -r mergeable merge < <(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" \
+                -q '"\(.mergeable) \(.merge_commit_sha)"')
+              if [ "$mergeable" = false ]; then
+                echo "::error::#$PR conflicts with master; merge it on a branch of its own"
+                exit 1
+              fi
+              if [ "$mergeable" = true ] &&
+                 [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/$merge" -q '.parents[0].sha')" = "$master" ]; then
+                ref=$merge
+                break
+              fi
+              sleep 10
+            done
+            [ -n "$ref" ] || { echo "::error::GitHub did not merge #$PR into master ${master:0:7}"; exit 1; }
           elif [ -n "$PR_HEAD" ]; then
             sha=$PR_HEAD ref=$GITHUB_REF
           else
