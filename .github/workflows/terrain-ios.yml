@@ -37,6 +37,7 @@ jobs:
     outputs:
       sha: ${{ steps.plan.outputs.sha }}
       ref: ${{ steps.plan.outputs.ref }}
+      merge: ${{ steps.plan.outputs.merge }}
       tag: ${{ steps.plan.outputs.tag }}
       build: ${{ steps.plan.outputs.build }}
       release: ${{ steps.plan.outputs.release }}
@@ -51,24 +52,9 @@ jobs:
           release=false build=true
           if [ -n "$PR" ]; then
             sha=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
-            master=$(gh api "repos/$GITHUB_REPOSITORY/commits/master" -q .sha)
-            # GitHub remakes the merge commit lazily; an old one tests an older master
-            ref=""
-            for _ in $(seq 1 30); do
-              read -r mergeable merge < <(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" \
-                -q '"\(.mergeable) \(.merge_commit_sha)"')
-              if [ "$mergeable" = false ]; then
-                echo "::error::#$PR conflicts with master; merge it on a branch of its own"
-                exit 1
-              fi
-              if [ "$mergeable" = true ] &&
-                 [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/$merge" -q '.parents[0].sha')" = "$master" ]; then
-                ref=$merge
-                break
-              fi
-              sleep 10
-            done
-            [ -n "$ref" ] || { echo "::error::GitHub did not merge #$PR into master ${master:0:7}"; exit 1; }
+            # merged on the runner: GitHub's merge commit of a fork's branch can lag master by hours
+            ref=$(gh api "repos/$GITHUB_REPOSITORY/commits/master" -q .sha)
+            merge=$sha
           elif [ -n "$PR_HEAD" ]; then
             sha=$PR_HEAD ref=$GITHUB_REF
           else
@@ -83,6 +69,7 @@ jobs:
           fi
           {
             echo "sha=$sha"
+            echo "merge=${merge:-}"
             echo "ref=$ref"
             echo "tag=$tag"
             echo "build=$build"
@@ -111,6 +98,19 @@ jobs:
           ref: ${{ needs.check.outputs.ref }}
           submodules: recursive
           persist-credentials: false
+          fetch-depth: ${{ needs.check.outputs.merge && '0' || '1' }}
+
+      - name: Merge the pull request into master
+        if: needs.check.outputs.merge != ''
+        env:
+          MERGE: ${{ needs.check.outputs.merge }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags origin "$MERGE" || git fetch --no-tags https://github.com/maplibre/maplibre-native.git "$MERGE"
+          git merge --no-edit -m "Merge ${MERGE:0:7} into master" "$MERGE"
+          git submodule update --init --recursive --jobs 8
+          git log -1 --format='%H %s'
 
       - name: Restore the Bazel cache
         uses: actions/cache/restore@v4
