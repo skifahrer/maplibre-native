@@ -628,6 +628,7 @@ MTLDepthStencilStatePtr Context::makeDepthStencilState(const gfx::DepthMode& dep
 
     auto& device = backend.getDevice();
     const auto& renderableResource = renderable.getResource<RenderableResource>();
+    uint64_t key = 0;
     if (const auto& rpd = renderableResource.getRenderPassDescriptor()) {
         // Setting depth/stencil properties when the corresponding target textures aren't set causes, e.g.:
         // `Draw Errors Validation MTLDepthStencilDescriptor sets depth test but MTLRenderPassDescriptor has a nil
@@ -635,6 +636,8 @@ MTLDepthStencilStatePtr Context::makeDepthStencilState(const gfx::DepthMode& dep
         if (auto* depthTarget = rpd->depthAttachment()) {
             if (depthTarget->texture()) {
                 applyDepthMode(depthMode, depthStencilDescriptor.get());
+                key |= 1ULL | (uint64_t(depthStencilDescriptor->depthCompareFunction()) << 1) |
+                       (uint64_t(depthStencilDescriptor->isDepthWriteEnabled()) << 5);
             }
         }
         if (auto* stencilTarget = rpd->stencilAttachment()) {
@@ -648,11 +651,24 @@ MTLDepthStencilStatePtr Context::makeDepthStencilState(const gfx::DepthMode& dep
 
                 depthStencilDescriptor->setFrontFaceStencil(stencilDescriptor.get());
                 depthStencilDescriptor->setBackFaceStencil(stencilDescriptor.get());
+                key |= (1ULL << 6) | (uint64_t(stencilDescriptor->stencilCompareFunction()) << 7) |
+                       (uint64_t(stencilDescriptor->stencilFailureOperation()) << 11) |
+                       (uint64_t(stencilDescriptor->depthFailureOperation()) << 15) |
+                       (uint64_t(stencilDescriptor->depthStencilPassOperation()) << 19) |
+                       (uint64_t(stencilDescriptor->readMask()) << 23) |
+                       (uint64_t(stencilDescriptor->writeMask() != stencilDescriptor->readMask()) << 55);
             }
         }
     }
 
-    return NS::TransferPtr(device->newDepthStencilState(depthStencilDescriptor.get()));
+    if (const auto found = depthStencilStates.find(key); found != depthStencilStates.end()) {
+        return found->second;
+    }
+    auto state = NS::TransferPtr(device->newDepthStencilState(depthStencilDescriptor.get()));
+    if (state) {
+        depthStencilStates.emplace(key, state);
+    }
+    return state;
 }
 
 void Context::bindGlobalUniformBuffers(gfx::RenderPass& renderPass) const noexcept {
