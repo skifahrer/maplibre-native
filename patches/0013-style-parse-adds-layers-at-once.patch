@@ -1,0 +1,106 @@
+diff --git a/src/mln/style/collection.hpp b/src/mln/style/collection.hpp
+index b49d93888d3..e787610d9cc 100644
+--- a/src/mln/style/collection.hpp
++++ b/src/mln/style/collection.hpp
+@@ -48,6 +48,7 @@ public:
+ protected:
+     std::size_t index(const std::string&) const;
+     T* add(std::size_t wrapperIndex, std::size_t implIndex, std::unique_ptr<T> wrapper);
++    void append(std::vector<std::unique_ptr<T>> added);
+     std::unique_ptr<T> remove(std::size_t wrapperIndex, std::size_t implIndex);
+     // Must be called whenever an element of the collection is internally
+     // mutated. Typically, each element permits registration of an observer, and
+@@ -70,6 +71,8 @@ public:
+         std::size_t idx = before ? Base::index(*before) : Base::size();
+         return Base::add(idx, idx, std::move(wrapper));
+     }
++    /// Adds wrappers at the end without checking their ids, so the caller vouches they are new.
++    void append(std::vector<std::unique_ptr<T>> added) { Base::append(std::move(added)); }
+     std::unique_ptr<T> remove(const std::string& id) {
+         std::size_t idx = Base::index(id);
+         return Base::remove(idx, idx);
+@@ -151,6 +154,20 @@ T* CollectionBase<T>::add(std::size_t wrapperIndex, std::size_t implIndex, std::
+     return wrappers.emplace(wrappers.begin() + wrapperIndex, std::move(wrapper))->get();
+ }
+ 
++template <class T>
++void CollectionBase<T>::append(std::vector<std::unique_ptr<T>> added) {
++    mutate(impls, [&](auto& impls_) {
++        impls_.reserve(impls_.size() + added.size());
++        for (const auto& wrapper : added) {
++            impls_.push_back(wrapper->baseImpl);
++        }
++    });
++    wrappers.reserve(wrappers.size() + added.size());
++    for (auto& wrapper : added) {
++        wrappers.push_back(std::move(wrapper));
++    }
++}
++
+ template <class T>
+ std::unique_ptr<T> CollectionBase<T>::remove(std::size_t wrapperIndex, std::size_t implIndex) {
+     if (wrapperIndex >= size()) {
+diff --git a/src/mln/style/style_impl.cpp b/src/mln/style/style_impl.cpp
+index db2a926d2fa..538a883d9c7 100644
+--- a/src/mln/style/style_impl.cpp
++++ b/src/mln/style/style_impl.cpp
+@@ -115,8 +115,19 @@ void Style::Impl::parse(const std::string& json_) {
+         addSource(std::move(source));
+     }
+ 
++    // One by one, each layer searched every id before it and copied every layer's impl.
++    std::vector<std::unique_ptr<Layer>> parsed;
++    parsed.reserve(parser.layers.size());
+     for (auto& layer : parser.layers) {
+-        addLayer(std::move(layer));
++        checkSourceSupports(*layer);
++        layer->reevaluateVisibility(*globalState);
++        layer->setObserver(this);
++        parsed.push_back(std::move(layer));
++    }
++    // The parser already dropped repeated ids.
++    layers.append(std::move(parsed));
++    if (layers.size() > 0) {
++        observer->onUpdate();
+     }
+ 
+     name = parser.name;
+@@ -298,17 +309,21 @@ Layer* Style::Impl::getLayer(const std::string& id) const {
+     return layers.get(id);
+ }
+ 
+-Layer* Style::Impl::addLayer(std::unique_ptr<Layer> layer, const std::optional<std::string>& before) {
++void Style::Impl::checkSourceSupports(const Layer& layer) const {
+     // TODO: verify source
+-    if (Source* source = sources.get(layer->getSourceID())) {
+-        if (!source->supportsLayerType(layer->baseImpl->getTypeInfo())) {
++    if (Source* source = sources.get(layer.getSourceID())) {
++        if (!source->supportsLayerType(layer.baseImpl->getTypeInfo())) {
+             std::ostringstream message;
+-            message << "Layer '" << layer->getID() << "' is not compatible with source '" << layer->getSourceID()
++            message << "Layer '" << layer.getID() << "' is not compatible with source '" << layer.getSourceID()
+                     << "'";
+ 
+             throw std::runtime_error(message.str());
+         }
+     }
++}
++
++Layer* Style::Impl::addLayer(std::unique_ptr<Layer> layer, const std::optional<std::string>& before) {
++    checkSourceSupports(*layer);
+ 
+     if (layers.get(layer->getID())) {
+         throw std::runtime_error(std::string{"Layer "} + layer->getID() + " already exists");
+diff --git a/src/mln/style/style_impl.hpp b/src/mln/style/style_impl.hpp
+index 10db261192d..eec9d3810cc 100644
+--- a/src/mln/style/style_impl.hpp
++++ b/src/mln/style/style_impl.hpp
+@@ -77,6 +77,8 @@ public:
+     Layer* getLayer(const std::string& id) const;
+ 
+     Layer* addLayer(std::unique_ptr<Layer>, const std::optional<std::string>& beforeLayerID = std::nullopt);
++    /// Throws when the layer's source cannot draw a layer of its type.
++    void checkSourceSupports(const Layer&) const;
+     std::unique_ptr<Layer> removeLayer(const std::string& layerID);
+ 
+     std::string getName() const;
