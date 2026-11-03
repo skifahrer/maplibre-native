@@ -70,7 +70,7 @@ jobs:
             [ "$GITHUB_REF" = refs/heads/master ] && release=true
           fi
           tag="terrain-${sha:0:7}"
-          # workflows and docs alone change nothing in the framework; terrain-ios.yml is still tried
+          # workflows and docs alone change nothing in the framework; run by hand to try a workflow
           from=${PR_BASE:-$BEFORE}
           # on master, against the last release: a cancelled run may have left a change unreleased
           if [ "$release" = true ] && [ -n "$BEFORE" ]; then
@@ -80,8 +80,7 @@ jobs:
           if [ -z "$PR" ] && [ -n "$from" ] && [ "$from" != 0000000000000000000000000000000000000000 ]; then
             files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$from...$sha" -q '.files[].filename' || echo unknown)
             if [ -n "$files" ] && [ "$(echo "$files" | wc -l)" -lt 300 ] &&
-               ! echo "$files" | grep -qvE '^\.github/|\.md$' &&
-               ! echo "$files" | grep -qx '.github/workflows/terrain-ios.yml'; then
+               ! echo "$files" | grep -qvE '^\.github/|\.md$'; then
               echo "::notice::only workflows or docs changed; nothing to build"
               build=false release=false pipeline_only=true
             fi

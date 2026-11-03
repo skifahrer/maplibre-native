@@ -31,7 +31,7 @@ nightly `upstream` run starts it again. Start it by hand from the Actions tab (`
 to go sooner.
 
 A pull request or push that changes only `.github/` or `*.md` files is not built: `terrain-ios`
-marks it green at once. A change to `terrain-ios.yml` itself is always built.
+marks it green at once. To try a workflow change, run `terrain-ios` by hand on its branch.
 
 ## Releases
 
