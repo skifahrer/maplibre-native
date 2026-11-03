@@ -254,10 +254,10 @@ jobs:
           bazel test $BAZEL_CACHE $BAZEL_TEST $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
             //platform/ios/test/core:CppUnitTests
 
-      - name: Test the core's drape, elevation and fog
+      - name: Test the core's drape, elevation, fog and view settings
         if: success() || failure()
         env:
-          FILTER: "*Terrain*:*Fog*-*TerrainCamera*:*MeshCover*:*TerrainSourceCover*"
+          FILTER: "*Terrain*:*Fog*:*StyleParsedLayers*-*TerrainCamera*:*MeshCover*:*TerrainSourceCover*"
         run: |
           # shellcheck disable=SC2086
           bazel test $BAZEL_CACHE $BAZEL_TEST $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
