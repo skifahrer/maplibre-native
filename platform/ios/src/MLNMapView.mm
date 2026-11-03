@@ -4051,6 +4051,30 @@ static void *windowScreenContext = &windowScreenContext;
   return self.mbglMap.getCameraOptions().centerAltitude.value_or(0.0);
 }
 
+- (void)setCenterCoordinate:(CLLocationCoordinate2D)centerCoordinate
+             centerAltitude:(CLLocationDistance)centerAltitude
+                  zoomLevel:(double)zoomLevel
+                  direction:(CLLocationDirection)direction
+                      pitch:(CGFloat)pitch {
+  if (!_mbglMap) {
+    return;
+  }
+  MLNLogDebug(@"Setting center: %@ altitude: %f zoomLevel: %f direction: %f pitch: %f",
+              MLNStringFromCLLocationCoordinate2D(centerCoordinate), centerAltitude, zoomLevel,
+              direction, pitch);
+  [self willChangeValueForKey:@"camera"];
+  [self cancelTransitions];
+  self.cameraChangeReasonBitmask |= MLNCameraChangeReasonProgrammatic;
+  self.mbglMap.jumpTo(mln::CameraOptions()
+                          .withCenter(MLNLatLngFromLocationCoordinate2D(centerCoordinate))
+                          .withCenterAltitude(centerAltitude)
+                          .withPadding(MLNEdgeInsetsFromNSEdgeInsets(self.contentInset))
+                          .withZoom(zoomLevel)
+                          .withBearing(direction)
+                          .withPitch(pitch));
+  [self didChangeValueForKey:@"camera"];
+}
+
 - (BOOL)setCenterAltitudeKeepingView:(CLLocationDistance)altitude {
   MLNLogDebug(@"Setting centerAltitude keeping the view: %f", altitude);
   // Set before the call, which reports the camera change; take it back if nothing moved, or it

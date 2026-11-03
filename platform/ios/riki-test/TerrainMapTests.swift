@@ -55,6 +55,20 @@ final class TerrainMapTests: TerrainMapTestCase {
         XCTAssertGreaterThanOrEqual(mapView.zoomLevel, zoom - 1e-6)
     }
 
+    func testACentreInTheAirLooksAboveTheHorizon() throws {
+        try loadMap()
+        mapView.maximumPitch = 150
+        let altitude = Self.groundHeight + 120
+        mapView.setCenter(Self.center, altitude: altitude, zoomLevel: 17, direction: 30, pitch: 120)
+        waitUntilFullyRendered()
+
+        XCTAssertEqual(mapView.centerAltitude, altitude, accuracy: 0.5)
+        XCTAssertEqual(mapView.camera.pitch, 120, accuracy: 0.01)
+        XCTAssertEqual(mapView.direction, 30, accuracy: 0.01)
+        XCTAssertEqual(mapView.zoomLevel, 17, accuracy: 1e-6)
+        XCTAssertEqual(mapView.centerCoordinate.latitude, Self.center.latitude, accuracy: 1e-6)
+    }
+
     func testDrawDistanceFogAndClayKeepTheirValuesAndDraw() throws {
         try loadMap()
         XCTAssertEqual(mapView.drawDistance, 0)
