@@ -524,9 +524,16 @@ RenderTiles RenderTileSource::getRenderTilesSortedByYPosition() const {
 }
 
 bool RenderTileSource::tileHasNoData(const UnwrappedTileID& id) const {
+    if (emptyTiles.contains(id)) {
+        return true;
+    }
     for (const auto& [tileID, tile] : tilePyramid.getTiles()) {
         if (tileID.toUnwrapped() == id) {
-            return tile->isComplete() && !tile->isRenderable();
+            if (tile->isComplete() && !tile->isRenderable()) {
+                emptyTiles.insert(id);
+                return true;
+            }
+            return false;
         }
     }
     return false;
@@ -621,6 +628,7 @@ void RenderTileSetSource::update(Immutable<style::Source::Impl> baseImpl_,
         // TODO: this removes existing buckets, and will cause flickering.
         // Should instead refresh tile data in place.
         tilePyramid.clearAll();
+        emptyTiles.clear();
         onTilesetChanged();
     }
 

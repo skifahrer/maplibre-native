@@ -8,6 +8,8 @@
 
 #include <mln/gfx/context.hpp>
 
+#include <set>
+
 namespace mln {
 
 /**
@@ -29,7 +31,7 @@ public:
     const Tile* getRenderedTile(const UnwrappedTileID&) const override;
     Immutable<std::vector<RenderTile>> getRawRenderTiles() const override { return renderTiles; }
     /// Whether the tile was asked for and came back with nothing to draw, as past a sparse
-    /// pyramid's edge.
+    /// pyramid's edge; still known once the pyramid has let it go.
     bool tileHasNoData(const UnwrappedTileID&) const;
 
     std::unordered_map<std::string, std::vector<Feature>> queryRenderedFeatures(
@@ -60,6 +62,8 @@ protected:
     Immutable<std::vector<RenderTile>> renderTiles;
     mutable RenderTiles filteredRenderTiles;
     mutable RenderTiles renderTilesSortedByY;
+    // Terrain drops an empty tile; forgotten, it came back the next frame and the mesh flickered.
+    mutable std::set<UnwrappedTileID> emptyTiles;
 
 private:
     float bearing = 0.0F;

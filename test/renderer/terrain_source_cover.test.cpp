@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -108,6 +109,8 @@ public:
         double pitch = 70.0;
         double zoom = 13.0;
         Size size{1200, 800};
+        // DEM tiles whose west edge lies east of this longitude come back empty.
+        std::optional<double> demEndsAt;
     };
 
     explicit TerrainSourceCoverTest(const Options& options)
@@ -119,14 +122,20 @@ public:
               MapObserver::nullObserver(),
               fileSource,
               MapOptions().withMapMode(MapMode::Static).withSize(frontend.getSize())) {
-        fileSource->tileResponse = [this](const Resource& resource) {
+        fileSource->tileResponse = [this, options](const Resource& resource) {
             Response res;
             if (resource.url.find("/parcels/") != std::string::npos) {
                 parcelTiles.insert(tileIDFromURL(resource.url));
                 res.noContent = true;
             } else {
-                demTiles.insert(tileIDFromURL(resource.url));
-                res.data = std::make_shared<std::string>(demTile);
+                const CanonicalTileID id = tileIDFromURL(resource.url);
+                demTiles.insert(id);
+                const double west = id.x / static_cast<double>(1u << id.z) * 360.0 - 180.0;
+                if (options.demEndsAt && west > *options.demEndsAt) {
+                    res.noContent = true;
+                } else {
+                    res.data = std::make_shared<std::string>(demTile);
+                }
             }
             return res;
         };
@@ -344,4 +353,18 @@ TEST(TerrainSourceCover, ASmallPanKeepsTheGroundNearestTheCameraFineInEveryFrame
     }
     test.settleDEM();
     EXPECT_EQ(meshDetail(test.cameraGround()).nearestTheCamera, before.finest);
+}
+
+// Past the height model's edge a DEM tile comes back empty and leaves the mesh. Forgotten once the
+// DEM lets it go, it came back next frame, empty again: the mesh swung between two tile sets.
+TEST(TerrainSourceCover, AtTheEdgeOfTheDEMAStillCameraKeepsItsMesh) {
+    TerrainSourceCoverTest test(
+        {.demMinZoom = 0, .demMaxZoom = 16, .mode = TerrainLoadMode::Balanced, .pitch = 55.0, .demEndsAt = -120.66});
+    test.render(100);
+    const auto settled = util::terrainMeshCover();
+    ASSERT_FALSE(settled.empty());
+    for (int frame = 0; frame < 20; ++frame) {
+        test.render(1);
+        ASSERT_EQ(util::terrainMeshCover(), settled) << "frame " << frame;
+    }
 }
