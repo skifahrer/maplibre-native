@@ -47,6 +47,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ inputs.pr || '' }}
           PR_HEAD: ${{ github.event.pull_request.head.sha || '' }}
+          PR_BASE: ${{ github.event.pull_request.base.sha || '' }}
+          BEFORE: ${{ github.event.before || '' }}
           FORCE: ${{ inputs.force || false }}
         run: |
           release=false build=true
@@ -62,6 +64,17 @@ jobs:
             [ "$GITHUB_REF" = refs/heads/master ] && release=true
           fi
           tag="terrain-${sha:0:7}"
+          # workflows and docs alone change nothing in the framework; terrain-ios.yml is still tried
+          from=${PR_BASE:-$BEFORE}
+          if [ -z "$PR" ] && [ -n "$from" ] && [ "$from" != 0000000000000000000000000000000000000000 ]; then
+            files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$from...$sha" -q '.files[].filename' || echo unknown)
+            if [ -n "$files" ] && [ "$(echo "$files" | wc -l)" -lt 300 ] &&
+               ! echo "$files" | grep -qvE '^\.github/|\.md$' &&
+               ! echo "$files" | grep -qx '.github/workflows/terrain-ios.yml'; then
+              echo "::notice::only workflows or docs changed; nothing to build"
+              build=false release=false pipeline_only=true
+            fi
+          fi
           if [ "$release" = true ] && [ "$FORCE" != true ] &&
              gh release view "$tag" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "::notice::$tag is already released."
@@ -74,7 +87,17 @@ jobs:
             echo "tag=$tag"
             echo "build=$build"
             echo "release=$release"
+            echo "pipeline_only=${pipeline_only:-false}"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Mark the commit done, nothing to build
+        if: steps.plan.outputs.pipeline_only == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.plan.outputs.sha }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=success -f context=terrain-ios \
+            -f description="Only workflows or docs changed" || true
 
       # set here, where a runner is always free: a build dropped for lack of a Mac stays pending
       - name: Mark the commit pending
