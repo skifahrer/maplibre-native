@@ -28,6 +28,8 @@ concurrency:
 env:
   BAZEL_FLAGS: --compilation_mode=opt --//:renderer=metal --features=thin_lto --apple_generate_dsym
   BAZEL_CACHE: --disk_cache=/Users/runner/.cache/bazel-disk --experimental_disk_cache_gc_max_size=6G
+  # one simulator at a time: two booting together can fail on a small runner
+  BAZEL_TEST: --test_output=errors --local_test_jobs=1 --test_timeout=3600
 
 jobs:
   check:
@@ -35,6 +37,7 @@ jobs:
     outputs:
       sha: ${{ steps.plan.outputs.sha }}
       ref: ${{ steps.plan.outputs.ref }}
+      merge: ${{ steps.plan.outputs.merge }}
       tag: ${{ steps.plan.outputs.tag }}
       build: ${{ steps.plan.outputs.build }}
       release: ${{ steps.plan.outputs.release }}
@@ -49,7 +52,9 @@ jobs:
           release=false build=true
           if [ -n "$PR" ]; then
             sha=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
-            ref="refs/pull/$PR/merge"
+            # merged on the runner: GitHub's merge commit of a fork's branch can lag master by hours
+            ref=$(gh api "repos/$GITHUB_REPOSITORY/commits/master" -q .sha)
+            merge=$sha
           elif [ -n "$PR_HEAD" ]; then
             sha=$PR_HEAD ref=$GITHUB_REF
           else
@@ -64,15 +69,29 @@ jobs:
           fi
           {
             echo "sha=$sha"
+            echo "merge=${merge:-}"
             echo "ref=$ref"
             echo "tag=$tag"
             echo "build=$build"
             echo "release=$release"
           } >> "$GITHUB_OUTPUT"
 
+      # set here, where a runner is always free: a build dropped for lack of a Mac stays pending
+      - name: Mark the commit pending
+        if: steps.plan.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.plan.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=pending -f context=terrain-ios \
+            -f target_url="$RUN_URL" -f description="Building and testing on a simulator" || true
+
   build:
     needs: check
     if: needs.check.outputs.build == 'true'
+    # Intel runs the core's timing tests too slowly; a run dropped for lack of a Mac leaves no
+    # status, so upstream's nightly dispatch tries it again
     runs-on: macos-26
     timeout-minutes: 240
     env:
@@ -81,25 +100,33 @@ jobs:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       # one status for our pull requests and upstream's, so one required check covers both
-      - name: Mark the commit pending
-        run: |
-          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=pending -f context=terrain-ios \
-            -f target_url="$RUN_URL" -f description="Building and testing on a simulator" || true
-
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.check.outputs.ref }}
           submodules: recursive
           persist-credentials: false
+          fetch-depth: ${{ needs.check.outputs.merge && '0' || '1' }}
+
+      - name: Merge the pull request into master
+        if: needs.check.outputs.merge != ''
+        env:
+          MERGE: ${{ needs.check.outputs.merge }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags origin "$MERGE" || git fetch --no-tags https://github.com/maplibre/maplibre-native.git "$MERGE"
+          git merge --no-edit -m "Merge ${MERGE:0:7} into master" "$MERGE"
+          git submodule update --init --recursive --jobs 8
+          git log -1 --format='%H %s'
 
       - name: Restore the Bazel cache
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-ios-${{ needs.check.outputs.sha }}-${{ github.run_id }}
+          key: bazel-ios-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
           restore-keys: |
-            bazel-ios-${{ needs.check.outputs.sha }}-
-            bazel-ios-
+            bazel-ios-${{ runner.arch }}-${{ needs.check.outputs.sha }}-
+            bazel-ios-${{ runner.arch }}-
 
       # The same flags as upstream's ios-release, so the framework is as small as theirs.
       - name: Build the XCFramework
@@ -134,7 +161,7 @@ jobs:
       - name: Test on a simulator
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE --//:renderer=metal --test_output=errors \
+          bazel test $BAZEL_CACHE $BAZEL_TEST --//:renderer=metal \
             //platform/ios/test:ios_test //platform/ios/riki-test:riki_test
 
       # The core's terrain and tile cover tests. Alone: beside the others,
@@ -143,7 +170,7 @@ jobs:
         if: success() || failure()
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE $BAZEL_FLAGS --test_output=errors \
+          bazel test $BAZEL_CACHE $BAZEL_TEST $BAZEL_FLAGS \
             '--test_env=GTEST_FILTER=*Terrain*:*TileCover*:*MeshCover*:*Fog*' \
             //platform/ios/test/core:CppUnitTests
 
@@ -153,7 +180,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-ios-${{ needs.check.outputs.sha }}-${{ github.run_id }}
+          key: bazel-ios-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
 
       - name: Release
         if: needs.check.outputs.release == 'true'
