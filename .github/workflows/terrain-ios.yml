@@ -66,6 +66,11 @@ jobs:
           tag="terrain-${sha:0:7}"
           # workflows and docs alone change nothing in the framework; terrain-ios.yml is still tried
           from=${PR_BASE:-$BEFORE}
+          # on master, against the last release: a cancelled run may have left a change unreleased
+          if [ "$release" = true ] && [ -n "$BEFORE" ]; then
+            from=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+                     -q '[.[] | select(.tag_name | startswith("terrain-"))][0].target_commitish // ""' || true)
+          fi
           if [ -z "$PR" ] && [ -n "$from" ] && [ "$from" != 0000000000000000000000000000000000000000 ]; then
             files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$from...$sha" -q '.files[].filename' || echo unknown)
             if [ -n "$files" ] && [ "$(echo "$files" | wc -l)" -lt 300 ] &&
