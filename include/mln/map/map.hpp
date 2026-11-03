@@ -128,6 +128,10 @@ public:
     /// A transparent colour (the default) keeps the built-in light clay. Metal only for now.
     void setClayColor(const Color& color);
     Color getClayColor() const;
+    /// The colour shown where nothing is drawn, above the horizon of a tipped map, premultiplied.
+    /// A transparent colour (the default) shows the style's background colour there.
+    void setSkyColor(const Color& color);
+    Color getSkyColor() const;
     MapOptions getMapOptions() const;
 
     // Projection Mode

@@ -3313,6 +3313,15 @@ static void *windowScreenContext = &windowScreenContext;
   return color.a > 0 ? [UIColor mgl_colorWithColor:color] : nil;
 }
 
+- (void)setSkyColor:(UIColor *)skyColor {
+  _mbglMap->setSkyColor(skyColor ? skyColor.mgl_color : mln::Color{0, 0, 0, 0});
+}
+
+- (UIColor *)skyColor {
+  const mln::Color color = _mbglMap->getSkyColor();
+  return color.a > 0 ? [UIColor mgl_colorWithColor:color] : nil;
+}
+
 - (void)setCenterClampedToGround:(BOOL)centerClampedToGround {
   _mbglMap->setCenterClampedToGround(centerClampedToGround);
 }
