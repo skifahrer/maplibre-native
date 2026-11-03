@@ -522,6 +522,10 @@ void Transform::setClayColor(const Color& color) {
     state.setClayColor(color);
 }
 
+void Transform::setSkyColor(const Color& color) {
+    state.setSkyColor(color);
+}
+
 // MARK: - Bearing
 
 void Transform::rotateBy(const ScreenCoordinate& first,

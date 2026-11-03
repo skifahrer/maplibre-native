@@ -152,6 +152,7 @@ public:
     double getDrawDistance() const;
     void setFog(const Color& color, double startMetres, double endMetres);
     void setClayColor(const Color& color);
+    void setSkyColor(const Color& color);
 
 private:
     TransformObserver& observer;

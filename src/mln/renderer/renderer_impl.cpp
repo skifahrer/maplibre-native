@@ -612,7 +612,9 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             if (parameters.debugOptions & MapDebugOptions::Overdraw) {
                 color = Color::black();
             } else if (!backend.contextIsShared()) {
-                color = renderTreeParameters.backgroundColor;
+                // Only the screen's backdrop: the drapes keep the background as their base.
+                const Color sky = state.getSkyColor();
+                color = sky.a > 0 ? sky : renderTreeParameters.backgroundColor;
             }
             parameters.renderPass = parameters.encoder->createRenderPass(
                 "main buffer",

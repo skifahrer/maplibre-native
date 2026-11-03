@@ -628,6 +628,17 @@ MLN_EXPORT
 @property (nonatomic, nullable) UIColor *clayColor;
 
 /**
+ The color shown where the map draws nothing, as above the horizon of a map
+ tipped past it, or `nil` for the style's background color.
+
+ Only the screen behind the map takes it; draped layers keep the background
+ color as their base.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic, nullable) UIColor *skyColor;
+
+/**
  Whether the map centre rides the 3D terrain surface rather than sea level.
 
  When this is `YES`, the altitude of the map centre follows the rendered terrain

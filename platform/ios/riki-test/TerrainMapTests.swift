@@ -55,6 +55,23 @@ final class TerrainMapTests: TerrainMapTestCase {
         XCTAssertGreaterThanOrEqual(mapView.zoomLevel, zoom - 1e-6)
     }
 
+    func testTheSkyColourPaintsOnlyAboveTheHorizon() throws {
+        try loadMap()
+        XCTAssertNil(mapView.skyColor)
+        mapView.skyColor = UIColor(red: 0.3, green: 0.55, blue: 0.9, alpha: 1)
+        mapView.drawDistance = 3000
+        tilt(85, distance: 1500)
+        waitUntilFullyRendered()
+
+        assertColor(mapView.skyColor, 0.3, 0.55, 0.9)
+        let shot = try XCTUnwrap(screenshot())
+        assertPixel(shot, at: CGPoint(x: 0.5, y: 0.02), 0.3, 0.55, 0.9)
+        assertPixel(shot, at: CGPoint(x: 0.5, y: 0.98), 0.3, 0.55, 0.9, matches: false)
+
+        mapView.skyColor = nil
+        XCTAssertNil(mapView.skyColor)
+    }
+
     func testDrawDistanceFogAndClayKeepTheirValuesAndDraw() throws {
         try loadMap()
         XCTAssertEqual(mapView.drawDistance, 0)
@@ -91,5 +108,30 @@ final class TerrainMapTests: TerrainMapTestCase {
         XCTAssertEqual(r, red, accuracy: 0.01, file: file, line: line)
         XCTAssertEqual(g, green, accuracy: 0.01, file: file, line: line)
         XCTAssertEqual(b, blue, accuracy: 0.01, file: file, line: line)
+    }
+
+    private func screenshot() -> CGImage? {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(bounds: mapView.bounds, format: format).image { _ in
+            mapView.drawHierarchy(in: mapView.bounds, afterScreenUpdates: true)
+        }.cgImage
+    }
+
+    // `at` is a share of the width and height, from the top left
+    private func assertPixel(_ image: CGImage, at point: CGPoint, _ red: CGFloat, _ green: CGFloat,
+                             _ blue: CGFloat, matches: Bool = true,
+                             file: StaticString = #filePath, line: UInt = #line) {
+        var pixel = [UInt8](repeating: 0, count: 4)
+        let x = Int(point.x * CGFloat(image.width - 1)), y = Int(point.y * CGFloat(image.height - 1))
+        pixel.withUnsafeMutableBytes { buffer in
+            let context = CGContext(data: buffer.baseAddress, width: 1, height: 1, bitsPerComponent: 8,
+                                    bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            context?.draw(image, in: CGRect(x: -x, y: y - image.height + 1, width: image.width,
+                                            height: image.height))
+        }
+        let near = [red, green, blue].enumerated().allSatisfy { abs(CGFloat(pixel[$0]) / 255 - $1) < 0.04 }
+        XCTAssertEqual(near, matches, "pixel \(pixel) at \(point)", file: file, line: line)
     }
 }
