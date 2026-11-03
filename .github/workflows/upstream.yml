@@ -70,7 +70,10 @@ jobs:
             head=$(gh pr view "$pr" -R "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
             state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/status" \
                       -q '[.statuses[] | select(.context == "terrain-ios")][0].state // empty')
-            if [ -z "$state" ]; then
+            # pending with no run left: its build was dropped for lack of a Mac
+            active=$(gh run list -R "$GITHUB_REPOSITORY" --workflow terrain-ios.yml --json status \
+                       -q '[.[] | select(.status != "completed")] | length')
+            if [ -z "$state" ] || { [ "$state" = pending ] && [ "$active" = 0 ]; }; then
               # a pull request by this token starts no workflow; a dispatch does
               gh workflow run terrain-ios.yml -R "$GITHUB_REPOSITORY" --ref master -f pr="$pr"
               echo "testing #$pr at ${head:0:7}"

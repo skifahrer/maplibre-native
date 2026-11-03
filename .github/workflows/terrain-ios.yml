@@ -28,7 +28,7 @@ concurrency:
 env:
   BAZEL_FLAGS: --compilation_mode=opt --//:renderer=metal --features=thin_lto --apple_generate_dsym
   BAZEL_CACHE: --disk_cache=/Users/runner/.cache/bazel-disk --experimental_disk_cache_gc_max_size=6G
-  # one simulator at a time: a 4-core Intel runner fails to boot a second one
+  # one simulator at a time: two booting together can fail on a small runner
   BAZEL_TEST: --test_output=errors --local_test_jobs=1 --test_timeout=3600
 
 jobs:
@@ -76,11 +76,23 @@ jobs:
             echo "release=$release"
           } >> "$GITHUB_OUTPUT"
 
+      # set here, where a runner is always free: a build dropped for lack of a Mac stays pending
+      - name: Mark the commit pending
+        if: steps.plan.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.plan.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=pending -f context=terrain-ios \
+            -f target_url="$RUN_URL" -f description="Building and testing on a simulator" || true
+
   build:
     needs: check
     if: needs.check.outputs.build == 'true'
-    # the arm64 pool drops queued jobs for lack of capacity
-    runs-on: macos-26-intel
+    # Intel runs the core's timing tests too slowly; a run dropped for lack of a Mac leaves no
+    # status, so upstream's nightly dispatch tries it again
+    runs-on: macos-26
     timeout-minutes: 240
     env:
       SHA: ${{ needs.check.outputs.sha }}
@@ -88,11 +100,6 @@ jobs:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       # one status for our pull requests and upstream's, so one required check covers both
-      - name: Mark the commit pending
-        run: |
-          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=pending -f context=terrain-ios \
-            -f target_url="$RUN_URL" -f description="Building and testing on a simulator" || true
-
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.check.outputs.ref }}
