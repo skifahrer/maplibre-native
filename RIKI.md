@@ -45,3 +45,8 @@ Each push to `master` that changes the framework runs `terrain-ios` and publishe
 Riki Maps' `maplibre-terrain` workflow then opens its own pull request for that release, which
 needs an app build, the `ui-maps` suite and 3D on a simulator before it is merged.
 `terrain-ios` can be run by hand from the Actions tab (`force` rebuilds a released commit).
+
+When the release step itself fails (a run the Intel fallback dispatched was refused with HTTP
+403), the three files are kept a week as the run's `terrain-<commit>` artifact. Publish them by
+hand: `gh run download <run> -n terrain-<commit>`, then `gh release create terrain-<commit>
+--target <commit> MapLibre.xcframework.zip MapLibre.framework.dSYM.zip checksum.txt`.
