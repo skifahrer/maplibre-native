@@ -1228,6 +1228,27 @@ of north, the map will automatically snap to exact north.
     NS_SWIFT_NAME(setCenterAltitudeKeepingView(_:));
 
 /**
+ Moves the camera at once to look at a center that may stand above the ground.
+
+ A pitch past 90 degrees looks above the horizon, so the camera stays over the
+ ground only when the center is higher than it. Raise `maximumPitch` first; the
+ pitch is clamped to it.
+
+ @param centerCoordinate The new center coordinate.
+ @param centerAltitude The center's altitude above sea level, in meters, with
+    the terrain exaggeration applied.
+ @param zoomLevel The zoom level at the center.
+ @param direction The heading, in degrees clockwise from true north.
+ @param pitch The pitch, in degrees: 0 looks straight down, 90 at the horizon.
+ */
+- (void)setCenterCoordinate:(CLLocationCoordinate2D)centerCoordinate
+             centerAltitude:(CLLocationDistance)centerAltitude
+                  zoomLevel:(double)zoomLevel
+                  direction:(CLLocationDirection)direction
+                      pitch:(CGFloat)pitch
+    NS_SWIFT_NAME(setCenter(_:altitude:zoomLevel:direction:pitch:));
+
+/**
  * The minimum zoom level at which the map can be shown.
  *
  * Depending on the map view’s aspect ratio, the map view may be prevented
