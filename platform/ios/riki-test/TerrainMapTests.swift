@@ -5,7 +5,7 @@ import XCTest
 final class TerrainMapTests: TerrainMapTestCase {
     func testTerrainRendersFullyInEveryLoadAndLodMode() throws {
         try loadMap()
-        let loads: [MLNTerrainLoadMode] = [.quality, .balanced, .performance]
+        let loads: [MLNTerrainLoadMode] = [.quality, .balanced, .performance, .closeUp]
         let lods: [MLNTileLodMode] = [.default, .distance, .adaptive]
         for (index, load) in loads.enumerated() {
             for lod in lods {
