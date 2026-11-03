@@ -9,6 +9,7 @@
 #include <mln/style/source_impl.hpp>
 #include <mln/style/sources/vector_source.hpp>
 #include <mln/style/layer.hpp>
+#include <mln/style/layers/background_layer.hpp>
 #include <mln/style/layers/line_layer.hpp>
 #include <mln/style/rapidjson_conversion.hpp>
 #include <mln/util/exception.hpp>
@@ -524,4 +525,56 @@ TEST(Style, TransitionOptionsPublishUpdates) {
     const auto updates = observer.updates;
     style.setTransitionOptions({Milliseconds(123), Milliseconds(45), false});
     EXPECT_EQ(updates, observer.updates);
+}
+
+namespace {
+
+std::vector<std::string> layerIDs(const Style::Impl& style) {
+    std::vector<std::string> ids;
+    for (const auto* layer : style.getLayers()) ids.push_back(layer->getID());
+    return ids;
+}
+
+std::vector<std::string> layerImplIDs(const Style::Impl& style) {
+    std::vector<std::string> ids;
+    for (const auto& impl : *style.getLayerImpls()) ids.push_back(impl->id);
+    return ids;
+}
+
+} // namespace
+
+// Parsed layers are appended at once; they must end up as if added one by one.
+TEST(StyleParsedLayers, KeepTheirOrderAndDropARepeatedID) {
+    util::RunLoop loop;
+    auto fileSource = std::make_shared<StubFileSource>();
+    Style::Impl style{fileSource, 1.0, {Scheduler::GetBackground(), {}}};
+    style.loadJSON(R"STYLE({"version": 8, "sources": {}, "layers": [
+        {"id": "a", "type": "background"},
+        {"id": "b", "type": "background"},
+        {"id": "a", "type": "background"},
+        {"id": "c", "type": "background"}
+    ]})STYLE");
+
+    const std::vector<std::string> order{"a", "b", "c"};
+    EXPECT_EQ(layerIDs(style), order);
+    EXPECT_EQ(layerImplIDs(style), order);
+    for (const auto& id : order) EXPECT_NE(style.getLayer(id), nullptr) << id;
+}
+
+TEST(StyleParsedLayers, StayEditableAfterTheParse) {
+    util::RunLoop loop;
+    auto fileSource = std::make_shared<StubFileSource>();
+    Style::Impl style{fileSource, 1.0, {Scheduler::GetBackground(), {}}};
+    style.loadJSON(R"STYLE({"version": 8, "sources": {}, "layers": [
+        {"id": "a", "type": "background"},
+        {"id": "b", "type": "background"},
+        {"id": "c", "type": "background"}
+    ]})STYLE");
+
+    style.addLayer(std::make_unique<BackgroundLayer>("d"), std::string{"b"});
+    EXPECT_EQ(layerIDs(style), (std::vector<std::string>{"a", "d", "b", "c"}));
+    EXPECT_NE(style.removeLayer("a"), nullptr);
+    EXPECT_EQ(layerIDs(style), (std::vector<std::string>{"d", "b", "c"}));
+    EXPECT_EQ(layerImplIDs(style), (std::vector<std::string>{"d", "b", "c"}));
+    EXPECT_THROW(style.addLayer(std::make_unique<BackgroundLayer>("c")), std::runtime_error);
 }
