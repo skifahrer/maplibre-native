@@ -14,22 +14,34 @@ What is ours besides those commits:
 ## Upstream comes in by pull request
 
 `upstream` runs every night. It keeps one pull request open from each of upstream's `main` and
-`feature/terrain-3d` into `master`, straight from upstream's branch, and has `terrain-ios` test
-each new upstream head merged into `master`. Nothing is merged on its own.
+`feature/terrain-3d` into `master`, straight from upstream's branch, mentions @skifahrer when it
+opens one, and has `terrain-ios` test each new upstream head. Nothing is merged on its own.
 
-The `terrain-ios` status builds the framework, then runs upstream's iOS tests
-(`//platform/ios/test:ios_test`) and ours (`//platform/ios/riki-test:riki_test`) on an iOS
-simulator. Merge only when it is green on the head. When upstream conflicts with our changes:
-branch off `master`, `git pull https://github.com/maplibre/maplibre-native.git <branch>`,
-resolve, and open a pull request from that branch instead.
+`terrain-ios` merges that head into today's `master` on the runner (GitHub's own merge commit of
+a fork's branch can lag `master` by hours), builds the framework, and runs upstream's iOS tests
+(`//platform/ios/test:ios_test`), ours (`//platform/ios/riki-test:riki_test`) and the core's
+terrain tests on an iOS simulator, one at a time. The result is the `terrain-ios` status on the
+pull request's head; merge only when it is green. When upstream conflicts with our changes, or a
+test shows a clash: branch off `master`, `git pull https://github.com/maplibre/maplibre-native.git
+<branch>`, resolve, open a pull request from that branch and close the upstream one.
+
+It runs on Apple-silicon runners (`macos-26`); Intel runners run the core's timing tests too
+slowly. When GitHub has no Mac free it drops the job and the status stays pending; the next
+nightly `upstream` run starts it again. Start it by hand from the Actions tab (`pr` = the number)
+to go sooner.
+
+A pull request or push that changes only `.github/` or `*.md` files is not built: `terrain-ios`
+marks it green at once. A change to `terrain-ios.yml` itself is always built.
 
 ## Releases
 
-Each push to `master` runs `terrain-ios` and publishes `terrain-<commit>`:
+Each push to `master` that changes the framework runs `terrain-ios` and publishes
+`terrain-<commit>`:
 
 - `MapLibre.xcframework.zip`: the dynamic framework, without its dSYMs
 - `MapLibre.framework.dSYM.zip`: the device dSYM, for crash symbolication
 - `checksum.txt`: the Swift Package Manager checksum of the framework zip
 
-Riki Maps' `maplibre-terrain` workflow then opens its own pull request for that release.
+Riki Maps' `maplibre-terrain` workflow then opens its own pull request for that release, which
+needs an app build, the `ui-maps` suite and 3D on a simulator before it is merged.
 `terrain-ios` can be run by hand from the Actions tab (`force` rebuilds a released commit).
