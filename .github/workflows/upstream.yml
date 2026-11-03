@@ -57,7 +57,8 @@ jobs:
             if [ -z "$pr" ]; then
               # maintainer edits would need a grant on upstream's branch, which we cannot give
               pr=$(gh pr create -R "$GITHUB_REPOSITORY" --base master --head "$owner:$branch" \
-                     --no-maintainer-edit --title "Upstream $branch comes in" --body "Booking." | grep -o '[0-9]*$')
+                     --no-maintainer-edit --title "Upstream $branch comes in" \
+                     --body "Booking. @skifahrer" | grep -o '[0-9]*$')
               gh pr edit "$pr" -R "$GITHUB_REPOSITORY" --title "$pr Upstream $branch comes in" --body "$UPSTREAM's \`$branch\`, straight from upstream. It follows the branch as it moves.
 
           The \`terrain-ios\` status builds it merged into master and runs upstream's iOS tests and ours on a simulator, again each time upstream moves. Merge only when it is green on the head.
@@ -70,7 +71,10 @@ jobs:
             head=$(gh pr view "$pr" -R "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
             state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/status" \
                       -q '[.statuses[] | select(.context == "terrain-ios")][0].state // empty')
-            if [ -z "$state" ]; then
+            # pending with no run left: its build was dropped for lack of a Mac
+            active=$(gh run list -R "$GITHUB_REPOSITORY" --workflow terrain-ios.yml --json status \
+                       -q '[.[] | select(.status != "completed")] | length')
+            if [ -z "$state" ] || { [ "$state" = pending ] && [ "$active" = 0 ]; }; then
               # a pull request by this token starts no workflow; a dispatch does
               gh workflow run terrain-ios.yml -R "$GITHUB_REPOSITORY" --ref master -f pr="$pr"
               echo "testing #$pr at ${head:0:7}"
