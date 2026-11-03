@@ -130,6 +130,9 @@ typedef NS_ENUM(NSUInteger, MLNTerrainLoadMode) {
   MLNTerrainLoadModeBalanced,
   /** 8 new tiles and 4 drapes a frame; up to 24 terrain tiles. */
   MLNTerrainLoadModePerformance,
+  /** As Performance, but the tiles near the camera go as deep as the view, for a
+      view from the ground. */
+  MLNTerrainLoadModeCloseUp,
 };
 
 /**

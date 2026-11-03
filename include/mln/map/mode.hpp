@@ -68,6 +68,8 @@ enum class TerrainLoadMode : uint8_t {
                  ///< 48 mesh tiles.
     Performance, ///< Cap 8 new-tile builds + 4 drape re-renders per frame; smoothest on
                  ///< weak GPUs, most progressive fill-in. Mesh to z14, up to 24 mesh tiles.
+    CloseUp,     ///< Performance's budget, but the mesh follows the view as in Quality: standing
+                 ///< on the ground, sharp underfoot and coarser with distance.
 };
 
 /// Budgets for a TerrainLoadMode. A per-frame value <= 0 means unlimited.
@@ -99,6 +101,8 @@ constexpr TerrainLoadBudget terrainLoadBudget(TerrainLoadMode mode) {
                 .newTileBuildsPerFrame = 32, .drapeRerendersPerFrame = 16, .maxMeshTiles = 48, .meshTargetZoom = 15};
         case TerrainLoadMode::Performance:
             return {.newTileBuildsPerFrame = 8, .drapeRerendersPerFrame = 4, .maxMeshTiles = 24, .meshTargetZoom = 14};
+        case TerrainLoadMode::CloseUp:
+            return {.newTileBuildsPerFrame = 8, .drapeRerendersPerFrame = 4, .maxMeshTiles = 24, .meshTargetZoom = 22};
         case TerrainLoadMode::Quality:
         default:
             // no per-frame budget, generous tile cap, mesh follows the view

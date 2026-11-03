@@ -320,6 +320,22 @@ MeshDetail meshDetail(const std::array<double, 2>& ground) {
 
 } // namespace
 
+// Standing on the ground (z18, a z12 DEM), CloseUp meshes deeper than Performance under the
+// camera, on the same tile cap: the far tiles go coarser to pay for it.
+TEST(TerrainSourceCover, CloseUpIsFinerUnderTheCameraOnTheSameCap) {
+    const auto detailIn = [](TerrainLoadMode mode) {
+        TerrainSourceCoverTest test(
+            {.demMinZoom = 0, .demMaxZoom = 12, .mode = mode, .pitch = 75.0, .zoom = 18.0});
+        test.settleDEM();
+        EXPECT_LE(util::terrainMeshCover().size(), terrainLoadBudget(mode).maxMeshTiles);
+        return meshDetail(test.cameraGround());
+    };
+    const MeshDetail performance = detailIn(TerrainLoadMode::Performance);
+    const MeshDetail closeUp = detailIn(TerrainLoadMode::CloseUp);
+    EXPECT_EQ(14, performance.nearestTheCamera);
+    EXPECT_GT(closeUp.nearestTheCamera, performance.nearestTheCamera + 2);
+}
+
 // Once loaded, a camera that stands still draws the same mesh and asks for nothing new: a frame
 // that swapped in other tiles is the 3D shading blinking with nothing moving.
 TEST(TerrainSourceCover, AStillCameraKeepsItsMeshAndItsDEM) {
