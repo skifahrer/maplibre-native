@@ -429,6 +429,15 @@ Color Map::getClayColor() const {
     return impl->transform.getState().getClayColor();
 }
 
+void Map::setSkyColor(const Color& color) {
+    impl->transform.setSkyColor(color);
+    impl->onUpdate();
+}
+
+Color Map::getSkyColor() const {
+    return impl->transform.getState().getSkyColor();
+}
+
 void Map::setNorthOrientation(NorthOrientation orientation) {
     impl->transform.setNorthOrientation(orientation);
     impl->onUpdate();

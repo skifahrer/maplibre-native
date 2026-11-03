@@ -3313,6 +3313,15 @@ static void *windowScreenContext = &windowScreenContext;
   return color.a > 0 ? [UIColor mgl_colorWithColor:color] : nil;
 }
 
+- (void)setSkyColor:(UIColor *)skyColor {
+  _mbglMap->setSkyColor(skyColor ? skyColor.mgl_color : mln::Color{0, 0, 0, 0});
+}
+
+- (UIColor *)skyColor {
+  const mln::Color color = _mbglMap->getSkyColor();
+  return color.a > 0 ? [UIColor mgl_colorWithColor:color] : nil;
+}
+
 - (void)setCenterClampedToGround:(BOOL)centerClampedToGround {
   _mbglMap->setCenterClampedToGround(centerClampedToGround);
 }
@@ -4054,6 +4063,30 @@ static void *windowScreenContext = &windowScreenContext;
 
 - (CLLocationDistance)centerAltitude {
   return self.mbglMap.getCameraOptions().centerAltitude.value_or(0.0);
+}
+
+- (void)setCenterCoordinate:(CLLocationCoordinate2D)centerCoordinate
+             centerAltitude:(CLLocationDistance)centerAltitude
+                  zoomLevel:(double)zoomLevel
+                  direction:(CLLocationDirection)direction
+                      pitch:(CGFloat)pitch {
+  if (!_mbglMap) {
+    return;
+  }
+  MLNLogDebug(@"Setting center: %@ altitude: %f zoomLevel: %f direction: %f pitch: %f",
+              MLNStringFromCLLocationCoordinate2D(centerCoordinate), centerAltitude, zoomLevel,
+              direction, pitch);
+  [self willChangeValueForKey:@"camera"];
+  [self cancelTransitions];
+  self.cameraChangeReasonBitmask |= MLNCameraChangeReasonProgrammatic;
+  self.mbglMap.jumpTo(mln::CameraOptions()
+                          .withCenter(MLNLatLngFromLocationCoordinate2D(centerCoordinate))
+                          .withCenterAltitude(centerAltitude)
+                          .withPadding(MLNEdgeInsetsFromNSEdgeInsets(self.contentInset))
+                          .withZoom(zoomLevel)
+                          .withBearing(direction)
+                          .withPitch(pitch));
+  [self didChangeValueForKey:@"camera"];
 }
 
 - (BOOL)setCenterAltitudeKeepingView:(CLLocationDistance)altitude {

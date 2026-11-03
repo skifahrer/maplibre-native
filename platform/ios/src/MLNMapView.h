@@ -631,6 +631,17 @@ MLN_EXPORT
 @property (nonatomic, nullable) UIColor *clayColor;
 
 /**
+ The color shown where the map draws nothing, as above the horizon of a map
+ tipped past it, or `nil` for the style's background color.
+
+ Only the screen behind the map takes it; draped layers keep the background
+ color as their base.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic, nullable) UIColor *skyColor;
+
+/**
  Whether the map centre rides the 3D terrain surface rather than sea level.
 
  When this is `YES`, the altitude of the map centre follows the rendered terrain
@@ -1229,6 +1240,27 @@ of north, the map will automatically snap to exact north.
  */
 - (BOOL)setCenterAltitudeKeepingView:(CLLocationDistance)altitude
     NS_SWIFT_NAME(setCenterAltitudeKeepingView(_:));
+
+/**
+ Moves the camera at once to look at a center that may stand above the ground.
+
+ A pitch past 90 degrees looks above the horizon, so the camera stays over the
+ ground only when the center is higher than it. Raise `maximumPitch` first; the
+ pitch is clamped to it.
+
+ @param centerCoordinate The new center coordinate.
+ @param centerAltitude The center's altitude above sea level, in meters, with
+    the terrain exaggeration applied.
+ @param zoomLevel The zoom level at the center.
+ @param direction The heading, in degrees clockwise from true north.
+ @param pitch The pitch, in degrees: 0 looks straight down, 90 at the horizon.
+ */
+- (void)setCenterCoordinate:(CLLocationCoordinate2D)centerCoordinate
+             centerAltitude:(CLLocationDistance)centerAltitude
+                  zoomLevel:(double)zoomLevel
+                  direction:(CLLocationDirection)direction
+                      pitch:(CGFloat)pitch
+    NS_SWIFT_NAME(setCenter(_:altitude:zoomLevel:direction:pitch:));
 
 /**
  * The minimum zoom level at which the map can be shown.

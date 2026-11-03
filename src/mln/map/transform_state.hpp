@@ -157,6 +157,10 @@ public:
     Color getClayColor() const { return clayColor; }
     void setClayColor(const Color& color) { clayColor = color; }
 
+    /// Where nothing is drawn (Map::setSkyColor), premultiplied; transparent for the background.
+    Color getSkyColor() const { return skyColor; }
+    void setSkyColor(const Color& color) { skyColor = color; }
+
     // North Orientation
     NorthOrientation getNorthOrientation() const;
     double getNorthOrientationAngle() const;
@@ -311,6 +315,7 @@ private:
     double fogStart = 0;
     double fogEnd = 0;
     Color clayColor = Color{0.0f, 0.0f, 0.0f, 0.0f};
+    Color skyColor = Color{0.0f, 0.0f, 0.0f, 0.0f};
 
     mat4 coordinatePointMatrix(const mat4& projMatrix) const;
     mat4 getPixelMatrix() const;
