@@ -16,8 +16,14 @@ on:
         description: Rebuild and release even if this commit already has a release
         type: boolean
         default: false
+      runner:
+        description: Apple silicon first; intel is the run started when no arm64 Mac took it
+        type: choice
+        options: [apple, intel]
+        default: apple
 
 permissions:
+  actions: write
   contents: write
   statuses: write
 
@@ -115,12 +121,46 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=pending -f context=terrain-ios \
             -f target_url="$RUN_URL" -f description="Building and testing on a simulator" || true
 
+  # The arm64 pool drops a job it cannot take within about 15 minutes; this run then
+  # starts again on Intel, which always has a Mac free.
+  intel-if-no-mac:
+    needs: check
+    if: needs.check.outputs.build == 'true' && inputs.runner != 'intel'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: ${{ github.head_ref || github.ref_name }}
+      PR: ${{ inputs.pr || '' }}
+      FORCE: ${{ inputs.force || false }}
+    steps:
+      - name: Start again on Intel if no Apple silicon Mac takes the build
+        run: |
+          build() {
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
+              -q ".jobs[] | select(.name == \"build\") | \"\\(.status) \\(.conclusion) \\(.runner_name)\""
+          }
+          # checked until just before the pool's own cut, so the run is never left without one
+          for _ in $(seq 1 13); do
+            sleep 60
+            read -r status conclusion runner <<< "$(build)"
+            case "$status" in
+              queued | waiting | pending | "") ;;
+              completed) [ "$conclusion" = cancelled ] && [ "$runner" = null ] && break; exit 0 ;;
+              *) echo "build taken by $runner"; exit 0 ;;
+            esac
+          done
+          echo "::warning::no Apple silicon Mac took the build; starting this run again on Intel"
+          gh workflow run terrain-ios.yml -R "$GITHUB_REPOSITORY" --ref "$BRANCH" \
+            -f runner=intel -f pr="$PR" -f force="$FORCE"
+          gh run cancel "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY"
+
   build:
     needs: check
     if: needs.check.outputs.build == 'true'
-    # Intel runs the core's timing tests too slowly; a run dropped for lack of a Mac leaves no
-    # status, so upstream's nightly dispatch tries it again
-    runs-on: macos-26
+    # Apple silicon first: Intel runs the core's timing tests 5-10x slower. A run no arm64 Mac
+    # takes is started again on Intel by intel-if-no-mac.
+    runs-on: ${{ inputs.runner == 'intel' && 'macos-26-intel' || 'macos-26' }}
     timeout-minutes: 240
     env:
       SHA: ${{ needs.check.outputs.sha }}
