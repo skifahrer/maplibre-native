@@ -344,6 +344,7 @@ enum {
 enum {
     idHeatmapImageTexture,
     idHeatmapColorRampTexture,
+    idHeatmapDEMTexture,
     heatmapTextureCount
 };
 
