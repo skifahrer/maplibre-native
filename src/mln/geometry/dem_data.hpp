@@ -36,6 +36,10 @@ private:
     int32_t minElevation = 0;
     int32_t maxElevation = 0;
 
+    float elevation(int32_t x, int32_t y) const;
+    void setElevation(int32_t x, int32_t y, float elevation);
+    void extendSlopeIntoBorder();
+
     size_t idx(const int32_t x, const int32_t y) const {
         assert(x >= -2);
         assert(x < dim + 2);
