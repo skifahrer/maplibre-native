@@ -81,6 +81,7 @@ private:
             case TerrainLoadMode::Balanced:
                 return 64u << 20;
             case TerrainLoadMode::Performance:
+            case TerrainLoadMode::CloseUp:
                 return 24u << 20;
             case TerrainLoadMode::Quality:
             default:

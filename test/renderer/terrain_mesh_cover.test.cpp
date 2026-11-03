@@ -192,7 +192,7 @@ int meshMaxZoom(TerrainLoadMode mode, uint8_t demMaxZoom) {
 }
 
 constexpr TerrainLoadMode allModes[] = {
-    TerrainLoadMode::Quality, TerrainLoadMode::Balanced, TerrainLoadMode::Performance};
+    TerrainLoadMode::Quality, TerrainLoadMode::Balanced, TerrainLoadMode::Performance, TerrainLoadMode::CloseUp};
 } // namespace
 
 TEST(TerrainMeshCover, MeshGoesPastACoarseDEMAsFarAsTheModeAffords) {
@@ -213,6 +213,17 @@ TEST(TerrainMeshCover, QualityFollowsTheViewAsGlJsDoes) {
     for (const uint8_t demMaxZoom : {6, 12, 15, 18, 22}) {
         EXPECT_EQ(util::DEFAULT_MAX_ZOOM, meshMaxZoom(TerrainLoadMode::Quality, demMaxZoom));
     }
+}
+
+TEST(TerrainMeshCover, CloseUpFollowsTheViewOnPerformancesBudget) {
+    for (const uint8_t demMaxZoom : {6, 12, 15}) {
+        EXPECT_EQ(util::DEFAULT_MAX_ZOOM, meshMaxZoom(TerrainLoadMode::CloseUp, demMaxZoom));
+    }
+    const auto closeUp = terrainLoadBudget(TerrainLoadMode::CloseUp);
+    const auto performance = terrainLoadBudget(TerrainLoadMode::Performance);
+    EXPECT_EQ(performance.maxMeshTiles, closeUp.maxMeshTiles);
+    EXPECT_EQ(performance.newTileBuildsPerFrame, closeUp.newTileBuildsPerFrame);
+    EXPECT_EQ(performance.drapeRerendersPerFrame, closeUp.drapeRerendersPerFrame);
 }
 
 TEST(TerrainMeshCover, MeshIsNeverShallowerThanTheDEM) {

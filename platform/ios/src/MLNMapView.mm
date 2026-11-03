@@ -3337,6 +3337,9 @@ static void *windowScreenContext = &windowScreenContext;
     case MLNTerrainLoadModePerformance:
       _mbglMap->setTerrainLoadMode(mln::TerrainLoadMode::Performance);
       break;
+    case MLNTerrainLoadModeCloseUp:
+      _mbglMap->setTerrainLoadMode(mln::TerrainLoadMode::CloseUp);
+      break;
     default:
       _mbglMap->setTerrainLoadMode(mln::TerrainLoadMode::Quality);
       break;
@@ -3349,6 +3352,8 @@ static void *windowScreenContext = &windowScreenContext;
       return MLNTerrainLoadModeBalanced;
     case mln::TerrainLoadMode::Performance:
       return MLNTerrainLoadModePerformance;
+    case mln::TerrainLoadMode::CloseUp:
+      return MLNTerrainLoadModeCloseUp;
     default:
       return MLNTerrainLoadModeQuality;
   }
