@@ -224,22 +224,44 @@ jobs:
           ls -la out
           du -sh x/MapLibre.xcframework/ios-arm64/MapLibre.framework/MapLibre
 
-      # Upstream's iOS tests and ours, on the simulator; not opt, whose NDEBUG drops the
-      # assertions upstream's tests expect to throw.
-      - name: Test on a simulator
+      # not opt, whose NDEBUG drops the assertions upstream's tests expect to throw
+      - name: Test ours on a simulator
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE $BAZEL_TEST --//:renderer=metal \
-            //platform/ios/test:ios_test //platform/ios/riki-test:riki_test
+          bazel test $BAZEL_CACHE $BAZEL_TEST --//:renderer=metal //platform/ios/riki-test:riki_test
 
-      # The core's terrain and tile cover tests. Alone: beside the others,
-      # xcodebuild missed the simulator Bazel had just made for them.
-      - name: Test the terrain core on a simulator
+      - name: Test upstream's iOS on a simulator
         if: success() || failure()
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE $BAZEL_TEST $BAZEL_FLAGS \
-            '--test_env=GTEST_FILTER=*Terrain*:*TileCover*:*MeshCover*:*Fog*' \
+          bazel test $BAZEL_CACHE $BAZEL_TEST --//:renderer=metal //platform/ios/test:ios_test
+
+      # each group alone: beside the others, xcodebuild missed the simulator Bazel had just made
+      - name: Test the core's terrain camera
+        if: success() || failure()
+        env:
+          FILTER: "*TerrainCamera*"
+        run: |
+          # shellcheck disable=SC2086
+          bazel test $BAZEL_CACHE $BAZEL_TEST $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
+            //platform/ios/test/core:CppUnitTests
+
+      - name: Test the core's tile and mesh cover
+        if: success() || failure()
+        env:
+          FILTER: "*TileCover*:*MeshCover*:*TerrainSourceCover*"
+        run: |
+          # shellcheck disable=SC2086
+          bazel test $BAZEL_CACHE $BAZEL_TEST $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
+            //platform/ios/test/core:CppUnitTests
+
+      - name: Test the core's drape, elevation and fog
+        if: success() || failure()
+        env:
+          FILTER: "*Terrain*:*Fog*-*TerrainCamera*:*MeshCover*:*TerrainSourceCover*"
+        run: |
+          # shellcheck disable=SC2086
+          bazel test $BAZEL_CACHE $BAZEL_TEST $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
             //platform/ios/test/core:CppUnitTests
 
       # Kept under 6 GB by Bazel, inside the repository's 10 GB of Actions cache.
