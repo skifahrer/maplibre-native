@@ -49,6 +49,9 @@ public:
 
     gfx::Texture2D& setUsage(MTL::TextureUsage usage_) noexcept;
 
+    /// For an attachment no pass loads or stores: on a device it then takes no memory.
+    gfx::Texture2D& setMemoryless(bool memoryless_) noexcept;
+
     MTL::Texture* getMetalTexture() const noexcept;
 
     void updateSamplerConfiguration();
@@ -67,6 +70,7 @@ private:
     MTL::PixelFormat getMetalPixelFormat() const noexcept;
     void createMetalTexture();
     void destroyMetalTexture() noexcept;
+    size_t heldBytes() const noexcept;
 
     Context& context;
     MTLTexturePtr metalTexture;
@@ -76,6 +80,7 @@ private:
     gfx::TexturePixelType pixelFormat{gfx::TexturePixelType::RGBA};
     gfx::TextureChannelDataType channelType{gfx::TextureChannelDataType::UnsignedByte};
     MTL::TextureUsage usage{MTL::TextureUsageShaderRead};
+    bool memoryless{false};
     SamplerState samplerState{};
 
     std::shared_ptr<PremultipliedImage> image{nullptr};

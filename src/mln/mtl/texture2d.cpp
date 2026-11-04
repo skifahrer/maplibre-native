@@ -161,6 +161,11 @@ void Texture2D::createMetalTexture() {
     if (auto textureDescriptor = NS::RetainPtr(
             MTL::TextureDescriptor::texture2DDescriptor(format, size.width, size.height, /*mipmapped=*/false))) {
         textureDescriptor->setUsage(usage);
+#if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
+        if (memoryless) {
+            textureDescriptor->setStorageMode(MTL::StorageModeMemoryless);
+        }
+#endif
 #if TARGET_OS_SIMULATOR || defined(__x86_64__)
         switch (format) {
             case MTL::PixelFormatDepth16Unorm:
@@ -190,7 +195,7 @@ void Texture2D::createMetalTexture() {
         context.threadSafeAccessRenderingStats([&](gfx::RenderingStats& stats) {
             stats.numCreatedTextures++;
             stats.numActiveTextures++;
-            stats.memTextures += getDataSize();
+            stats.memTextures += heldBytes();
         });
     }
 }
@@ -212,7 +217,7 @@ void Texture2D::destroyMetalTexture() noexcept {
     metalTexture.reset();
     context.threadSafeAccessRenderingStats([&](gfx::RenderingStats& stats) {
         stats.numActiveTextures--;
-        stats.memTextures -= getDataSize();
+        stats.memTextures -= heldBytes();
     });
 }
 
@@ -220,6 +225,21 @@ gfx::Texture2D& Texture2D::setUsage(MTL::TextureUsage usage_) noexcept {
     usage = usage_;
     textureDirty = true;
     return *this;
+}
+
+gfx::Texture2D& Texture2D::setMemoryless(bool memoryless_) noexcept {
+    memoryless = memoryless_;
+    textureDirty = true;
+    return *this;
+}
+
+size_t Texture2D::heldBytes() const noexcept {
+#if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
+    if (memoryless) {
+        return 0;
+    }
+#endif
+    return getDataSize();
 }
 
 MTL::Texture* Texture2D::getMetalTexture() const noexcept {
