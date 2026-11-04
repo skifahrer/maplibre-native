@@ -95,3 +95,46 @@ TEST(RasterDEMTile, onParsedEmpty) {
     EXPECT_TRUE(tile.isLoaded());
     EXPECT_TRUE(tile.isComplete());
 }
+
+namespace {
+// Backfill only checks these exist; tests have no GPU context for real ones.
+template <typename T>
+std::shared_ptr<T> placeholder() {
+    static char storage;
+    return std::shared_ptr<T>(std::shared_ptr<T>{}, reinterpret_cast<T*>(&storage));
+}
+} // namespace
+
+// 70 (for 68): after a backfill a prepared tile redraws its target, not rebuilds it.
+TEST(RasterDEMTile, TerrainBackfillRedrawsThePreparedTarget) {
+    RasterDEMTileTest test;
+    RasterDEMTile tile(OverscaledTileID(1, 0, 0), "testSource", test.tileParameters, test.tileset);
+    RasterDEMTile right(OverscaledTileID(1, 1, 0), "testSource", test.tileParameters, test.tileset);
+    tile.onParsed(std::make_unique<HillshadeBucket>(PremultipliedImage({16, 16}), Tileset::RasterEncoding::Mapbox), 0);
+    right.onParsed(std::make_unique<HillshadeBucket>(PremultipliedImage({16, 16}), Tileset::RasterEncoding::Mapbox), 0);
+
+    auto* bucket = tile.getBucket();
+    bucket->renderTarget = placeholder<RenderTarget>();
+    bucket->prepareDEMTexture = placeholder<gfx::Texture2D>();
+    bucket->renderTargetPrepared = true;
+
+    tile.backfillBorder(right, DEMTileNeighbors::Right);
+
+    EXPECT_TRUE(bucket->renderTargetPrepared);
+    EXPECT_TRUE(bucket->borderChanged);
+}
+
+// 70 (for 68): a tile with no target yet is still prepared from scratch.
+TEST(RasterDEMTile, TerrainBackfillWithoutATargetPreparesAfresh) {
+    RasterDEMTileTest test;
+    RasterDEMTile tile(OverscaledTileID(1, 0, 0), "testSource", test.tileParameters, test.tileset);
+    RasterDEMTile right(OverscaledTileID(1, 1, 0), "testSource", test.tileParameters, test.tileset);
+    tile.onParsed(std::make_unique<HillshadeBucket>(PremultipliedImage({16, 16}), Tileset::RasterEncoding::Mapbox), 0);
+    right.onParsed(std::make_unique<HillshadeBucket>(PremultipliedImage({16, 16}), Tileset::RasterEncoding::Mapbox), 0);
+    tile.getBucket()->renderTargetPrepared = true;
+
+    tile.backfillBorder(right, DEMTileNeighbors::Right);
+
+    EXPECT_FALSE(tile.getBucket()->renderTargetPrepared);
+    EXPECT_FALSE(tile.getBucket()->borderChanged);
+}
