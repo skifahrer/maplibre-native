@@ -456,7 +456,8 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             // camera-independent (tile-local matrix), so the recomputed per-drawable camera
             // UBOs would go unused. A real change moves the signature and re-runs the tweaker
             // the same frame the drape re-renders, keeping the two consistent.
-            const bool skipDrapedTweaker = terrainActive && !drapedContentChanged && layerGroup.shouldRenderToTerrain();
+            const bool skipDrapedTweaker = terrainActive && !drapedContentChanged && !drapeDeferredLastFrame &&
+                                           layerGroup.shouldRenderToTerrain();
             if (!skipDrapedTweaker) {
                 layerGroup.runTweakers(renderTree, parameters);
             }
@@ -813,6 +814,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
 
     // Add the feature info from the render orchestrator
     stats->frameRenderedFeatures = std::move(orchestrator.moveFrameRenderedFeatures());
+    drapeDeferredLastFrame = drapeWorkDeferred;
 
     observer->onDidFinishRenderingFrame(
         renderTreeParameters.loaded ? RendererObserver::RenderMode::Full : RendererObserver::RenderMode::Partial,

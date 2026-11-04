@@ -121,6 +121,8 @@ private:
     // tweakers and the fresh drape targets would bake stale screen-space UBOs - a blank map
     // until the view moves. Force a full re-bake on the frame the cover reappears.
     bool terrainHadCoverLastFrame = false;
+    // A drape the budget deferred renders on a later frame and needs its tweakers then too.
+    bool drapeDeferredLastFrame = false;
 
     // Bounded follow-up-frame budget for a terrain that is enabled but produced an empty
     // drape cover. On the first frame after terrain is (re)enabled, RenderTerrain::update -
