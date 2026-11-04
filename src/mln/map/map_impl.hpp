@@ -131,6 +131,8 @@ public:
     bool centerClampedToGround = false;
     /// Terrain height under the centre, as the renderer last reported it (NaN until then).
     double terrainCenterElevation = std::numeric_limits<double>::quiet_NaN();
+    /// Where a point on screen meets the drawn ground: 0 without terrain.
+    double groundUnderCentre() const;
     /// Terrain height under the camera's eye, as the renderer last reported it (NaN until then).
     double terrainEyeElevation = std::numeric_limits<double>::quiet_NaN();
     /// How far above the ground under it the eye is kept, in meters.
