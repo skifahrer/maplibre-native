@@ -378,6 +378,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                     return;
                 }
                 drapedGroupCount++;
+                const std::size_t layerHash = std::hash<std::string>{}(layerGroup.getName());
                 static_cast<TileLayerGroup&>(layerGroup).visitDrawables([&](const gfx::Drawable& drawable) {
                     if (!drawable.getEnabled() || !drawable.getTileID()) {
                         return;
@@ -400,6 +401,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                             util::hash_combine(h, bucket->getID().id());
                         }
                     }
+                    util::hash_combine(h, layerHash);
                     util::hash_combine(signature, h);
                     drapedTiles.emplace_back(tile, h);
                 });

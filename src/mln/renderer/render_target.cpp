@@ -134,6 +134,8 @@ RenderTarget::DrapeCoverage RenderTarget::computeDrapeCoverage(RenderOrchestrato
             return;
         }
         coverage.totalGroups++;
+        // Raster drawables carry no bucket: without the layer, two layers on the same tiles match.
+        const std::size_t layerHash = std::hash<std::string>{}(layerGroup.getName());
         bool haveExactOrDescendant = false;
         std::optional<UnwrappedTileID> bestAncestor;
         std::set<UnwrappedTileID> drawnTiles;
@@ -177,6 +179,7 @@ RenderTarget::DrapeCoverage RenderTarget::computeDrapeCoverage(RenderOrchestrato
                 util::hash_combine(tileHash, unwrapped.canonical.x);
                 util::hash_combine(tileHash, unwrapped.canonical.y);
                 util::hash_combine(tileHash, bucketHash);
+                util::hash_combine(tileHash, layerHash);
                 coverage.contentHash += tileHash;
             }
             if (unwrapped == *drapeTileID || unwrapped.isChildOf(*drapeTileID)) {
@@ -201,6 +204,7 @@ RenderTarget::DrapeCoverage RenderTarget::computeDrapeCoverage(RenderOrchestrato
             util::hash_combine(tileHash, unwrapped.canonical.x);
             util::hash_combine(tileHash, unwrapped.canonical.y);
             util::hash_combine(tileHash, bucketHash);
+            util::hash_combine(tileHash, layerHash);
             coverage.contentHash += tileHash;
         });
         // A tile the layer covers but draws nothing on - its data emptied, e.g. a GeoJSON source
@@ -218,6 +222,7 @@ RenderTarget::DrapeCoverage RenderTarget::computeDrapeCoverage(RenderOrchestrato
             util::hash_combine(tileHash, tile.canonical.x);
             util::hash_combine(tileHash, tile.canonical.y);
             util::hash_combine(tileHash, std::size_t{0xE3}); // no drawables: empty content
+            util::hash_combine(tileHash, layerHash);
             coverage.contentHash += tileHash;
             if (tile == *drapeTileID || tile.isChildOf(*drapeTileID)) {
                 haveExactOrDescendant = true;
