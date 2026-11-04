@@ -36,8 +36,9 @@ public:
             depthTexture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Linear,
                                                    .wrapU = gfx::TextureWrapType::Clamp,
                                                    .wrapV = gfx::TextureWrapType::Clamp});
-            static_cast<Texture2D*>(depthTexture.get())
-                ->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite | MTL::TextureUsageRenderTarget);
+            // Cleared at every pass and never stored, so it needs no memory of its own.
+            static_cast<Texture2D*>(depthTexture.get())->setUsage(MTL::TextureUsageRenderTarget);
+            static_cast<Texture2D*>(depthTexture.get())->setMemoryless(true);
         }
 
         // On iOS simulator, the depth target is PixelFormatDepth32Float_Stencil8
@@ -49,8 +50,8 @@ public:
             stencilTexture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Linear,
                                                      .wrapU = gfx::TextureWrapType::Clamp,
                                                      .wrapV = gfx::TextureWrapType::Clamp});
-            static_cast<Texture2D*>(stencilTexture.get())
-                ->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite | MTL::TextureUsageRenderTarget);
+            static_cast<Texture2D*>(stencilTexture.get())->setUsage(MTL::TextureUsageRenderTarget);
+            static_cast<Texture2D*>(stencilTexture.get())->setMemoryless(true);
         }
 #endif
 
@@ -98,6 +99,8 @@ public:
             stencilTexture->create();
             if (auto* stencilTarget = renderPassDescriptor->stencilAttachment()) {
                 stencilTarget->setTexture(static_cast<Texture2D*>(stencilTexture.get())->getMetalTexture());
+                stencilTarget->setLoadAction(MTL::LoadActionClear);
+                stencilTarget->setStoreAction(MTL::StoreActionDontCare);
             }
         }
     }
