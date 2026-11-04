@@ -150,6 +150,12 @@ jobs:
               *) echo "build taken by $runner"; exit 0 ;;
             esac
           done
+          # a pull request merged meanwhile has no branch left; master's own run builds it
+          if ! gh api "repos/$GITHUB_REPOSITORY/branches/$BRANCH" --silent 2>/dev/null; then
+            echo "::notice::$BRANCH is gone; master's run builds it"
+            gh run cancel "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY"
+            exit 0
+          fi
           echo "::warning::no Apple silicon Mac took the build; starting this run again on Intel"
           gh workflow run terrain-ios.yml -R "$GITHUB_REPOSITORY" --ref "$BRANCH" \
             -f runner=intel -f pr="$PR" -f force="$FORCE"
