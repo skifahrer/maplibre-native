@@ -188,6 +188,8 @@ protected:
 
 public:
     void setRenderOnce(bool value) { renderOnce = value; }
+    /// A render-once target draws once more, for input that changed in place.
+    void renderAgain() { renderedOnce = false; }
 
 protected:
     // This target's own content signature (PaintParameters::perTargetDrapeSignature)

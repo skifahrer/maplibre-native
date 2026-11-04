@@ -133,7 +133,12 @@ void RasterDEMTile::backfillBorder(const RasterDEMTile& borderTile, const DEMTil
         // mark HillshadeBucket.prepared as false so it runs through the prepare
         // render pass with the new texture data we just backfilled
         bucket->setPrepared(false);
-        bucket->renderTargetPrepared = false;
+        // An existing prepare target is redrawn from the refilled texture, not rebuilt.
+        if (bucket->renderTarget && bucket->prepareDEMTexture) {
+            bucket->borderChanged = true;
+        } else {
+            bucket->renderTargetPrepared = false;
+        }
         // The color-relief layer samples the DEM texture directly, so its cached upload is
         // stale now too.
         bucket->colorReliefDEMTexture.reset();

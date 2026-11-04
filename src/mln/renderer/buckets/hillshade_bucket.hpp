@@ -36,6 +36,10 @@ public:
 
     RenderTargetPtr renderTarget;
     bool renderTargetPrepared = false;
+    /// The prepare target's DEM input, refilled in place when a neighbour backfills the border.
+    std::shared_ptr<gfx::Texture2D> prepareDEMTexture;
+    /// A backfill changed the DEM since the prepare target last drew it.
+    bool borderChanged = false;
 
     /// The DEM image uploaded for the color-relief layer, which samples it directly rather
     /// than through a prepare pass. Held here because the pixels only change when the tile
