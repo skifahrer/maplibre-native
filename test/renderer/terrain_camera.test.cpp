@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <vector>
 #include <functional>
 #include <limits>
 #include <thread>
@@ -1285,4 +1286,68 @@ TEST(TerrainDrape, ARasterLayerShownInPlaceOfAnotherRedrawsTheDrape) {
     const auto after = settle();
     EXPECT_GT(after[1], 127) << "the blue layer is not drawn";
     EXPECT_LT(after[0], 128) << "the red layer's drape is still shown";
+}
+
+// 72 A drape the render budget defers renders a frame later, when nothing else changed; the
+// draped layers' tweakers must run for it then too, or the layer shown draws nothing there.
+TEST(TerrainDrape, ADeferredDrapeDrawsTheLayerShownWhenItCatchesUp) {
+    util::RunLoop loop;
+    auto fileSource = std::make_shared<StubFileSource>(ResourceOptions::Default(), ClientOptions());
+    const std::string demTile = makeSeaLevelDEMTile();
+    const std::string redTile = makeSolidTile(255, 0);
+    const std::string blueTile = makeSolidTile(0, 255);
+    fileSource->tileResponse = [&](const Resource& resource) {
+        Response res;
+        const auto& url = resource.url;
+        res.data = std::make_shared<std::string>(url.find("/dem/") != std::string::npos   ? demTile
+                                                 : url.find("/red/") != std::string::npos ? redTile
+                                                                                          : blueTile);
+        return res;
+    };
+    HeadlessFrontend frontend{{512, 512}, 1};
+    MapAdapter map(frontend,
+                   MapObserver::nullObserver(),
+                   fileSource,
+                   MapOptions().withMapMode(MapMode::Static).withSize(frontend.getSize()));
+    map.setTerrainLoadMode(TerrainLoadMode::Performance);
+    std::string style = twoDrapedRastersStyle;
+    style.replace(style.find("\"maxzoom\": 9"), 12, "\"maxzoom\": 12");
+    map.getStyle().loadJSON(style);
+    map.jumpTo(CameraOptions().withCenter(LatLng{46.0, 10.0}).withZoom(11.0).withPitch(60.0));
+    std::vector<int> drapesPerFrame;
+    const auto settle = [&] {
+        drapesPerFrame.clear();
+        PremultipliedImage image;
+        for (int i = 0; i < 12; ++i) {
+            loop.runOnce();
+            auto result = frontend.render(map);
+            drapesPerFrame.push_back(result.stats.numDrapeTargetsRendered);
+            image = std::move(result.image);
+        }
+        return image;
+    };
+    // the ground in the lower half, where the drapes are many and the budget is 4 a frame
+    const auto blueOnes = [](const PremultipliedImage& image) {
+        int blue = 0;
+        for (uint32_t row = 6; row <= 9; ++row) {
+            for (uint32_t column = 1; column <= 9; ++column) {
+                const size_t i = (static_cast<size_t>(image.size.height * row / 10) * image.size.width +
+                                  image.size.width * column / 10) *
+                                 4;
+                blue += image.data[i + 2] > 127 && image.data[i] < 128 ? 1 : 0;
+            }
+        }
+        return blue;
+    };
+
+    ASSERT_EQ(blueOnes(settle()), 0) << "the blue layer is drawn before it is shown";
+    const auto show = [&](const char* shown, const char* hidden) {
+        map.getStyle().getLayer(hidden)->setVisibility(style::VisibilityType::None);
+        map.getStyle().getLayer(shown)->setVisibility(style::VisibilityType::Visible);
+        const auto image = settle();
+        return blueOnes(image);
+    };
+    EXPECT_EQ(show("blue", "red"), 36) << "a deferred drape lost the layer shown";
+    EXPECT_EQ(show("red", "blue"), 0) << "a deferred drape kept the layer hidden";
+    EXPECT_EQ(show("blue", "red"), 36) << "a layer shown again lost its deferred drapes";
 }
