@@ -2,12 +2,17 @@
 #include <mln/math/clamp.hpp>
 
 #include <algorithm>
+#include <cmath>
 
 namespace mln {
 
 namespace {
 // Terrarium encodes "no data" as RGB(0, 0, 0), which unpacks to this elevation.
 constexpr int32_t terrariumNoData = -32768;
+
+bool isNoData(const uint8_t* pixel, Tileset::RasterEncoding encoding) {
+    return encoding == Tileset::RasterEncoding::Terrarium && pixel[0] == 0 && pixel[1] == 0 && pixel[2] == 0;
+}
 } // namespace
 
 DEMData::DEMData(const PremultipliedImage& _image, Tileset::RasterEncoding _encoding)
@@ -48,6 +53,12 @@ DEMData::DEMData(const PremultipliedImage& _image, Tileset::RasterEncoding _enco
             dst[-2] = dst[-1] = src[0];
             dst[dim] = dst[dim + 1] = src[dim - 1];
         }
+    }
+
+    // A copied edge halves the slope the hillshade derives there, drawing a lighter line
+    // along every edge no neighbour backfills; carrying the edge's slope on hides it.
+    if (dim > 1) {
+        extendSlopeIntoBorder();
     }
 
     // The elevation range of the tile, used to give the tile a height when testing
@@ -109,6 +120,50 @@ void DEMData::backfillBorder(const DEMData& borderTileData, int8_t dx, int8_t dy
         for (int32_t x = xMin; x < xMax; x++) {
             dest[idx(x, y)] = source[idx(x + ox, y + oy)];
         }
+    }
+}
+
+float DEMData::elevation(const int32_t x, const int32_t y) const {
+    const auto& unpack = getUnpackVector();
+    const uint8_t* value = image->data.get() + idx(x, y) * 4;
+    return value[0] * unpack[0] + value[1] * unpack[1] + value[2] * unpack[2] - unpack[3];
+}
+
+void DEMData::setElevation(const int32_t x, const int32_t y, const float elevation) {
+    uint8_t* value = image->data.get() + idx(x, y) * 4;
+    if (encoding == Tileset::RasterEncoding::Terrarium) {
+        const double v = std::clamp(static_cast<double>(elevation) + 32768.0, 0.0, 65535.996);
+        value[0] = static_cast<uint8_t>(std::floor(v / 256.0));
+        value[1] = static_cast<uint8_t>(static_cast<int32_t>(std::floor(v)) % 256);
+        value[2] = static_cast<uint8_t>(std::floor((v - std::floor(v)) * 256.0));
+    } else {
+        const auto v = static_cast<uint32_t>(
+            std::clamp(std::lround((static_cast<double>(elevation) + 10000.0) * 10.0), 0L, 16777215L));
+        value[0] = static_cast<uint8_t>(v >> 16);
+        value[1] = static_cast<uint8_t>(v >> 8);
+        value[2] = static_cast<uint8_t>(v);
+    }
+}
+
+void DEMData::extendSlopeIntoBorder() {
+    // (fx, fy) is the edge pixel, (ix, iy) the one inside it, (sx, sy) the step outwards.
+    auto extend = [&](int32_t fx, int32_t fy, int32_t ix, int32_t iy, int32_t sx, int32_t sy) {
+        const uint8_t* edge = image->data.get() + idx(fx, fy) * 4;
+        const uint8_t* inner = image->data.get() + idx(ix, iy) * 4;
+        if (isNoData(edge, encoding) || isNoData(inner, encoding)) return;
+        const float step = elevation(fx, fy) - elevation(ix, iy);
+        for (int32_t k = 1; k <= 2; k++) {
+            setElevation(fx + sx * k, fy + sy * k, elevation(fx, fy) + step * static_cast<float>(k));
+        }
+    };
+    for (int32_t y = 0; y < dim; y++) {
+        extend(0, y, 1, y, -1, 0);
+        extend(dim - 1, y, dim - 2, y, 1, 0);
+    }
+    // the columns first, so the corners carry on from the extended rows
+    for (int32_t x = -2; x < dim + 2; x++) {
+        extend(x, 0, x, 1, 0, -1);
+        extend(x, dim - 1, x, dim - 2, 0, 1);
     }
 }
 

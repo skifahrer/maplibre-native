@@ -33,60 +33,60 @@ TEST(DEMData, ConstructorTerrarium) {
     EXPECT_EQ(demdata.getImage()->bytes(), size_t(20 * 20 * 4));
 };
 
-TEST(DEMData, InitialBackfill) {
-    PremultipliedImage image1 = fakeImage({4, 4});
-    DEMData dem1(image1, Tileset::RasterEncoding::Mapbox);
+namespace {
+// A plane rising 3 m a pixel to the east and 5 m to the south, from 1000 m.
+PremultipliedImage slopeImage(Tileset::RasterEncoding encoding) {
+    PremultipliedImage img({4, 4});
+    for (uint32_t y = 0; y < 4; y++) {
+        for (uint32_t x = 0; x < 4; x++) {
+            const double elevation = 1000.0 + 3.0 * x + 5.0 * y;
+            uint8_t* pixel = img.data.get() + (y * 4 + x) * 4;
+            if (encoding == Tileset::RasterEncoding::Terrarium) {
+                const double v = elevation + 32768.0;
+                pixel[0] = static_cast<uint8_t>(static_cast<uint32_t>(v) / 256);
+                pixel[1] = static_cast<uint8_t>(static_cast<uint32_t>(v) % 256);
+                pixel[2] = 0;
+            } else {
+                const auto v = static_cast<uint32_t>((elevation + 10000.0) * 10.0);
+                pixel[0] = static_cast<uint8_t>(v >> 16);
+                pixel[1] = static_cast<uint8_t>(v >> 8);
+                pixel[2] = static_cast<uint8_t>(v);
+            }
+            pixel[3] = 255;
+        }
+    }
+    return img;
+}
+} // namespace
 
-    // both border columns of DEM data are initially equal to the nearest column of data
-    bool verticalBorderMatch = true;
-    for (int y = 0; y < 4; y++) {
-        for (int x : {-2, -1}) {
-            if (dem1.get(x, y) != dem1.get(0, y)) {
-                verticalBorderMatch = false;
-            }
-        }
-        for (int x : {4, 5}) {
-            if (dem1.get(x, y) != dem1.get(3, y)) {
-                verticalBorderMatch = false;
+// AFX6: a copied edge halved the slope there and drew a lighter line along the tile's edge.
+TEST(DEMData, InitialBorderCarriesTheSlope) {
+    for (auto encoding : {Tileset::RasterEncoding::Mapbox, Tileset::RasterEncoding::Terrarium}) {
+        DEMData dem(slopeImage(encoding), encoding);
+        for (int y = -2; y < 6; y++) {
+            for (int x = -2; x < 6; x++) {
+                EXPECT_NEAR(dem.get(x, y), 1000 + 3 * x + 5 * y, 1) << x << "," << y;
             }
         }
     }
-    EXPECT_TRUE(verticalBorderMatch);
+}
 
-    // both border rows of DEM data are initially equal to the nearest row of data
-    bool horizontalBorderMatch = true;
-    for (int x = 0; x < 4; x++) {
-        for (int y : {-2, -1}) {
-            if (dem1.get(x, y) != dem1.get(x, 0)) {
-                horizontalBorderMatch = false;
-            }
-        }
-        for (int y : {4, 5}) {
-            if (dem1.get(x, y) != dem1.get(x, 3)) {
-                horizontalBorderMatch = false;
-            }
+// A slope that runs below the encoding's floor is held at the floor, not wrapped round.
+TEST(DEMData, InitialBorderStaysInRange) {
+    PremultipliedImage img({4, 4});
+    for (uint32_t y = 0; y < 4; y++) {
+        for (uint32_t x = 0; x < 4; x++) {
+            uint8_t* pixel = img.data.get() + (y * 4 + x) * 4;
+            pixel[0] = 0;
+            pixel[1] = 0;
+            pixel[2] = static_cast<uint8_t>(x == 0 ? 1 : 100);
+            pixel[3] = 255;
         }
     }
-    EXPECT_TRUE(horizontalBorderMatch);
-
-    // every corner cell is initially equal to the closest corner pixel
-    for (int x : {-2, -1}) {
-        for (int y : {-2, -1}) {
-            EXPECT_EQ(dem1.get(x, y), dem1.get(0, 0));
-        }
-        for (int y : {4, 5}) {
-            EXPECT_EQ(dem1.get(x, y), dem1.get(0, 3));
-        }
-    }
-    for (int x : {4, 5}) {
-        for (int y : {-2, -1}) {
-            EXPECT_EQ(dem1.get(x, y), dem1.get(3, 0));
-        }
-        for (int y : {4, 5}) {
-            EXPECT_EQ(dem1.get(x, y), dem1.get(3, 3));
-        }
-    }
-};
+    DEMData dem(img, Tileset::RasterEncoding::Mapbox);
+    EXPECT_EQ(dem.get(-1, 1), -10000);
+    EXPECT_EQ(dem.get(-2, 1), -10000);
+}
 
 TEST(DEMData, BackfillNeighbor) {
     PremultipliedImage image1 = fakeImage({4, 4});
