@@ -7,6 +7,7 @@
 #include <mln/map/camera.hpp>
 #include <mln/map/map_options.hpp>
 #include <mln/math/angles.hpp>
+#include <mln/style/layer.hpp>
 #include <mln/style/style.hpp>
 #include <mln/style/terrain.hpp>
 #include <mln/util/constants.hpp>
@@ -14,6 +15,7 @@
 #include <mln/util/run_loop.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -1199,4 +1201,88 @@ TEST(TerrainCamera, AFlightEasesTheCenterHeightToTheGroundItIsHeadedFor) {
     EXPECT_NEAR(camera.center->longitude(), target.longitude(), 1e-3);
     EXPECT_NEAR(*camera.zoom, 14.0, 0.05) << "at the zoom asked for";
     EXPECT_NEAR(*camera.centerAltitude, 0.0, 30.0) << "with the center on the ground there";
+}
+
+namespace {
+
+const char* twoDrapedRastersStyle = R"STYLE({
+  "version": 8,
+  "sources": {
+    "dem": {
+      "type": "raster-dem",
+      "tiles": ["http://example.com/dem/{z}-{x}-{y}.png"],
+      "encoding": "mapbox",
+      "maxzoom": 9,
+      "tileSize": 256
+    },
+    "red": {"type": "raster", "tiles": ["http://example.com/red/{z}-{x}-{y}.png"], "tileSize": 256},
+    "blue": {"type": "raster", "tiles": ["http://example.com/blue/{z}-{x}-{y}.png"], "tileSize": 256}
+  },
+  "terrain": {"source": "dem", "exaggeration": 1.0},
+  "layers": [
+    {"id": "red", "type": "raster", "source": "red", "paint": {"raster-fade-duration": 0}},
+    {"id": "blue", "type": "raster", "source": "blue", "layout": {"visibility": "none"},
+     "paint": {"raster-fade-duration": 0}}
+  ]
+})STYLE";
+
+std::string makeSolidTile(uint8_t red, uint8_t blue) {
+    PremultipliedImage image({256, 256});
+    for (uint32_t i = 0; i < 256 * 256; ++i) {
+        image.data[i * 4 + 0] = red;
+        image.data[i * 4 + 1] = 0;
+        image.data[i * 4 + 2] = blue;
+        image.data[i * 4 + 3] = 255;
+    }
+    return encodePNG(image);
+}
+
+std::array<uint8_t, 2> centreRedAndBlue(const PremultipliedImage& image) {
+    const size_t i = (static_cast<size_t>(image.size.height / 2) * image.size.width + image.size.width / 2) * 4;
+    return {image.data[i], image.data[i + 2]};
+}
+
+} // namespace
+
+// Raster drawables carry no bucket, so two raster layers on the same tiles hashed alike and
+// showing one in place of the other kept the first one's drape.
+TEST(TerrainDrape, ARasterLayerShownInPlaceOfAnotherRedrawsTheDrape) {
+    util::RunLoop loop;
+    auto fileSource = std::make_shared<StubFileSource>(ResourceOptions::Default(), ClientOptions());
+    const std::string demTile = makeSeaLevelDEMTile();
+    const std::string redTile = makeSolidTile(255, 0);
+    const std::string blueTile = makeSolidTile(0, 255);
+    fileSource->tileResponse = [&](const Resource& resource) {
+        Response res;
+        const auto& url = resource.url;
+        res.data = std::make_shared<std::string>(url.find("/dem/") != std::string::npos   ? demTile
+                                                 : url.find("/red/") != std::string::npos ? redTile
+                                                                                          : blueTile);
+        return res;
+    };
+    HeadlessFrontend frontend{{256, 256}, 1};
+    MapAdapter map(frontend,
+                   MapObserver::nullObserver(),
+                   fileSource,
+                   MapOptions().withMapMode(MapMode::Static).withSize(frontend.getSize()));
+    map.getStyle().loadJSON(twoDrapedRastersStyle);
+    map.jumpTo(CameraOptions().withCenter(LatLng{46.0, 10.0}).withZoom(8.6).withPitch(0.0));
+    const auto settle = [&] {
+        PremultipliedImage image;
+        for (int i = 0; i < 4; ++i) {
+            loop.runOnce();
+            image = frontend.render(map).image;
+        }
+        return centreRedAndBlue(image);
+    };
+
+    const auto before = settle();
+    ASSERT_GT(before[0], 127) << "the red layer is not drawn";
+    ASSERT_LT(before[1], 128);
+
+    map.getStyle().getLayer("red")->setVisibility(style::VisibilityType::None);
+    map.getStyle().getLayer("blue")->setVisibility(style::VisibilityType::Visible);
+    const auto after = settle();
+    EXPECT_GT(after[1], 127) << "the blue layer is not drawn";
+    EXPECT_LT(after[0], 128) << "the red layer's drape is still shown";
 }
