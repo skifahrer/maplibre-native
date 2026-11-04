@@ -58,6 +58,8 @@ private:
 
     using HillshadeVertexVector = gfx::VertexVector<HillshadeLayoutVertex>;
     std::shared_ptr<HillshadeVertexVector> staticDataSharedVertices;
+    /// One index list for every tile without its own, so its buffer is uploaded once.
+    std::shared_ptr<gfx::IndexVector<gfx::Triangles>> staticDataSharedIndices;
 
     LayerTweakerPtr prepareLayerTweaker;
 };

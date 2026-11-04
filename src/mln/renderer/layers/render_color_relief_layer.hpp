@@ -70,6 +70,8 @@ private:
     // Vertex data
     using ColorReliefVertexVector = gfx::VertexVector<HillshadeLayoutVertex>;
     std::shared_ptr<ColorReliefVertexVector> staticDataSharedVertices;
+    /// One index list for every tile without its own, so its buffer is uploaded once.
+    std::shared_ptr<gfx::IndexVector<gfx::Triangles>> staticDataSharedIndices;
 };
 
 } // namespace mln

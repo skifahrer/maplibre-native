@@ -255,6 +255,9 @@ void RenderColorReliefLayer::update(gfx::ShaderRegistry& shaders,
         staticDataSharedVertices = std::make_shared<ColorReliefVertexVector>(RenderStaticData::rasterVertices());
     }
     const auto staticDataIndices = RenderStaticData::quadTriangleIndices();
+    if (!staticDataSharedIndices) {
+        staticDataSharedIndices = std::make_shared<gfx::IndexVector<gfx::Triangles>>(staticDataIndices);
+    }
     const auto staticDataSegments = RenderStaticData::rasterSegments();
 
     // Update color ramp textures if changed
@@ -338,7 +341,7 @@ void RenderColorReliefLayer::update(gfx::ShaderRegistry& shaders,
             segments = &bucket.segments;
         } else {
             vertices = staticDataSharedVertices;
-            indices = std::make_shared<gfx::IndexVector<gfx::Triangles>>(staticDataIndices);
+            indices = staticDataSharedIndices;
         }
 
         if (!builder) {
