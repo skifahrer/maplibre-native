@@ -35,7 +35,8 @@ env:
   BAZEL_FLAGS: --compilation_mode=opt --//:renderer=metal --features=thin_lto --apple_generate_dsym
   BAZEL_CACHE: --disk_cache=/Users/runner/.cache/bazel-disk --experimental_disk_cache_gc_max_size=6G
   # one simulator at a time: two booting together can fail on a small runner
-  BAZEL_TEST: --test_output=errors --local_test_jobs=1 --test_timeout=3600
+  # a disk-cached pass is replayed for unchanged inputs, but a simulator test is not hermetic
+  BAZEL_TEST: --test_output=errors --local_test_jobs=1 --test_timeout=3600 --nocache_test_results
 
 jobs:
   check:
