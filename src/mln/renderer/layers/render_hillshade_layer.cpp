@@ -235,6 +235,9 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
     // offscreen + DEM textures forever (OOM).
     std::vector<RenderTargetPtr> currentRenderTargets;
     currentRenderTargets.reserve(renderTiles->size());
+    // Border redraws per frame; the rest keep their current shading a frame or two longer.
+    constexpr int borderRedrawBudget = 4;
+    int borderRedraws = 0;
 
     for (const RenderTile& tile : *renderTiles) {
         const auto& tileID = tile.getOverscaledTileID();
@@ -268,8 +271,8 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
             bucket.renderTarget = renderTarget;
             bucket.renderTargetPrepared = true;
             // The prepare output depends only on this bucket's DEM, so draw it once and keep
-            // it; new DEM data (a backfilled border) makes a new target. Re-running every
-            // prepare target every frame cost ~40 ms a frame on an A10X, in 2D as in 3D.
+            // it; a backfilled border redraws it. Re-running every prepare target every
+            // frame cost ~40 ms a frame on an A10X, in 2D as in 3D.
             renderTarget->setRenderOnce(true);
 
             auto singleTileLayerGroup = context.createTileLayerGroup(0, /*initialCapacity=*/1, getID(), false);
@@ -302,6 +305,8 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
                                               .wrapU = gfx::TextureWrapType::Clamp,
                                               .wrapV = gfx::TextureWrapType::Clamp});
             hillshadePrepareBuilder->setTexture(texture, idHillshadeImageTexture);
+            bucket.prepareDEMTexture = texture;
+            bucket.borderChanged = false;
 
             hillshadePrepareBuilder->flush(context);
 
@@ -313,6 +318,11 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
                 singleTileLayerGroup->addDrawable(renderPass, tileID, std::move(drawable));
                 ++stats.drawablesAdded;
             }
+        } else if (bucket.borderChanged && borderRedraws < borderRedrawBudget) {
+            bucket.prepareDEMTexture->setImage(bucket.getDEMData().getImagePtr());
+            bucket.renderTarget->renderAgain();
+            bucket.borderChanged = false;
+            ++borderRedraws;
         }
 
         // This tile is in the cover; keep its prepare target active this frame.
