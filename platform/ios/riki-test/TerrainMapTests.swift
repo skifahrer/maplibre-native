@@ -55,6 +55,24 @@ final class TerrainMapTests: TerrainMapTestCase {
         XCTAssertGreaterThanOrEqual(mapView.zoomLevel, zoom - 1e-6)
     }
 
+    // 67: projected from sea level, the user's location fell off the screen on high ground
+    func testThePointLookedAtIsInTheMiddleOnHighGround() throws {
+        try loadMap()
+        mapView.isCenterClampedToGround = true
+        tilt(60, distance: 600)
+        waitUntilFullyRendered()
+        waitUntilFullyRendered()
+        XCTAssertEqual(mapView.centerAltitude, Self.groundHeight, accuracy: 5)
+
+        let middle = mapView.convert(mapView.centerCoordinate, toPointTo: mapView)
+        XCTAssertEqual(middle.x, mapView.bounds.midX, accuracy: 2)
+        XCTAssertEqual(middle.y, mapView.bounds.midY, accuracy: 2)
+        let looked = mapView.convert(CGPoint(x: mapView.bounds.midX, y: mapView.bounds.midY),
+                                     toCoordinateFrom: mapView)
+        XCTAssertEqual(looked.latitude, mapView.centerCoordinate.latitude, accuracy: 1e-5)
+        XCTAssertEqual(looked.longitude, mapView.centerCoordinate.longitude, accuracy: 1e-5)
+    }
+
     func testTheSkyColourKeepsItsValueAndDraws() throws {
         try loadMap()
         XCTAssertNil(mapView.skyColor)

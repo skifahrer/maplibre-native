@@ -483,11 +483,11 @@ ScreenCoordinate Map::pixelForLatLng(const LatLng& latLng) const {
     // e.g. the next antimeridian side is visible.
     LatLng unwrappedLatLng = latLng.wrapped();
     unwrappedLatLng.unwrapForShortestPath(impl->transform.getLatLng());
-    return impl->transform.latLngToScreenCoordinate(unwrappedLatLng);
+    return impl->transform.latLngToScreenCoordinate(unwrappedLatLng, impl->groundUnderCentre());
 }
 
 LatLng Map::latLngForPixel(const ScreenCoordinate& pixel, LatLng::WrapMode wrapMode) const {
-    return impl->transform.screenCoordinateToLatLng(pixel, wrapMode);
+    return impl->transform.screenCoordinateToLatLng(pixel, impl->groundUnderCentre(), wrapMode);
 }
 
 std::vector<ScreenCoordinate> Map::pixelsForLatLngs(const std::vector<LatLng>& latLngs) const {

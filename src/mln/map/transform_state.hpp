@@ -249,6 +249,8 @@ public:
     // Conversion
     ScreenCoordinate latLngToScreenCoordinate(const LatLng&) const;
     ScreenCoordinate latLngToScreenCoordinate(const LatLng&, vec4&) const;
+    /// Projects from `elevationMeters` above sea level instead of sea level.
+    ScreenCoordinate latLngToScreenCoordinate(const LatLng&, double elevationMeters) const;
     LatLng screenCoordinateToLatLng(const ScreenCoordinate&, LatLng::WrapMode = LatLng::Unwrapped) const;
     /// Unprojects onto the plane `elevationMeters` above sea level (metres, terrain
     /// exaggeration applied) instead of sea level.

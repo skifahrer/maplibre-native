@@ -136,6 +136,8 @@ public:
 
     // Conversion and projection
     ScreenCoordinate latLngToScreenCoordinate(const LatLng&) const;
+    /// As above, projecting from `elevationMeters` above sea level.
+    ScreenCoordinate latLngToScreenCoordinate(const LatLng&, double elevationMeters) const;
     LatLng screenCoordinateToLatLng(const ScreenCoordinate&, LatLng::WrapMode = LatLng::Wrapped) const;
     /// As above, unprojecting onto the plane `elevationMeters` above sea level.
     LatLng screenCoordinateToLatLng(const ScreenCoordinate&,

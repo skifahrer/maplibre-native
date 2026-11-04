@@ -393,6 +393,13 @@ void Map::Impl::anchorCenterOnTerrain() {
     }
 }
 
+double Map::Impl::groundUnderCentre() const {
+    if (!style->impl->getTerrain() || std::isnan(terrainCenterElevation)) {
+        return 0.0;
+    }
+    return terrainCenterElevation;
+}
+
 double Map::Impl::getSightGroundDistance() const {
     if (std::isnan(sightGround[2])) {
         return std::numeric_limits<double>::quiet_NaN();
