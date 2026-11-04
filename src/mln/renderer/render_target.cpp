@@ -16,6 +16,18 @@
 #include <mln/util/string.hpp>
 
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+namespace {
+FILE* drapeLog() {
+    static FILE* f = [] {
+        const char* tmp = std::getenv("TMPDIR");
+        return std::fopen((std::string(tmp ? tmp : "/tmp") + "/drape.log").c_str(), "w");
+    }();
+    return f;
+}
+} // namespace
 #include <set>
 
 namespace mln {
@@ -240,6 +252,13 @@ RenderTarget::DrapeCoverage RenderTarget::computeDrapeCoverage(RenderOrchestrato
             deficit = static_cast<int16_t>(drapeTileID->canonical.z - bestAncestor->canonical.z);
         }
         coverage.groups.push_back({layerGroup.getLayerIndex(), deficit});
+        if (FILE* f = drapeLog(); f && layerGroup.getName().find("terrain-view") != std::string::npos) {
+            std::size_t enabled = 0, disabled = 0;
+            tileGroup.visitDrawables([&](const gfx::Drawable& d) { (d.getEnabled() ? enabled : disabled)++; });
+            std::fprintf(f, "  group %s idx=%d deficit=%d drawn=%zu cover=%zu en=%zu dis=%zu\n",
+                         layerGroup.getName().c_str(), layerGroup.getLayerIndex(), deficit, drawnTiles.size(),
+                         tileGroup.getCoverTileIDs().size(), enabled, disabled);
+        }
     });
     return coverage;
 }
@@ -371,8 +390,14 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
         // texture is already correct: keep it. This is what makes panning cheap,
         // since panning changes none of them, and it is the maplibre-gl-js
         // behaviour (render a terrain tile's texture only when its stack changes).
+        if (FILE* f = drapeLog()) {
+            std::fprintf(f, "DRAPE %d/%d/%d hash=%zx baked=%zx groups=%zu\n", drapeTileID->canonical.z,
+                         drapeTileID->canonical.x, drapeTileID->canonical.y, coverage.contentHash,
+                         bakedCoverage.contentHash, coverage.groups.size());
+        }
         if (coverage.sameContentAs(bakedCoverage)) {
             bakedSignature = targetSignature;
+            if (FILE* f = drapeLog()) { std::fprintf(f, " -> same\n"); std::fflush(f); }
             return RenderResult::Skipped;
         }
 
@@ -385,6 +410,7 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
         // "worse" and falls through to re-render. The target's lifetime bounds
         // staleness: when its terrain tile leaves the cover it is destroyed.
         if (coverage.worseThan(bakedCoverage)) {
+            if (FILE* f = drapeLog()) { std::fprintf(f, " -> worse, kept\n"); std::fflush(f); }
             // Keeping the already-baked (better) content: record that at this
             // signature the decision was to hold, so future identical frames skip
             // the scan too. A real change (drawable set, zoom, properties) moves the
@@ -400,6 +426,7 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
         // rendered on a subsequent frame. A never-rendered target falls through (rendering
         // it now avoids a blank tile), so bursts of *new* targets are not deferred.
         if (!canRerender && hasRenderedContent) {
+            if (FILE* f = drapeLog()) { std::fprintf(f, " -> deferred\n"); std::fflush(f); }
             return RenderResult::Deferred;
         }
 
@@ -409,6 +436,7 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
         // Committed to re-rendering this drape (a cache miss). Count it so the
         // measure-first overlay can show drape churn per frame.
         context.renderingStats().numDrapeTargetsRendered++;
+        if (FILE* f = drapeLog()) { std::fprintf(f, " -> RENDER\n"); std::fflush(f); }
     }
 
     // Drape targets carry a depth and stencil attachment, as maplibre-gl-js's

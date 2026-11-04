@@ -165,11 +165,7 @@ apple_xcframework(
     ],
     infoplists = ["info_plist"],
     ios = {
-        "simulator": [
-            "x86_64",
-            "arm64",
-        ],
-        "device": ["arm64"],
+        "simulator": ["arm64"],
     },
     # With --//:plugins=true, plugins outside this binary call the C entry point.
     # Pull its object file out of mbgl-core even when nothing in the SDK calls it.
