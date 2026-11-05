@@ -75,19 +75,6 @@ private:
     static constexpr uint32_t drapeQualityFactor = 2;
     // Drape targets are sized to the tile on screen, in steps of drapeTileSize up to this.
     static constexpr uint32_t maxDrapeSide = 4096;
-    // Texels all drape targets may hold together: about what the 1024 targets held before.
-    static constexpr std::size_t drapeTexelBudget(TerrainLoadMode mode) {
-        switch (mode) {
-            case TerrainLoadMode::Balanced:
-                return 64u << 20;
-            case TerrainLoadMode::Performance:
-            case TerrainLoadMode::CloseUp:
-                return 24u << 20;
-            case TerrainLoadMode::Quality:
-            default:
-                return 96u << 20;
-        }
-    }
     std::map<UnwrappedTileID, uint32_t> drapeSides(const RenderTerrain& terrain,
                                                    const std::set<UnwrappedTileID>& tiles,
                                                    const TransformState& state,

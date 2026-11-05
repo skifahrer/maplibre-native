@@ -226,6 +226,15 @@ TEST(TerrainMeshCover, CloseUpFollowsTheViewOnPerformancesBudget) {
     EXPECT_EQ(performance.drapeRerendersPerFrame, closeUp.drapeRerendersPerFrame);
 }
 
+// 78: steeply tipped, Performance's 24M texels blurred the photos halfway to the horizon; the
+// fewer mesh tiles and builds a frame keep it fast, not a smaller drape.
+TEST(TerrainMeshCover, EveryBudgetedModeDrapesAsSharpAsBalanced) {
+    const auto balanced = terrainLoadBudget(TerrainLoadMode::Balanced).drapeTexels;
+    EXPECT_EQ(balanced, terrainLoadBudget(TerrainLoadMode::Performance).drapeTexels);
+    EXPECT_EQ(balanced, terrainLoadBudget(TerrainLoadMode::CloseUp).drapeTexels);
+    EXPECT_LT(balanced, terrainLoadBudget(TerrainLoadMode::Quality).drapeTexels);
+}
+
 TEST(TerrainMeshCover, MeshIsNeverShallowerThanTheDEM) {
     for (const auto mode : allModes) {
         EXPECT_LE(18, meshMaxZoom(mode, 18));
