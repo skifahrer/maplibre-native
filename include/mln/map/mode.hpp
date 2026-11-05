@@ -92,21 +92,40 @@ struct TerrainLoadBudget {
     /// limit: the mesh follows the view as maplibre-gl-js's terrain does, and only the tile cap
     /// bounds it. The other modes stop at most RenderTerrain::maxMeshOverzoomLevels past the DEM.
     uint8_t meshTargetZoom;
+    /// Texels all drape targets may hold together; over it, the largest targets shrink first.
+    /// Memory, not frame time: a steep view fills it, and the far ground blurs once it is full.
+    size_t drapeTexels;
 };
 
 constexpr TerrainLoadBudget terrainLoadBudget(TerrainLoadMode mode) {
     switch (mode) {
         case TerrainLoadMode::Balanced:
             return {
-                .newTileBuildsPerFrame = 32, .drapeRerendersPerFrame = 16, .maxMeshTiles = 48, .meshTargetZoom = 15};
+                .newTileBuildsPerFrame = 32,
+                .drapeRerendersPerFrame = 16,
+                .maxMeshTiles = 48,
+                .meshTargetZoom = 15,
+                .drapeTexels = 64u << 20};
         case TerrainLoadMode::Performance:
-            return {.newTileBuildsPerFrame = 8, .drapeRerendersPerFrame = 4, .maxMeshTiles = 24, .meshTargetZoom = 14};
+            return {.newTileBuildsPerFrame = 8,
+                    .drapeRerendersPerFrame = 4,
+                    .maxMeshTiles = 24,
+                    .meshTargetZoom = 14,
+                    .drapeTexels = 64u << 20};
         case TerrainLoadMode::CloseUp:
-            return {.newTileBuildsPerFrame = 8, .drapeRerendersPerFrame = 4, .maxMeshTiles = 24, .meshTargetZoom = 22};
+            return {.newTileBuildsPerFrame = 8,
+                    .drapeRerendersPerFrame = 4,
+                    .maxMeshTiles = 24,
+                    .meshTargetZoom = 22,
+                    .drapeTexels = 64u << 20};
         case TerrainLoadMode::Quality:
         default:
             // no per-frame budget, generous tile cap, mesh follows the view
-            return {.newTileBuildsPerFrame = 0, .drapeRerendersPerFrame = 0, .maxMeshTiles = 64, .meshTargetZoom = 22};
+            return {.newTileBuildsPerFrame = 0,
+                    .drapeRerendersPerFrame = 0,
+                    .maxMeshTiles = 64,
+                    .meshTargetZoom = 22,
+                    .drapeTexels = 96u << 20};
     }
 }
 

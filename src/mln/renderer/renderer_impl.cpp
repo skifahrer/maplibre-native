@@ -866,7 +866,7 @@ std::map<UnwrappedTileID, uint32_t> Renderer::Impl::drapeSides(const RenderTerra
         texels += std::size_t{side} * side;
     }
     // Over the budget, the largest give way first, a step at a time.
-    const std::size_t budget = drapeTexelBudget(mode);
+    const std::size_t budget = terrainLoadBudget(mode).drapeTexels;
     while (texels > budget) {
         auto largest = std::max_element(wanted.begin(), wanted.end(), [](const Wanted& a, const Wanted& b) {
             return a.side < b.side || (a.side == b.side && a.edge > b.edge);
