@@ -45,6 +45,10 @@ public:
 
 private:
     void retire(std::shared_ptr<RenderTarget> target);
+    std::size_t retiredTexels() const;
+
+    // A quarter of the smallest drape budget, so waiting textures add at most 64 MB.
+    static constexpr std::size_t maxRetiredTexels = 16u << 20;
     std::shared_ptr<RenderTarget> reuse(gfx::Context& context, uint32_t side);
 
     uint32_t tileSize;

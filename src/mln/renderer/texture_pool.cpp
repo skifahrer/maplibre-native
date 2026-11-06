@@ -58,7 +58,22 @@ void TexturePool::removeStaleRenderTargets(const std::set<UnwrappedTileID>& curr
 }
 
 void TexturePool::retire(std::shared_ptr<RenderTarget> target) {
-    retired.push_back({std::move(target), frame});
+    // A zoom step retires the whole cover at once; past the cap they go as before.
+    const auto& texture = target->getTexture();
+    const std::size_t texels = texture ? std::size_t{texture->getSize().width} * texture->getSize().height : 0;
+    if (retiredTexels() + texels <= maxRetiredTexels) {
+        retired.push_back({std::move(target), frame});
+    }
+}
+
+std::size_t TexturePool::retiredTexels() const {
+    std::size_t texels = 0;
+    for (const auto& old : retired) {
+        if (const auto& texture = old.target->getTexture()) {
+            texels += std::size_t{texture->getSize().width} * texture->getSize().height;
+        }
+    }
+    return texels;
 }
 
 std::shared_ptr<RenderTarget> TexturePool::reuse(gfx::Context& context, uint32_t side) {

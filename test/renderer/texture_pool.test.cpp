@@ -92,3 +92,14 @@ TEST(TexturePool, AnEmptyCoverFreesEverything) {
     test.pool.removeStaleRenderTargets({});
     EXPECT_TRUE(leftTexture.expired());
 }
+
+// 84 a zoom step retires the whole cover; what is over the cap is freed at once, as before
+TEST(TexturePool, TexturesPastTheCapAreFreedAtOnce) {
+    Pool test;
+    test.frame({left, middle}, 4096);
+    const auto leftTexture = test.texture(left);
+    const auto middleTexture = test.texture(middle);
+    test.frame({right}, 256);
+    EXPECT_FALSE(leftTexture.expired());
+    EXPECT_TRUE(middleTexture.expired());
+}
