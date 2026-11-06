@@ -92,6 +92,7 @@ struct SymbolInstance {
     uint texture_rect[2];
     int pixeloffset[2];
     uint size_sdf;
+    uint z_offset;
 };
 
 layout(std430, set = DRAWABLE_UBO_SET_INDEX, binding = idSymbolInstancedDrawableUBO) readonly buffer SymbolInstanceDrawableUBOVector {
@@ -161,7 +162,8 @@ void main() {
         size = drawable.size;
     }
 
-    const float ele = get_elevation(a_pos, dem_sampler, drawable.dem_coords, drawable.dem_unpack, drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled);
+    const float ele = get_elevation(a_pos, dem_sampler, drawable.dem_coords, drawable.dem_unpack, drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled) +
+        float(symbol.z_offset & 0xffffu) / 10.0;
     const vec4 projectedPoint = drawable.matrix * vec4(a_pos, ele, 1);
     const float camera_to_anchor_distance = projectedPoint.w;
     // See comments in symbol_sdf.vertex
@@ -348,6 +350,7 @@ struct SymbolInstance {
     uint texture_rect[2];
     int pixeloffset[2];
     uint size_sdf;
+    uint z_offset;
 };
 
 layout(std430, set = DRAWABLE_UBO_SET_INDEX, binding = idSymbolInstancedDrawableUBO) readonly buffer SymbolInstanceDrawableUBOVector {
@@ -451,7 +454,8 @@ void main() {
         size = drawable.size;
     }
 
-    const float ele = get_elevation(a_pos, dem_sampler, drawable.dem_coords, drawable.dem_unpack, drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled);
+    const float ele = get_elevation(a_pos, dem_sampler, drawable.dem_coords, drawable.dem_unpack, drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled) +
+        float(symbol.z_offset & 0xffffu) / 10.0;
     const vec4 projectedPoint = drawable.matrix * vec4(a_pos, ele, 1);
     const float camera_to_anchor_distance = projectedPoint.w;
     // If the label is pitched with the map, layout is done in pitched space,
@@ -722,6 +726,7 @@ struct SymbolInstance {
     uint texture_rect[2];
     int pixeloffset[2];
     uint size_sdf;
+    uint z_offset;
 };
 
 layout(std430, set = DRAWABLE_UBO_SET_INDEX, binding = idSymbolInstancedDrawableUBO) readonly buffer SymbolInstanceDrawableUBOVector {
@@ -827,7 +832,8 @@ void main() {
         size = drawable.size;
     }
 
-    const float ele = get_elevation(a_pos, dem_sampler, drawable.dem_coords, drawable.dem_unpack, drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled);
+    const float ele = get_elevation(a_pos, dem_sampler, drawable.dem_coords, drawable.dem_unpack, drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled) +
+        float(symbol.z_offset & 0xffffu) / 10.0;
     const vec4 projectedPoint = drawable.matrix * vec4(a_pos, ele, 1);
     const float camera_to_anchor_distance = projectedPoint.w;
     // If the label is pitched with the map, layout is done in pitched space,

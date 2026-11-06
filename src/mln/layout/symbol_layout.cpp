@@ -164,6 +164,7 @@ SymbolLayout::SymbolLayout(const BucketParameters& parameters,
     }
 
     const bool hasSymbolSortKey = !leader.layout.get<SymbolSortKey>().isUndefined();
+    const bool hasZOffset = !leader.layout.get<SymbolZOffset>().isUndefined();
     const auto symbolZOrder = layout->get<SymbolZOrder>();
     sortFeaturesByKey = symbolZOrder != SymbolZOrderType::ViewportY && hasSymbolSortKey;
     const bool zOrderByViewportY = symbolZOrder == SymbolZOrderType::ViewportY ||
@@ -321,6 +322,9 @@ SymbolLayout::SymbolLayout(const BucketParameters& parameters,
         }
 
         if (ft.formattedText || ft.icon) {
+            if (hasZOffset) {
+                ft.zOffset = std::max(0.0f, layout->evaluate<SymbolZOffset>(zoom, ft, canonicalID));
+            }
             if (sortFeaturesByKey) {
                 ft.sortKey = layout->evaluate<SymbolSortKey>(zoom, ft, canonicalID);
                 const auto lowerBound = std::lower_bound( // NOLINT(modernize-use-ranges)
@@ -1094,8 +1098,13 @@ void SymbolLayout::createBucket(const ImagePositions&,
                 iconSymbol.angle = (allowVerticalPlacement && writingMode == WritingModeType::Vertical)
                                        ? pi_v<float> / 2
                                        : 0.0f;
-                iconSymbol.startIndex = addSymbols(
-                    iconBuffer, sizeData, iconQuads, symbolInstance.getAnchor(), iconSymbol, feature.sortKey);
+                iconSymbol.startIndex = addSymbols(iconBuffer,
+                                                   sizeData,
+                                                   iconQuads,
+                                                   symbolInstance.getAnchor(),
+                                                   iconSymbol,
+                                                   feature.sortKey,
+                                                   feature.zOffset);
             };
 
             placeIcon(*symbolInstance.iconQuads(), symbolInstance.refPlacedIconIndex(), WritingModeType::None);
@@ -1244,8 +1253,13 @@ std::size_t SymbolLayout::addSymbolGlyphQuads(SymbolBucket& bucket,
             }
             lastAddedSection = symbolQuad.sectionIndex;
         }
-        const std::size_t index = addSymbol(
-            bucket.text, sizeData, symbolQuad, symbolInstance.getAnchor(), placedSymbol, feature.sortKey);
+        const std::size_t index = addSymbol(bucket.text,
+                                            sizeData,
+                                            symbolQuad,
+                                            symbolInstance.getAnchor(),
+                                            placedSymbol,
+                                            feature.sortKey,
+                                            feature.zOffset);
         if (firstSymbol) {
             placedSymbol.startIndex = index;
             firstSymbol = false;
@@ -1261,7 +1275,8 @@ size_t SymbolLayout::addSymbol(SymbolBucket::Buffer& buffer,
                                const SymbolQuad& symbol,
                                const Anchor& labelAnchor,
                                PlacedSymbol& placedSymbol,
-                               float sortKey) {
+                               float sortKey,
+                               float zOffset) {
     constexpr const uint16_t instanceCount = 1;
 
     if (buffer.segments.empty() ||
@@ -1276,7 +1291,7 @@ size_t SymbolLayout::addSymbol(SymbolBucket::Buffer& buffer,
     auto& segment = buffer.segments.back();
     auto index = static_cast<uint16_t>(segment.baseInstance + segment.instanceCount);
 
-    auto attributes = SymbolBucket::layoutAttributes(symbol, labelAnchor, sizeData);
+    auto attributes = SymbolBucket::layoutAttributes(symbol, labelAnchor, sizeData, zOffset);
     buffer.attributeData().emplace_back(attributes);
 
     auto dynamicAttributes = SymbolBucket::dynamicLayoutAttributes(labelAnchor.point, 0);
@@ -1297,7 +1312,8 @@ size_t SymbolLayout::addSymbol(SymbolBucket::Buffer& buffer,
                                const SymbolQuad& symbol,
                                const Anchor& labelAnchor,
                                PlacedSymbol& placedSymbol,
-                               float sortKey) {
+                               float sortKey,
+                               float /*zOffset: no room in the vertex*/) {
     constexpr const uint16_t vertexLength = 4;
 
     const auto& tl = symbol.tl;
@@ -1394,11 +1410,12 @@ size_t SymbolLayout::addSymbols(SymbolBucket::Buffer& buffer,
                                 const SymbolQuads& symbols,
                                 const Anchor& labelAnchor,
                                 PlacedSymbol& placedSymbol,
-                                float sortKey) {
+                                float sortKey,
+                                float zOffset) {
     bool firstSymbol = true;
     size_t firstIndex = 0;
     for (auto& symbol : symbols) {
-        const size_t index = addSymbol(buffer, sizeData, symbol, labelAnchor, placedSymbol, sortKey);
+        const size_t index = addSymbol(buffer, sizeData, symbol, labelAnchor, placedSymbol, sortKey, zOffset);
         if (firstSymbol) {
             firstIndex = index;
             firstSymbol = false;

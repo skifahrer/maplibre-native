@@ -101,6 +101,10 @@ public:
     const PropertyValue<float>& getSymbolSpacing() const;
     void setSymbolSpacing(const PropertyValue<float>&);
 
+    static PropertyValue<float> getDefaultSymbolZOffset();
+    const PropertyValue<float>& getSymbolZOffset() const;
+    void setSymbolZOffset(const PropertyValue<float>&);
+
     static PropertyValue<SymbolZOrderType> getDefaultSymbolZOrder();
     const PropertyValue<SymbolZOrderType>& getSymbolZOrder() const;
     void setSymbolZOrder(const PropertyValue<SymbolZOrderType>&);

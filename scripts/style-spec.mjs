@@ -198,4 +198,17 @@ modifiedReferenceSpec["layout_symbol"]["symbol-screen-space"] = {
     "doc": "Internal use only"
 };
 
+modifiedReferenceSpec["layout_symbol"]["symbol-z-offset"] = {
+    "type": "number",
+    "default": 0,
+    "minimum": 0,
+    "units": "meters",
+    "expression": {
+        "interpolated": false,
+        "parameters": ["zoom", "feature"]
+    },
+    "property-type": "data-driven",
+    "doc": "Height above the ground or 3D terrain at which the symbol stands."
+};
+
 export default modifiedReferenceSpec;

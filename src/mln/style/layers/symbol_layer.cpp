@@ -349,6 +349,21 @@ void SymbolLayer::setSymbolSpacing(const PropertyValue<float>& value) {
     baseImpl = std::move(impl_);
     observer->onLayerChanged(*this);
 }
+PropertyValue<float> SymbolLayer::getDefaultSymbolZOffset() {
+    return SymbolZOffset::defaultValue();
+}
+
+const PropertyValue<float>& SymbolLayer::getSymbolZOffset() const {
+    return impl().layout.get<SymbolZOffset>();
+}
+
+void SymbolLayer::setSymbolZOffset(const PropertyValue<float>& value) {
+    if (value == getSymbolZOffset()) return;
+    auto impl_ = mutableImpl();
+    impl_->layout.get<SymbolZOffset>() = value;
+    baseImpl = std::move(impl_);
+    observer->onLayerChanged(*this);
+}
 PropertyValue<SymbolZOrderType> SymbolLayer::getDefaultSymbolZOrder() {
     return SymbolZOrder::defaultValue();
 }
@@ -1158,6 +1173,7 @@ enum class Property : uint8_t {
     SymbolScreenSpace,
     SymbolSortKey,
     SymbolSpacing,
+    SymbolZOffset,
     SymbolZOrder,
     TextAllowOverlap,
     TextAnchor,
@@ -1237,6 +1253,7 @@ constexpr const auto layerProperties = mapbox::eternal::hash_map<mapbox::eternal
      {"symbol-screen-space", toUint8(Property::SymbolScreenSpace)},
      {"symbol-sort-key", toUint8(Property::SymbolSortKey)},
      {"symbol-spacing", toUint8(Property::SymbolSpacing)},
+     {"symbol-z-offset", toUint8(Property::SymbolZOffset)},
      {"symbol-z-order", toUint8(Property::SymbolZOrder)},
      {"text-allow-overlap", toUint8(Property::TextAllowOverlap)},
      {"text-anchor", toUint8(Property::TextAnchor)},
@@ -1358,6 +1375,8 @@ StyleProperty getLayerProperty(const SymbolLayer& layer, Property property) {
             return makeStyleProperty(layer.getSymbolSortKey());
         case Property::SymbolSpacing:
             return makeStyleProperty(layer.getSymbolSpacing());
+        case Property::SymbolZOffset:
+            return makeStyleProperty(layer.getSymbolZOffset());
         case Property::SymbolZOrder:
             return makeStyleProperty(layer.getSymbolZOrder());
         case Property::TextAllowOverlap:
@@ -1468,7 +1487,7 @@ std::optional<Error> SymbolLayer::setPropertyInternal(const std::string& name, c
     if (property == Property::IconHaloBlur || property == Property::IconHaloWidth ||
         property == Property::IconOpacity || property == Property::TextHaloBlur ||
         property == Property::TextHaloWidth || property == Property::TextOpacity || property == Property::IconRotate ||
-        property == Property::IconSize || property == Property::SymbolSortKey ||
+        property == Property::IconSize || property == Property::SymbolSortKey || property == Property::SymbolZOffset ||
         property == Property::TextLetterSpacing || property == Property::TextMaxWidth ||
         property == Property::TextRadialOffset || property == Property::TextRotate || property == Property::TextSize) {
         Error error;
@@ -1519,6 +1538,11 @@ std::optional<Error> SymbolLayer::setPropertyInternal(const std::string& name, c
 
         if (property == Property::SymbolSortKey) {
             setSymbolSortKey(*typedValue);
+            return std::nullopt;
+        }
+
+        if (property == Property::SymbolZOffset) {
+            setSymbolZOffset(*typedValue);
             return std::nullopt;
         }
 

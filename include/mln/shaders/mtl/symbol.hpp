@@ -113,7 +113,7 @@ struct SymbolInstance {
     short2 offset_blbr[2];
     ushort2 texture_rect[2];
     short2 pixeloffset[2];
-    ushort2 size_sdf;
+    ushort4 size_sdf;
 };
 
 struct DynamicInstance {
@@ -193,7 +193,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     const float2 a_offset = float2(select(symbol.offset_tltr[uint(vertx.pos.x)], symbol.offset_blbr[uint(vertx.pos.x)], uint(vertx.pos.y)));
 
     const float2 a_tex = float2(symbol.texture_rect[0]) + vertx.pos * float2(symbol.texture_rect[1]);
-    const float2 a_size = float2(symbol.size_sdf);
+    const float2 a_size = float2(symbol.size_sdf.xy);
 
     const float a_size_min = floor(a_size[0] * 0.5);
     const float2 a_pxoffset = float2(symbol.pixeloffset[0]) + vertx.pos * float2(symbol.pixeloffset[1] - symbol.pixeloffset[0]);
@@ -211,7 +211,8 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     }
 
     const float ele = get_elevation(
-        a_pos, demTexture, demSampler, drawable.dem_coords, drawable.dem_unpack, drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled);
+        a_pos, demTexture, demSampler, drawable.dem_coords, drawable.dem_unpack, drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled) +
+        float(symbol.size_sdf.z) / 10.0;
     const float4 projectedPoint = drawable.matrix * float4(a_pos, ele, 1);
     const float camera_to_anchor_distance = projectedPoint.w;
     // See comments in symbol_sdf.vertex
@@ -311,7 +312,7 @@ struct SymbolInstance {
     short2 offset_blbr[2];
     ushort2 texture_rect[2];
     short2 pixeloffset[2];
-    ushort2 size_sdf;
+    ushort4 size_sdf;
 };
 
 struct DynamicInstance {
@@ -410,7 +411,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     const float2 a_offset = float2(select(symbol.offset_tltr[uint(vertx.pos.x)], symbol.offset_blbr[uint(vertx.pos.x)], uint(vertx.pos.y)));
 
     const float2 a_tex = float2(symbol.texture_rect[0]) + vertx.pos * float2(symbol.texture_rect[1]);
-    const float2 a_size = float2(symbol.size_sdf);
+    const float2 a_size = float2(symbol.size_sdf.xy);
 
     const float a_size_min = floor(a_size[0] * 0.5);
     const float2 a_pxoffset = float2(symbol.pixeloffset[0]) + vertx.pos * float2(symbol.pixeloffset[1] - symbol.pixeloffset[0]);
@@ -427,7 +428,8 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     }
 
     const float ele = get_elevation(
-        a_pos, demTexture, demSampler, drawable.dem_coords, drawable.dem_unpack, drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled);
+        a_pos, demTexture, demSampler, drawable.dem_coords, drawable.dem_unpack, drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled) +
+        float(symbol.size_sdf.z) / 10.0;
     const float4 projectedPoint = drawable.matrix * float4(a_pos, ele, 1);
     const float camera_to_anchor_distance = projectedPoint.w;
     // If the label is pitched with the map, layout is done in pitched space,
@@ -590,7 +592,7 @@ struct SymbolInstance {
     short2 offset_blbr[2];
     ushort2 texture_rect[2];
     short2 pixeloffset[2];
-    ushort2 size_sdf;
+    ushort4 size_sdf;
 };
 
 struct DynamicInstance {
@@ -691,7 +693,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     const float2 a_offset = float2(select(symbol.offset_tltr[uint(vertx.pos.x)], symbol.offset_blbr[uint(vertx.pos.x)], uint(vertx.pos.y)));
 
     const float2 a_tex = float2(symbol.texture_rect[0]) + vertx.pos * float2(symbol.texture_rect[1]);
-    const float2 a_size = float2(symbol.size_sdf);
+    const float2 a_size = float2(symbol.size_sdf.xy);
 
     const float a_size_min = floor(a_size[0] * 0.5);
     const float is_sdf = a_size[0] - 2.0 * a_size_min;
@@ -708,7 +710,8 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     }
 
     const float ele = get_elevation(
-        a_pos, demTexture, demSampler, drawable.dem_coords, drawable.dem_unpack, drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled);
+        a_pos, demTexture, demSampler, drawable.dem_coords, drawable.dem_unpack, drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled) +
+        float(symbol.size_sdf.z) / 10.0;
     const float4 projectedPoint = drawable.matrix * float4(a_pos, ele, 1);
     const float camera_to_anchor_distance = projectedPoint.w;
     // If the label is pitched with the map, layout is done in pitched space,
