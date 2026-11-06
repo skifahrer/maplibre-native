@@ -95,6 +95,8 @@ struct TerrainLoadBudget {
     /// Texels all drape targets may hold together; over it, the largest targets shrink first.
     /// Memory, not frame time: a steep view fills it, and the far ground blurs once it is full.
     size_t drapeTexels;
+    /// Texels of new or resized drapes drawn a frame (0 = unlimited); the rest grow later.
+    size_t drapeTexelsGrownPerFrame;
 };
 
 constexpr TerrainLoadBudget terrainLoadBudget(TerrainLoadMode mode) {
@@ -105,19 +107,22 @@ constexpr TerrainLoadBudget terrainLoadBudget(TerrainLoadMode mode) {
                 .drapeRerendersPerFrame = 16,
                 .maxMeshTiles = 48,
                 .meshTargetZoom = 15,
-                .drapeTexels = 64u << 20};
+                .drapeTexels = 64u << 20,
+                    .drapeTexelsGrownPerFrame = 4u << 20};
         case TerrainLoadMode::Performance:
             return {.newTileBuildsPerFrame = 8,
                     .drapeRerendersPerFrame = 4,
                     .maxMeshTiles = 24,
                     .meshTargetZoom = 14,
-                    .drapeTexels = 64u << 20};
+                    .drapeTexels = 64u << 20,
+                    .drapeTexelsGrownPerFrame = 4u << 20};
         case TerrainLoadMode::CloseUp:
             return {.newTileBuildsPerFrame = 8,
                     .drapeRerendersPerFrame = 4,
                     .maxMeshTiles = 24,
                     .meshTargetZoom = 22,
-                    .drapeTexels = 64u << 20};
+                    .drapeTexels = 64u << 20,
+                    .drapeTexelsGrownPerFrame = 4u << 20};
         case TerrainLoadMode::Quality:
         default:
             // no per-frame budget, generous tile cap, mesh follows the view
@@ -125,7 +130,8 @@ constexpr TerrainLoadBudget terrainLoadBudget(TerrainLoadMode mode) {
                     .drapeRerendersPerFrame = 0,
                     .maxMeshTiles = 64,
                     .meshTargetZoom = 22,
-                    .drapeTexels = 96u << 20};
+                    .drapeTexels = 96u << 20,
+                    .drapeTexelsGrownPerFrame = 0};
     }
 }
 

@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <numeric>
 #include <vector>
 
 namespace mln {
@@ -86,6 +88,49 @@ inline bool drapeFallbackStrictlyWorse(const std::vector<DrapeGroupFallback>& no
         worse = true;
     }
     return worse;
+}
+
+/// A drape target's size this frame; `current` is 0 for a new one, `side` is what it gets.
+struct DrapeGrowth {
+    uint32_t wanted = 0;
+    uint32_t current = 0;
+    double edge = 0.0;
+    bool heldBack = false;
+    uint32_t side = 0;
+};
+
+/// Draws `budget` texels of new or resized drapes a frame, nearest first; the rest keep their
+/// texture or start at `smallest`, held back to grow later. True when any were held back.
+inline bool rationDrapeGrowth(std::vector<DrapeGrowth>& drapes, std::size_t budget, uint32_t smallest) {
+    std::vector<std::size_t> order(drapes.size());
+    std::iota(order.begin(), order.end(), std::size_t{0});
+    std::ranges::stable_sort(order, [&](std::size_t a, std::size_t b) { return drapes[a].edge > drapes[b].edge; });
+    std::size_t left = budget;
+    bool drewOne = false;
+    bool heldAny = false;
+    for (const auto i : order) {
+        auto& drape = drapes[i];
+        drape.side = drape.wanted;
+        if (drape.wanted == drape.current) {
+            drape.heldBack = false;
+            continue;
+        }
+        const std::size_t cost = std::size_t{drape.wanted} * drape.wanted;
+        // The nearest always goes, so held-back drapes keep growing frame by frame.
+        if (budget == 0 || !drewOne || cost <= left) {
+            left -= std::min(cost, left);
+            drewOne = true;
+            drape.heldBack = false;
+            continue;
+        }
+        drape.side = drape.current ? drape.current : std::min(smallest, drape.wanted);
+        drape.heldBack = true;
+        heldAny = true;
+        if (!drape.current) {
+            left -= std::min(std::size_t{drape.side} * drape.side, left);
+        }
+    }
+    return heldAny;
 }
 
 } // namespace terrain
