@@ -527,14 +527,22 @@ bool RenderTileSource::tileHasNoData(const UnwrappedTileID& id) const {
     if (emptyTiles.contains(id)) {
         return true;
     }
-    for (const auto& [tileID, tile] : tilePyramid.getTiles()) {
-        if (tileID.toUnwrapped() == id) {
-            if (tile->isComplete() && !tile->isRenderable()) {
-                emptyTiles.insert(id);
-                return true;
-            }
-            return false;
+    const auto& tiles = tilePyramid.getTiles();
+    if (tiles.empty()) {
+        return false;
+    }
+    // Keyed by overscaled zoom first, so the tile that wears this id is found a zoom at a time.
+    const uint8_t deepest = tiles.rbegin()->first.overscaledZ;
+    for (unsigned z = id.canonical.z; z <= deepest; ++z) {
+        const auto found = tiles.find(OverscaledTileID(static_cast<uint8_t>(z), id.wrap, id.canonical));
+        if (found == tiles.end()) {
+            continue;
         }
+        if (found->second->isComplete() && !found->second->isRenderable()) {
+            emptyTiles.insert(id);
+            return true;
+        }
+        return false;
     }
     return false;
 }

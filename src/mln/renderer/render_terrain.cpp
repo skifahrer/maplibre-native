@@ -265,26 +265,34 @@ std::array<float, 3> RenderTerrain::demTileMapping(const CanonicalTileID& tile, 
 }
 
 std::set<UnwrappedTileID> RenderTerrain::dilateCover(const std::set<UnwrappedTileID>& cover) {
-    std::set<UnwrappedTileID> dilated = cover;
-    // Every tile kept and every ancestor of one: a neighbour in this set lies over a tile kept.
-    std::set<UnwrappedTileID> overlapped;
+    // Every tile kept (true) and every ancestor of one (false): a neighbour in it lies over a tile
+    // kept. Hashed: a wide cover asks it for every ancestor of every neighbour.
+    std::unordered_map<UnwrappedTileID, bool> kept;
+    kept.reserve(cover.size() * 3);
     const auto keep = [&](const UnwrappedTileID& id) {
-        for (int z = id.canonical.z; z >= 0; --z) {
-            overlapped.emplace(id.wrap, id.canonical.scaledTo(static_cast<uint8_t>(z)));
+        kept[id] = true;
+        for (int z = id.canonical.z - 1; z >= 0; --z) {
+            // Once an ancestor is in, so are all of its own.
+            if (!kept.try_emplace(UnwrappedTileID(id.wrap, id.canonical.scaledTo(static_cast<uint8_t>(z))), false)
+                     .second) {
+                break;
+            }
         }
     };
     for (const auto& id : cover) keep(id);
     // Whether a tile kept lies over this tile (an ancestor of it), or under it.
     const auto coveredAlready = [&](const UnwrappedTileID& tile) {
-        if (overlapped.contains(tile)) return true;
+        if (kept.contains(tile)) return true;
         for (int z = tile.canonical.z - 1; z >= 0; --z) {
-            if (dilated.contains(UnwrappedTileID(tile.wrap, tile.canonical.scaledTo(static_cast<uint8_t>(z))))) {
+            const auto found = kept.find(UnwrappedTileID(tile.wrap, tile.canonical.scaledTo(static_cast<uint8_t>(z))));
+            if (found != kept.end() && found->second) {
                 return true;
             }
         }
         return false;
     };
 
+    std::vector<UnwrappedTileID> added;
     for (const auto& id : cover) {
         const int32_t numTiles = 1 << id.canonical.z;
         for (int dy = -1; dy <= 1; ++dy) {
@@ -310,11 +318,13 @@ std::set<UnwrappedTileID> RenderTerrain::dilateCover(const std::set<UnwrappedTil
                 // DEM, and a drape target and 1024 px of texture to hold it. Only ground the cover
                 // leaves out is worth a tile.
                 if (coveredAlready(neighbour)) continue;
-                dilated.insert(neighbour);
+                added.push_back(neighbour);
                 keep(neighbour);
             }
         }
     }
+    std::set<UnwrappedTileID> dilated = cover;
+    dilated.insert(added.begin(), added.end());
     return dilated;
 }
 
