@@ -45,6 +45,7 @@ jobs:
       sha: ${{ steps.plan.outputs.sha }}
       ref: ${{ steps.plan.outputs.ref }}
       merge: ${{ steps.plan.outputs.merge }}
+      said: ${{ steps.plan.outputs.said }}
       tag: ${{ steps.plan.outputs.tag }}
       build: ${{ steps.plan.outputs.build }}
       release: ${{ steps.plan.outputs.release }}
@@ -99,6 +100,8 @@ jobs:
             echo "build=$build"
             echo "release=$release"
             echo "pipeline_only=${pipeline_only:-false}"
+            # 83: upstream tests a pull request again once master is not the one named here
+            if [ -n "$PR" ]; then echo "said=, merged into master ${ref:0:7}"; fi
           } >> "$GITHUB_OUTPUT"
 
       - name: Mark the commit done, nothing to build
@@ -116,10 +119,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ steps.plan.outputs.sha }}
+          SAID: ${{ steps.plan.outputs.said }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=pending -f context=terrain-ios \
-            -f target_url="$RUN_URL" -f description="Building and testing on a simulator" || true
+            -f target_url="$RUN_URL" -f description="Building and testing on a simulator$SAID" || true
 
   # The arm64 pool drops a job it cannot take within about 15 minutes; this run then
   # starts again on Intel, which always has a Mac free.
@@ -170,6 +174,7 @@ jobs:
     timeout-minutes: 240
     env:
       SHA: ${{ needs.check.outputs.sha }}
+      SAID: ${{ needs.check.outputs.said }}
       GH_TOKEN: ${{ github.token }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
@@ -310,4 +315,4 @@ jobs:
           STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state="$STATE" -f context=terrain-ios \
-            -f target_url="$RUN_URL" -f description="Build and simulator tests: $STATE" || true
+            -f target_url="$RUN_URL" -f description="Build and simulator tests: $STATE$SAID" || true
