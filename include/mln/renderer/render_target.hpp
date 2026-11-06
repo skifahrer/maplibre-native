@@ -41,7 +41,12 @@ using LayerGroupBasePtr = std::shared_ptr<LayerGroupBase>;
 class RenderTarget {
 public:
     RenderTarget(gfx::Context& context, const Size size, const gfx::TextureChannelDataType type, bool stencil);
+    /// A target drawing into a texture another target gave up, so none is allocated.
+    RenderTarget(gfx::Context& context, std::unique_ptr<gfx::OffscreenTexture> texture);
     ~RenderTarget();
+
+    /// Gives the texture up for a new target; this one draws nothing after.
+    std::unique_ptr<gfx::OffscreenTexture> takeOffscreenTexture();
 
     /// Set the color the render target is cleared to before its layer groups are drawn
     void setClearColor(const Color& color) { backgroundColor = color; }

@@ -45,7 +45,17 @@ RenderTarget::RenderTarget(gfx::Context& context_,
     backgroundColor = Color{0.0f, 0.0f, 0.0f, 1.0f};
 }
 
+RenderTarget::RenderTarget(gfx::Context& context_, std::unique_ptr<gfx::OffscreenTexture> texture)
+    : context(context_),
+      offscreenTexture(std::move(texture)) {
+    backgroundColor = Color{0.0f, 0.0f, 0.0f, 1.0f};
+}
+
 RenderTarget::~RenderTarget() = default;
+
+std::unique_ptr<gfx::OffscreenTexture> RenderTarget::takeOffscreenTexture() {
+    return std::move(offscreenTexture);
+}
 
 const gfx::Texture2DPtr& RenderTarget::getTexture() {
     return offscreenTexture->getTexture();
