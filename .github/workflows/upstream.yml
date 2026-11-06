@@ -69,16 +69,20 @@ jobs:
               echo "opened #$pr for $branch"
             fi
             head=$(gh pr view "$pr" -R "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
-            state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/status" \
-                      -q '[.statuses[] | select(.context == "terrain-ios")][0].state // empty')
+            read -r state tested <<< "$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/status" \
+              -q '[.statuses[] | select(.context == "terrain-ios")][0] // {} |
+                  "\(.state // "") \((.description // "") | capture("master (?<sha>[0-9a-f]{7})").sha // "")"')"
+            # 83: a pass on an older master says nothing of this one
+            master=$(gh api "repos/$GITHUB_REPOSITORY/commits/master" -q .sha)
             # pending with no run left: its build was dropped for lack of a Mac
             active=$(gh run list -R "$GITHUB_REPOSITORY" --workflow terrain-ios.yml --json status \
                        -q '[.[] | select(.status != "completed")] | length')
-            if [ -z "$state" ] || { [ "$state" = pending ] && [ "$active" = 0 ]; }; then
+            if [ -z "$state" ] || { [ "$state" = pending ] && [ "$active" = 0 ]; } ||
+               { [ "$state" != pending ] && [ "$tested" != "${master:0:7}" ]; }; then
               # a pull request by this token starts no workflow; a dispatch does
               gh workflow run terrain-ios.yml -R "$GITHUB_REPOSITORY" --ref master -f pr="$pr"
-              echo "testing #$pr at ${head:0:7}"
+              echo "testing #$pr at ${head:0:7} on master ${master:0:7}"
             else
-              echo "#$pr at ${head:0:7} is $state"
+              echo "#$pr at ${head:0:7} is $state on master ${tested:-?}"
             fi
           done
