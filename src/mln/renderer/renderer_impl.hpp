@@ -78,7 +78,9 @@ private:
     std::map<UnwrappedTileID, uint32_t> drapeSides(const RenderTerrain& terrain,
                                                    const std::set<UnwrappedTileID>& tiles,
                                                    const TransformState& state,
-                                                   TerrainLoadMode mode) const;
+                                                   TerrainLoadMode mode);
+    std::set<UnwrappedTileID> drapesHeldBack;
+    bool drapeGrowthHeldBack = false;
     TexturePool texturePool{drapeTileSize * drapeQualityFactor};
 
     gfx::RendererBackend& backend;

@@ -75,3 +75,73 @@ TEST(TerrainCachePolicy, PlaceholderTexelIsSeaLevel) {
     EXPECT_EQ(seaLevelTexel(mapbox), (std::array<uint8_t, 3>{{1, 134, 160}}));
     EXPECT_EQ(seaLevelTexel(terrarium), (std::array<uint8_t, 3>{{128, 0, 0}}));
 }
+
+namespace {
+
+std::vector<mln::terrain::DrapeGrowth> drapes(std::initializer_list<std::array<uint32_t, 2>> wantedAndCurrent) {
+    std::vector<mln::terrain::DrapeGrowth> list;
+    double edge = 1000.0;
+    for (const auto& [wanted, current] : wantedAndCurrent) {
+        list.push_back({.wanted = wanted, .current = current, .edge = edge});
+        edge -= 100.0;
+    }
+    return list;
+}
+
+constexpr std::size_t twoLarge = 2u * 1024 * 1024;
+
+} // namespace
+
+// 84 six new drapes at once stalled a frame for 159 ms; the nearest are drawn, the rest wait small
+TEST(TerrainDrapeGrowth, ABurstOfNewDrapesDrawsTheNearestFirst) {
+    auto list = drapes({{1024, 0}, {1024, 0}, {1024, 0}, {1024, 0}});
+    EXPECT_TRUE(mln::terrain::rationDrapeGrowth(list, twoLarge, 512));
+    EXPECT_EQ(1024u, list[0].side);
+    EXPECT_FALSE(list[0].heldBack);
+    EXPECT_EQ(512u, list[2].side);
+    EXPECT_TRUE(list[2].heldBack);
+    EXPECT_EQ(512u, list[3].side);
+}
+
+// 84 a drape changing size keeps its texture until there is room, never going blank
+TEST(TerrainDrapeGrowth, AResizeOverTheBudgetKeepsItsTexture) {
+    auto list = drapes({{2048, 1024}, {2048, 1024}});
+    EXPECT_TRUE(mln::terrain::rationDrapeGrowth(list, twoLarge, 512));
+    EXPECT_EQ(2048u, list[0].side);
+    EXPECT_EQ(1024u, list[1].side);
+    EXPECT_TRUE(list[1].heldBack);
+}
+
+// 84 the nearest always grows, so a budget smaller than one drape still makes progress
+TEST(TerrainDrapeGrowth, TheNearestGrowsEvenOverTheBudget) {
+    auto list = drapes({{4096, 0}, {1024, 0}});
+    mln::terrain::rationDrapeGrowth(list, twoLarge, 512);
+    EXPECT_EQ(4096u, list[0].side);
+    EXPECT_EQ(512u, list[1].side);
+}
+
+// 84 frame after frame the held-back drapes reach the size they want
+TEST(TerrainDrapeGrowth, HeldBackDrapesGrowOverTheNextFrames) {
+    auto list = drapes({{1024, 0}, {1024, 0}, {1024, 0}, {1024, 0}});
+    for (int frame = 0; frame < 4; ++frame) {
+        mln::terrain::rationDrapeGrowth(list, twoLarge, 512);
+        for (auto& drape : list) {
+            drape.current = drape.side;
+        }
+    }
+    for (const auto& drape : list) {
+        EXPECT_EQ(1024u, drape.side);
+        EXPECT_FALSE(drape.heldBack);
+    }
+}
+
+// 84 nothing new to draw holds nothing back; Quality's 0 draws everything at once
+TEST(TerrainDrapeGrowth, NoBudgetOrNothingNewHoldsNothingBack) {
+    auto settled = drapes({{1024, 1024}, {2048, 2048}});
+    EXPECT_FALSE(mln::terrain::rationDrapeGrowth(settled, twoLarge, 512));
+    auto burst = drapes({{1024, 0}, {1024, 0}, {1024, 0}, {1024, 0}});
+    EXPECT_FALSE(mln::terrain::rationDrapeGrowth(burst, 0, 512));
+    for (const auto& drape : burst) {
+        EXPECT_EQ(1024u, drape.side);
+    }
+}

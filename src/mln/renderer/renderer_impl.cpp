@@ -17,6 +17,7 @@
 #include <mln/renderer/render_static_data.hpp>
 #include <mln/renderer/render_tree.hpp>
 #include <mln/renderer/render_tile.hpp>
+#include <mln/renderer/terrain_cache_policy.hpp>
 #include <mln/renderer/texture_pool.hpp>
 #include <mln/renderer/update_parameters.hpp>
 #include <mln/shaders/program_parameters.hpp>
@@ -279,6 +280,8 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         util::setTerrainMeshCover({demTileIDs.begin(), demTileIDs.end()});
     } else {
         util::setTerrainMeshCover({});
+        drapesHeldBack.clear();
+        drapeGrowthHeldBack = false;
         // The pool persists across frames, so release the drape targets when
         // terrain is disabled instead of holding their textures indefinitely
         texturePool.removeStaleRenderTargets({});
@@ -824,8 +827,8 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // Request a follow-up frame if the drape budget deferred any target or the tile-build
         // budget deferred any new tile, so deferred drapes/tiles catch up progressively even
         // after the interaction stops.
-        renderTreeParameters.needsRepaint || drapeWorkDeferred || context.newTileBuildWasDeferred() ||
-            terrainCoverPending,
+        renderTreeParameters.needsRepaint || drapeWorkDeferred || drapeGrowthHeldBack ||
+            context.newTileBuildWasDeferred() || terrainCoverPending,
         renderTreeParameters.placementChanged,
         std::move(stats));
 
@@ -843,13 +846,14 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
 std::map<UnwrappedTileID, uint32_t> Renderer::Impl::drapeSides(const RenderTerrain& terrain,
                                                                const std::set<UnwrappedTileID>& tiles,
                                                                const TransformState& state,
-                                                               TerrainLoadMode mode) const {
+                                                               TerrainLoadMode mode) {
     // Each tile drapes at the density it shows at on screen, so the ground in front of the camera
     // is as sharp as the 2D map; one far off, a few pixels tall, takes the smallest target.
     struct Wanted {
         UnwrappedTileID id;
         uint32_t side;
         double edge;
+        uint32_t current;
     };
     std::vector<Wanted> wanted;
     wanted.reserve(tiles.size());
@@ -858,14 +862,17 @@ std::map<UnwrappedTileID, uint32_t> Renderer::Impl::drapeSides(const RenderTerra
         const double edge = terrain.screenEdge(id, state) * pixelRatio;
         auto side = static_cast<uint32_t>(std::ceil(edge / drapeTileSize)) * drapeTileSize;
         side = std::clamp(side, drapeTileSize, maxDrapeSide);
-        // A size changes only by two steps, so a pan does not remake textures each frame.
+        uint32_t current = 0;
         if (const auto target = texturePool.getRenderTarget(id)) {
-            const uint32_t current = target->getTexture()->getSize().width;
-            if (side + 2 * drapeTileSize > current && side < current + 2 * drapeTileSize) {
+            current = target->getTexture()->getSize().width;
+            // A size changes only by two steps, so a pan does not remake textures each frame;
+            // one held back still grows to what it wants.
+            if (!drapesHeldBack.contains(id) && side + 2 * drapeTileSize > current &&
+                side < current + 2 * drapeTileSize) {
                 side = current;
             }
         }
-        wanted.push_back({id, side, edge});
+        wanted.push_back({id, side, edge, current});
         texels += std::size_t{side} * side;
     }
     // Over the budget, the largest give way first, a step at a time.
@@ -881,9 +888,23 @@ std::map<UnwrappedTileID, uint32_t> Renderer::Impl::drapeSides(const RenderTerra
         largest->side -= drapeTileSize;
         texels += std::size_t{largest->side} * largest->side;
     }
-    std::map<UnwrappedTileID, uint32_t> sides;
+    std::vector<terrain::DrapeGrowth> growth;
+    growth.reserve(wanted.size());
     for (const auto& tile : wanted) {
-        sides.emplace(tile.id, tile.side);
+        growth.push_back({.wanted = tile.side,
+                          .current = tile.current,
+                          .edge = tile.edge,
+                          .heldBack = drapesHeldBack.contains(tile.id)});
+    }
+    drapeGrowthHeldBack = terrain::rationDrapeGrowth(
+        growth, terrainLoadBudget(mode).drapeTexelsGrownPerFrame, drapeTileSize);
+    drapesHeldBack.clear();
+    std::map<UnwrappedTileID, uint32_t> sides;
+    for (std::size_t i = 0; i < wanted.size(); ++i) {
+        sides.emplace(wanted[i].id, growth[i].side);
+        if (growth[i].heldBack) {
+            drapesHeldBack.insert(wanted[i].id);
+        }
     }
     return sides;
 }
