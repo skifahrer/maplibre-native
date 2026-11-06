@@ -13,9 +13,11 @@
 #include <mln/renderer/render_tree.hpp>
 #include <mln/shaders/layer_ubo.hpp>
 #include <mln/util/hash.hpp>
+#include <mln/util/logging.hpp>
 #include <mln/util/string.hpp>
 
 #include <cmath>
+#include <new>
 #include <set>
 
 namespace mln {
@@ -414,12 +416,20 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
     // Drape targets carry a depth and stencil attachment, as maplibre-gl-js's
     // render-to-texture framebuffer does; both are cleared each frame. Targets that
     // are not draped (e.g. the hillshade prepare pass) have depth only.
-    parameters.renderPass = parameters.encoder->createRenderPass(
-        "render target",
-        {.renderable = *offscreenTexture,
-         .clearColor = backgroundColor,
-         .clearDepth = 1.0f,
-         .clearStencil = drapeTileID ? 0 : std::optional<int32_t>{}});
+    try {
+        parameters.renderPass = parameters.encoder->createRenderPass(
+            "render target",
+            {.renderable = *offscreenTexture,
+             .clearColor = backgroundColor,
+             .clearDepth = 1.0f,
+             .clearStencil = drapeTileID ? 0 : std::optional<int32_t>{}});
+    } catch (const std::bad_alloc&) {
+        // The GPU had no memory for the texture: try again next frame rather than abort.
+        bakedCoverage = {};
+        bakedSignature.reset();
+        Log::Warning(Event::Render, "Render target texture could not be allocated; skipped this frame");
+        return RenderResult::Deferred;
+    }
 #if MLN_RENDER_BACKEND_OPENGL
     parameters.updateStencilBufferAvailability();
 #endif
