@@ -41,6 +41,9 @@ public:
         }
     }
 
+    // TEMP churn count
+    uint32_t created = 0, resized = 0, removed = 0;
+
 private:
     uint32_t tileSize;
 

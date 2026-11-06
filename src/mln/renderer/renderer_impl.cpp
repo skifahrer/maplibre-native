@@ -273,6 +273,26 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         }
         texturePool.removeStaleRenderTargets(demTileIDs);
         frameDrapeTargetCount = demTileIDs.size();
+        {
+            // TEMP churn log
+            static FILE* log = nullptr;
+            static uint64_t frame = 0;
+            if (!log) {
+                const char* dir = getenv("TMPDIR");
+                log = fopen((std::string(dir ? dir : "/tmp") + "/drape-churn.log").c_str(), "w");
+            }
+            std::size_t texels = 0;
+            for (const auto& [id, side] : sides) texels += std::size_t{side} * side;
+            const auto budget = terrainLoadBudget(updateParameters->terrainLoadMode).drapeTexels;
+            if (log) {
+                fprintf(log, "%.3f %llu z=%.2f targets=%zu created=%u resized=%u removed=%u texels=%zu budget=%zu\n",
+                        util::MonotonicTimer::now().count(), (unsigned long long)++frame, state.getZoom(),
+                        demTileIDs.size(), texturePool.created, texturePool.resized, texturePool.removed, texels,
+                        budget);
+                fflush(log);
+            }
+            texturePool.created = texturePool.resized = texturePool.removed = 0;
+        }
         // Hand the exact cover to RenderTerrain so its mesh matches this pool
         terrain->setFrameMeshCover(demTileIDs);
         // ...and to the DEM source, which loads the levels the mesh is drawn at.
