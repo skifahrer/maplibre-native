@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <random>
 #include <set>
 
 using namespace mln;
@@ -449,4 +450,90 @@ TEST(TerrainMeshCover, DilationSkipsNeighboursOverTilesTheCoverHas) {
     EXPECT_TRUE(dilated.contains(UnwrappedTileID(0, CanonicalTileID(2, 1, 0))));
     EXPECT_TRUE(dilated.contains(coarse));
     EXPECT_TRUE(dilated.contains(fine));
+}
+
+namespace {
+// 85: the dilation as first written, a set and a walk to the root per tile, to hold the fast one to.
+std::set<UnwrappedTileID> plainDilation(const std::set<UnwrappedTileID>& cover) {
+    std::set<UnwrappedTileID> dilated = cover;
+    std::set<UnwrappedTileID> overlapped;
+    const auto keep = [&](const UnwrappedTileID& id) {
+        for (int z = id.canonical.z; z >= 0; --z) {
+            overlapped.emplace(id.wrap, id.canonical.scaledTo(static_cast<uint8_t>(z)));
+        }
+    };
+    for (const auto& id : cover) keep(id);
+    for (const auto& id : cover) {
+        const int n = 1 << id.canonical.z;
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                const int y = static_cast<int>(id.canonical.y) + dy;
+                if ((dx == 0 && dy == 0) || y < 0 || y >= n) continue;
+                int x = static_cast<int>(id.canonical.x) + dx;
+                int wrap = id.wrap;
+                if (x < 0) {
+                    x += n;
+                    --wrap;
+                } else if (x >= n) {
+                    x -= n;
+                    ++wrap;
+                }
+                const UnwrappedTileID neighbour(static_cast<int16_t>(wrap),
+                                                CanonicalTileID(id.canonical.z, uint32_t(x), uint32_t(y)));
+                bool covered = overlapped.contains(neighbour);
+                for (int z = neighbour.canonical.z - 1; z >= 0 && !covered; --z) {
+                    covered = dilated.contains(
+                        UnwrappedTileID(neighbour.wrap, neighbour.canonical.scaledTo(static_cast<uint8_t>(z))));
+                }
+                if (covered) continue;
+                dilated.insert(neighbour);
+                keep(neighbour);
+            }
+        }
+    }
+    return dilated;
+}
+
+// Finer the nearer `focus`, with a tile left out here and there: a cover of mixed zooms with holes.
+void mixedCover(const CanonicalTileID& tile,
+                const std::array<double, 2>& focus,
+                int deepest,
+                std::mt19937& random,
+                std::set<UnwrappedTileID>& out) {
+    const double side = 1.0 / (1 << tile.z);
+    const double gap = std::max(
+        0.0, std::hypot((tile.x + 0.5) * side - focus[0], (tile.y + 0.5) * side - focus[1]) - side);
+    const int wanted = std::max(2, static_cast<int>(deepest - std::log2(1 + gap * 64)));
+    if (tile.z >= wanted) {
+        if (random() % 7 != 0) out.emplace(0, tile);
+        return;
+    }
+    for (uint32_t i = 0; i < 4; ++i) {
+        mixedCover(CanonicalTileID(tile.z + 1, tile.x * 2 + i % 2, tile.y * 2 + i / 2), focus, deepest, random, out);
+    }
+}
+} // namespace
+
+TEST(TerrainMeshCover, DilationAddsWhatThePlainDilationAdds) {
+    // 85: the hashed dilation must keep the ground the plain one kept, on covers of every shape.
+    std::mt19937 random(85);
+    std::uniform_real_distribution<double> anywhere(0, 1);
+    for (int round = 0; round < 60; ++round) {
+        std::set<UnwrappedTileID> cover;
+        mixedCover(CanonicalTileID(0, 0, 0), {{anywhere(random), anywhere(random)}}, 6 + round % 6, random, cover);
+        ASSERT_EQ(plainDilation(cover), RenderTerrain::dilateCover(cover)) << "round " << round;
+    }
+}
+
+TEST(TerrainMeshCover, DilatingAWideCoverIsFast) {
+    // 85: Riki Maps build 1100 spent 0.4 s of one frame on the main thread dilating a wide cover.
+    std::mt19937 random(85);
+    std::set<UnwrappedTileID> cover;
+    mixedCover(CanonicalTileID(0, 0, 0), {{0.53, 0.35}}, 13, random, cover);
+    ASSERT_GT(cover.size(), 100000u);
+    const auto start = std::chrono::steady_clock::now();
+    const auto dilated = RenderTerrain::dilateCover(cover);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    EXPECT_GT(dilated.size(), cover.size());
+    EXPECT_LT(elapsed, std::chrono::seconds(2)) << "dilating the cover took too long";
 }

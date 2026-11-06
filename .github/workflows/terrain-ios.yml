@@ -40,6 +40,8 @@ env:
 
 jobs:
   check:
+    # 86: another repository's pull request gets a read-only token; upstream.yml starts its run
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.plan.outputs.sha }}
