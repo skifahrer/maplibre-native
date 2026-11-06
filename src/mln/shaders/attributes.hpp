@@ -34,7 +34,8 @@ MBGL_DEFINE_ATTRIBUTE(int16_t, 4, pos_scale);
 MBGL_DEFINE_ATTRIBUTE(int16_t, 4, offset_tltr);
 MBGL_DEFINE_ATTRIBUTE(int16_t, 4, offset_blbr);
 MBGL_DEFINE_ATTRIBUTE(uint16_t, 4, texture_rect);
-MBGL_DEFINE_ATTRIBUTE(uint16_t, 2, size_sdf);
+// Sizes, then the height above the ground in decimetres
+MBGL_DEFINE_ATTRIBUTE(uint16_t, 4, size_sdf);
 #endif
 
 template <typename T, std::size_t N>

@@ -11,6 +11,8 @@
 #include <mln/style/layers/symbol_layer_properties.hpp>
 #include <mln/text/glyph_range.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -307,11 +309,13 @@ public:
 #if MLN_USE_SYMBOL_INSTANCING
     static SymbolLayoutAttributes layoutAttributes(const SymbolQuad& symbol,
                                                    const Anchor& labelAnchor,
-                                                   const Range<float>& sizeData) {
+                                                   const Range<float>& sizeData,
+                                                   float zOffset) {
         const uint16_t aSizeMin = (std::min(MAX_PACKED_SIZE, static_cast<uint16_t>(sizeData.min * SIZE_PACK_FACTOR))
                                    << 1) +
                                   uint16_t(symbol.isSDF);
         const uint16_t aSizeMax = std::min(MAX_PACKED_SIZE, static_cast<uint16_t>(sizeData.max * SIZE_PACK_FACTOR));
+        const auto decimetres = static_cast<uint16_t>(std::clamp(std::round(zOffset * 10.0f), 0.0f, 65535.0f));
 
         return {.a1 = {static_cast<int16_t>(labelAnchor.point.x),
                        static_cast<int16_t>(labelAnchor.point.y),
@@ -335,10 +339,7 @@ public:
                        static_cast<int16_t>(symbol.pixelOffsetBR.x * 16),
                        static_cast<int16_t>(symbol.pixelOffsetBR.y * 16)},
 
-                .a6 = {
-                    aSizeMin,
-                    aSizeMax
-                }};
+                .a6 = {aSizeMin, aSizeMax, decimetres, 0}};
     }
 #else
     static SymbolLayoutAttributes layoutAttributes(Point<float> labelAnchor,

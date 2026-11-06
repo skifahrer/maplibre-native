@@ -111,6 +111,11 @@ struct SymbolSpacing : LayoutProperty<float> {
     static float defaultValue() { return 250.f; }
 };
 
+struct SymbolZOffset : DataDrivenLayoutProperty<float> {
+    static constexpr const char *name() { return "symbol-z-offset"; }
+    static float defaultValue() { return 0.f; }
+};
+
 struct SymbolZOrder : LayoutProperty<SymbolZOrderType> {
     static constexpr const char *name() { return "symbol-z-order"; }
     static SymbolZOrderType defaultValue() { return SymbolZOrderType::Auto; }
@@ -310,6 +315,7 @@ class SymbolLayoutProperties : public Properties<
     SymbolScreenSpace,
     SymbolSortKey,
     SymbolSpacing,
+    SymbolZOffset,
     SymbolZOrder,
     TextAllowOverlap,
     TextAnchor,

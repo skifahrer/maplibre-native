@@ -316,7 +316,7 @@ void updateTileAttributes(const SymbolBucket::Buffer& buffer,
                                offsetof(SymbolLayoutAttributes, a6),
                                /*vertexOffset=*/0,
                                sizeof(SymbolLayoutAttributes),
-                               gfx::AttributeDataType::UShort2);
+                               gfx::AttributeDataType::UShort4);
     }
 #else
     if (const auto& attr = attribs.set(idSymbolPosOffsetAttribute)) {
