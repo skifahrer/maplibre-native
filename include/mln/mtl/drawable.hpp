@@ -54,6 +54,7 @@ public:
 
     void setEnableStencil(bool) override;
     void setEnableDepth(bool) override;
+    void setDepthAbove3D(bool) override;
     void setSubLayerIndex(int32_t) override;
     void setDepthType(gfx::DepthMaskType) override;
 

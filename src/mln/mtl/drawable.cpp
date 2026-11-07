@@ -145,6 +145,13 @@ void Drawable::setEnableDepth(bool value) {
     impl->depthStencilState.reset();
 }
 
+void Drawable::setDepthAbove3D(bool value) {
+    if (value != getDepthAbove3D()) {
+        gfx::Drawable::setDepthAbove3D(value);
+        impl->depthStencilState.reset();
+    }
+}
+
 void Drawable::setSubLayerIndex(int32_t value) {
     gfx::Drawable::setSubLayerIndex(value);
     impl->depthStencilState.reset();
@@ -250,8 +257,10 @@ void Drawable::draw(PaintParameters& parameters) const {
                 impl->depthStencilState.reset();
             }
         }
-        const auto depthMode = getEnableDepth() ? parameters.depthModeForSublayer(getSubLayerIndex(), getDepthType())
-                                                : gfx::DepthMode::disabled();
+        const auto depthMode = !getEnableDepth()   ? gfx::DepthMode::disabled()
+                               : getDepthAbove3D() ? parameters.depthModeAbove3D(getDepthType())
+                                                   : parameters.depthModeForSublayer(getSubLayerIndex(),
+                                                                                     getDepthType());
         if (!impl->depthStencilState) {
             if (enableStencil && !newStencilMode) {
                 newStencilMode = parameters.stencilModeForClipping(tileID->toUnwrapped());

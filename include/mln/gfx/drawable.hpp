@@ -145,6 +145,10 @@ public:
     bool getEnableDepth() const { return enableDepth; }
     virtual void setEnableDepth(bool value) { enableDepth = value; }
 
+    /// Whether depth testing also applies above the lowest 3D layer, where it is normally off
+    bool getDepthAbove3D() const { return depthAbove3D; }
+    virtual void setDepthAbove3D(bool value) { depthAbove3D = value; }
+
     /// Determines depth range within the layer for 2D drawables
     int32_t getSubLayerIndex() const { return subLayerIndex; }
 
@@ -283,6 +287,7 @@ protected:
     bool enableColor = true;
     bool enableStencil = false;
     bool enableDepth = true;
+    bool depthAbove3D = false;
     bool is3D = false;
     bool isCustom = false;
     std::string name;

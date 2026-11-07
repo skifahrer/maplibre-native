@@ -1,3 +1,4 @@
+#include <mln/math/angles.hpp>
 #include <mln/renderer/layers/symbol_layer_tweaker.hpp>
 
 #include <mln/gfx/context.hpp>
@@ -17,7 +18,12 @@
 #include <mln/shaders/symbol_layer_ubo.hpp>
 #include <mln/style/layers/symbol_layer_properties.hpp>
 #include <mln/util/convert.hpp>
+#include <mln/util/mat4.hpp>
 #include <mln/util/std.hpp>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
 
 #if MLN_RENDER_BACKEND_METAL
 #include <mln/shaders/mtl/symbol.hpp>
@@ -49,6 +55,36 @@ const auto& getProperty(const SymbolBucket::PaintProperties& paintProps, bool is
 template <typename TText, typename TIcon, std::size_t N>
 auto getInterpFactor(const SymbolBucket::PaintProperties& paintProps, bool isText, float currentZoom) {
     return std::get<N>(getProperty<TText, TIcon>(paintProps, isText)->interpolationFactor(currentZoom));
+}
+
+// How much nearer the ground gets, as a share of its distance, per pixel down the screen.
+double depthPullPerPixel(const TransformState& state) {
+    return std::tan(std::min(state.getPitch(), util::deg2rad(85.0))) / state.getCameraToCenterDistance();
+}
+
+// Seen from above a roof covers everything under it, so only a tilted map hides symbols.
+double depthPull(const TransformState& state) {
+    constexpr double from = util::deg2rad(35.0);
+    constexpr double to = util::deg2rad(60.0);
+    constexpr double slack = 0.01;
+    return slack + std::clamp((to - state.getPitch()) / (to - from), 0.0, 1.0);
+}
+
+// Depth as a + b / distance, in the projection and clip z of what stands in the 3D layers.
+std::array<float, 2> depthTerms(const PaintParameters& parameters) {
+    const auto& projection = parameters.terrain ? parameters.transformParams.projMatrix
+                                                : parameters.transformParams.nearClippedProjMatrix;
+    vec4 ground = {{0, 0, 0, 1}};
+    vec4 raised = {{0, 0, 1, 1}};
+    matrix::transformMat4(ground, ground, projection);
+    matrix::transformMat4(raised, raised, projection);
+    double a = (raised[2] - ground[2]) / (raised[3] - ground[3]);
+    double b = ground[2] - a * ground[3];
+    if (parameters.terrain) {
+        a = a * 0.5 + 0.5;
+        b *= 0.5;
+    }
+    return {static_cast<float>(a), static_cast<float>(b * (1.0 + depthPull(parameters.state)))};
 }
 
 } // namespace
@@ -97,6 +133,7 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
 #endif
 
     const auto camDist = state.getCameraToCenterDistance();
+    const auto depth = depthTerms(parameters);
     const auto screenSpaceProp = symbolLayerProperties.layerImpl().layout.get<SymbolScreenSpace>();
     const auto isScreenSpace = screenSpaceProp.isConstant() ? screenSpaceProp.asConstant()
                                                             : SymbolScreenSpace::defaultValue();
@@ -182,11 +219,9 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
             drawable.setTexture(parameters.terrain->getDepthTexture(context), idSymbolDepthTexture);
         }
 
-        // The terrain surface writes depth so its skirts get occluded; symbols
-        // must not depth-test against it (their occlusion behind terrain comes
-        // from the depth texture / calculate_visibility above), or a label would
-        // be culled by the very surface it labels. Depth stays on without terrain.
-        drawable.setEnableDepth(!terrainEnabled);
+        // A symbol lying on the terrain would be culled by the very surface it labels.
+        drawable.setEnableDepth(!terrainEnabled || !pitchWithMap);
+        drawable.setDepthAbove3D(!pitchWithMap);
 
 #if MLN_UBO_CONSOLIDATION
         drawableUBOVector[i] = {
@@ -215,9 +250,9 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
             .opacity_t = getInterpFactor<TextOpacity, IconOpacity, 0>(paintProperties, isText, zoom),
             .halo_width_t = getInterpFactor<TextHaloWidth, IconHaloWidth, 0>(paintProperties, isText, zoom),
             .halo_blur_t = getInterpFactor<TextHaloBlur, IconHaloBlur, 0>(paintProperties, isText, zoom),
-            .pad1 = 0,
-            .pad2 = 0,
-            .pad3 = 0,
+            .depth_a = depth[0],
+            .depth_b = depth[1],
+            .depth_pull_per_pixel = static_cast<float>(depthPullPerPixel(state)),
 
             .dem_coords = terrainData ? terrainData->demCoords : std::array<float, 4>{{0, 0, 0, 0}},
             .dem_unpack = parameters.terrain ? parameters.terrain->getDEMUnpackVector()
