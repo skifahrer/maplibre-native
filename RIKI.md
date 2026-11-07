@@ -13,22 +13,28 @@ What is ours besides those commits:
 
 ## Upstream comes in by pull request
 
-`upstream` runs every night. It keeps one pull request open from each of upstream's `main` and
-`feature/terrain-3d` into `master`, straight from upstream's branch, mentions @skifahrer when it
-opens one, and has `terrain-ios` test each new upstream head. Nothing is merged on its own.
+`upstream` runs every night. For each of upstream's `main` and `feature/terrain-3d` it keeps a
+branch of ours, `upstream-main` and `upstream-feature-terrain-3d`: upstream's branch with `master`
+merged into it, merged again whenever either moves. It keeps one pull request open from each into
+`master` and mentions @skifahrer when it opens one. Nothing is merged on its own.
 
-`terrain-ios` merges that head into today's `master` on the runner (GitHub's own merge commit of
-a fork's branch can lag `master` by hours), builds the framework, and runs upstream's iOS tests
-(`//platform/ios/test:ios_test`), ours (`//platform/ios/riki-test:riki_test`) and the core's
-terrain tests on an iOS simulator, one at a time. The result is the `terrain-ios` status on the
-pull request's head; merge only when it is green. When upstream conflicts with our changes, or a
-test shows a clash: branch off `master`, `git pull https://github.com/maplibre/maplibre-native.git
-<branch>`, resolve, open a pull request from that branch and close the upstream one.
+That pull request's `terrain-ios` run builds the framework from its head, so from upstream's
+changes on top of ours, and runs upstream's iOS tests (`//platform/ios/test:ios_test`), ours
+(`//platform/ios/riki-test:riki_test`) and the core's terrain tests on an iOS simulator, one at a
+time. Merge only when its `terrain-ios` status is green on the head.
+
+When upstream conflicts with our changes, `upstream` pushes upstream's side alone and marks the
+head red. Check out the branch, `git merge master`, resolve, build and push; later nightly runs
+merge on top of what you resolved.
+
+Pushing upstream's workflow changes, and having that push start the pipeline, takes an
+`UPSTREAM_TOKEN` secret: a token with the `repo` and `workflow` scopes. Without it `upstream`
+starts `terrain-ios` on the branch itself and fails on any upstream change to `.github/workflows/`.
 
 It runs on Apple-silicon runners (`macos-26`); Intel runners run the core's timing tests too
 slowly. When GitHub has no Mac free it drops the job and the status stays pending; the next
-nightly `upstream` run starts it again. Start it by hand from the Actions tab (`pr` = the number)
-to go sooner.
+nightly `upstream` run starts it again. Run `terrain-ios` by hand on the branch from the Actions
+tab to go sooner.
 
 A pull request or push that changes only `.github/` or `*.md` files is not built: `terrain-ios`
 marks it green at once. To try a workflow change, run `terrain-ios` by hand on its branch.
