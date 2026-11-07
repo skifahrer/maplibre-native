@@ -1,17 +1,13 @@
 name: terrain-ios
 
 # Builds MapLibre iOS from this repository and tests it on a simulator: on a pull request, or a
-# dispatch for an upstream one, to check it; on master to release it.
+# dispatch on a branch, to check it; on master to release it.
 on:
   push:
     branches: [master]
   pull_request:
   workflow_dispatch:
     inputs:
-      pr:
-        description: Test this pull request merged into master (the upstream workflow's)
-        type: string
-        default: ""
       force:
         description: Rebuild and release even if this commit already has a release
         type: boolean
@@ -28,8 +24,8 @@ permissions:
   statuses: write
 
 concurrency:
-  group: terrain-ios-${{ inputs.pr || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/master' || inputs.pr != '' }}
+  group: terrain-ios-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 env:
   BAZEL_FLAGS: --compilation_mode=opt --//:renderer=metal --features=thin_lto --apple_generate_dsym
@@ -40,14 +36,12 @@ env:
 
 jobs:
   check:
-    # 86: another repository's pull request gets a read-only token; upstream.yml starts its run
+    # 90: another repository's pull request gets a read-only token
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.plan.outputs.sha }}
       ref: ${{ steps.plan.outputs.ref }}
-      merge: ${{ steps.plan.outputs.merge }}
-      said: ${{ steps.plan.outputs.said }}
       tag: ${{ steps.plan.outputs.tag }}
       build: ${{ steps.plan.outputs.build }}
       release: ${{ steps.plan.outputs.release }}
@@ -55,19 +49,13 @@ jobs:
       - id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-          PR: ${{ inputs.pr || '' }}
           PR_HEAD: ${{ github.event.pull_request.head.sha || '' }}
           PR_BASE: ${{ github.event.pull_request.base.sha || '' }}
           BEFORE: ${{ github.event.before || '' }}
           FORCE: ${{ inputs.force || false }}
         run: |
           release=false build=true
-          if [ -n "$PR" ]; then
-            sha=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
-            # merged on the runner: GitHub's merge commit of a fork's branch can lag master by hours
-            ref=$(gh api "repos/$GITHUB_REPOSITORY/commits/master" -q .sha)
-            merge=$sha
-          elif [ -n "$PR_HEAD" ]; then
+          if [ -n "$PR_HEAD" ]; then
             sha=$PR_HEAD ref=$GITHUB_REF
           else
             sha=$GITHUB_SHA ref=$GITHUB_SHA
@@ -81,7 +69,7 @@ jobs:
             from=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
                      -q '[.[] | select(.tag_name | startswith("terrain-"))][0].target_commitish // ""' || true)
           fi
-          if [ -z "$PR" ] && [ -n "$from" ] && [ "$from" != 0000000000000000000000000000000000000000 ]; then
+          if [ -n "$from" ] && [ "$from" != 0000000000000000000000000000000000000000 ]; then
             files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$from...$sha" -q '.files[].filename' || echo unknown)
             if [ -n "$files" ] && [ "$(echo "$files" | wc -l)" -lt 300 ] &&
                ! echo "$files" | grep -qvE '^\.github/|\.md$'; then
@@ -96,14 +84,11 @@ jobs:
           fi
           {
             echo "sha=$sha"
-            echo "merge=${merge:-}"
             echo "ref=$ref"
             echo "tag=$tag"
             echo "build=$build"
             echo "release=$release"
             echo "pipeline_only=${pipeline_only:-false}"
-            # 83: upstream tests a pull request again once master is not the one named here
-            if [ -n "$PR" ]; then echo "said=, merged into master ${ref:0:7}"; fi
           } >> "$GITHUB_OUTPUT"
 
       - name: Mark the commit done, nothing to build
@@ -121,11 +106,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ steps.plan.outputs.sha }}
-          SAID: ${{ steps.plan.outputs.said }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=pending -f context=terrain-ios \
-            -f target_url="$RUN_URL" -f description="Building and testing on a simulator$SAID" || true
+            -f target_url="$RUN_URL" -f description="Building and testing on a simulator" || true
 
   # The arm64 pool drops a job it cannot take within about 15 minutes; this run then
   # starts again on Intel, which always has a Mac free.
@@ -137,7 +121,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       BRANCH: ${{ github.head_ref || github.ref_name }}
-      PR: ${{ inputs.pr || '' }}
       FORCE: ${{ inputs.force || false }}
     steps:
       - name: Start again on Intel if no Apple silicon Mac takes the build
@@ -164,7 +147,7 @@ jobs:
           fi
           echo "::warning::no Apple silicon Mac took the build; starting this run again on Intel"
           gh workflow run terrain-ios.yml -R "$GITHUB_REPOSITORY" --ref "$BRANCH" \
-            -f runner=intel -f pr="$PR" -f force="$FORCE"
+            -f runner=intel -f force="$FORCE"
           gh run cancel "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY"
 
   build:
@@ -176,29 +159,14 @@ jobs:
     timeout-minutes: 240
     env:
       SHA: ${{ needs.check.outputs.sha }}
-      SAID: ${{ needs.check.outputs.said }}
       GH_TOKEN: ${{ github.token }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      # one status for our pull requests and upstream's, so one required check covers both
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.check.outputs.ref }}
           submodules: recursive
           persist-credentials: false
-          fetch-depth: ${{ needs.check.outputs.merge && '0' || '1' }}
-
-      - name: Merge the pull request into master
-        if: needs.check.outputs.merge != ''
-        env:
-          MERGE: ${{ needs.check.outputs.merge }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch --no-tags origin "$MERGE" || git fetch --no-tags https://github.com/maplibre/maplibre-native.git "$MERGE"
-          git merge --no-edit -m "Merge ${MERGE:0:7} into master" "$MERGE"
-          git submodule update --init --recursive --jobs 8
-          git log -1 --format='%H %s'
 
       - name: Restore the Bazel cache
         uses: actions/cache/restore@v4
@@ -317,4 +285,4 @@ jobs:
           STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state="$STATE" -f context=terrain-ios \
-            -f target_url="$RUN_URL" -f description="Build and simulator tests: $STATE$SAID" || true
+            -f target_url="$RUN_URL" -f description="Build and simulator tests: $STATE" || true
