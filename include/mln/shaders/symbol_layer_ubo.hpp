@@ -29,9 +29,9 @@ struct alignas(16) SymbolDrawableUBO {
     /* 248 */ float opacity_t;
     /* 252 */ float halo_width_t;
     /* 256 */ float halo_blur_t;
-    /* 260 */ float pad1;
-    /* 264 */ float pad2;
-    /* 268 */ float pad3;
+    /* 260 */ float depth_a;
+    /* 264 */ float depth_b;
+    /* 268 */ float depth_pull_per_pixel;
 
     // 3D terrain elevation; see RenderTerrain::getTerrainData
     /* 272 */ std::array<float, 4> dem_coords; // scale, x offset, y offset into the DEM tile, unused

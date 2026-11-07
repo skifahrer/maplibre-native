@@ -40,9 +40,9 @@ struct alignas(16) SymbolDrawableUBO {
     /* 248 */ float opacity_t;
     /* 252 */ float halo_width_t;
     /* 256 */ float halo_blur_t;
-    /* 260 */ float pad1;
-    /* 264 */ float pad2;
-    /* 268 */ float pad3;
+    /* 260 */ float depth_a;
+    /* 264 */ float depth_b;
+    /* 268 */ float depth_pull_per_pixel;
 
     // 3D terrain elevation
     /* 272 */ float4 dem_coords;
@@ -245,10 +245,13 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     const float2x2 rotation_matrix = float2x2(angle_cos, -1.0 * angle_sin, angle_sin, angle_cos);
 
     const float4 projected_pos = drawable.label_plane_matrix * float4(dynamic.projected_pos[0], dynamic.projected_pos[1], ele, 1.0);
-    const float z = float(drawable.pitch_with_map) * projected_pos.z / projected_pos.w;
     const float2 pos0 = projected_pos.xy / projected_pos.w;
     const float2 posOffset = a_offset * max(a_minFontScale, fontScale) / 32.0 + a_pxoffset / 16.0;
-    const float4 position = drawable.coord_matrix * float4(pos0 + rotation_matrix * posOffset, z, 1.0);
+    const float2 offset = rotation_matrix * posOffset;
+    const float pull = max(offset.y, 0.0) * drawable.depth_pull_per_pixel;
+    const float z = drawable.pitch_with_map ? projected_pos.z / projected_pos.w
+                                            : anchor_depth(projectedPoint.w, drawable.depth_a, drawable.depth_b, pull);
+    const float4 position = drawable.coord_matrix * float4(pos0 + offset, z, 1.0);
     // Fade out symbols hidden behind the terrain (see calculate_visibility)
     const half vis = half(calculate_visibility(projectedPoint, depthTexture, depthSampler, drawable.depth_enabled));
 
@@ -469,9 +472,11 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     const float angle_cos = cos(segment_angle + symbol_rotation);
     const auto rotation_matrix = float2x2(angle_cos, -1.0 * angle_sin, angle_sin, angle_cos);
     const float4 projected_pos = drawable.label_plane_matrix * float4(dynamic.projected_pos[0], dynamic.projected_pos[1], ele, 1.0);
-    const float z = float(drawable.pitch_with_map) * projected_pos.z / projected_pos.w;
-    const float2 pos_rot = a_offset / 32.0 * fontScale + a_pxoffset;
-    const float2 pos0 = projected_pos.xy / projected_pos.w + rotation_matrix * pos_rot;
+    const float2 offset = rotation_matrix * (a_offset / 32.0 * fontScale + a_pxoffset);
+    const float pull = max(offset.y, 0.0) * drawable.depth_pull_per_pixel;
+    const float z = drawable.pitch_with_map ? projected_pos.z / projected_pos.w
+                                            : anchor_depth(projectedPoint.w, drawable.depth_a, drawable.depth_b, pull);
+    const float2 pos0 = projected_pos.xy / projected_pos.w + offset;
     const float4 position = drawable.coord_matrix * float4(pos0, z, 1.0);
     // Fade out symbols hidden behind the terrain (see calculate_visibility)
     const half vis = half(calculate_visibility(projectedPoint, depthTexture, depthSampler, drawable.depth_enabled));
@@ -752,9 +757,11 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     const float2x2 rotation_matrix = float2x2(angle_cos, -1.0 * angle_sin, angle_sin, angle_cos);
 
     const float4 projected_pos = drawable.label_plane_matrix * float4(dynamic.projected_pos[0], dynamic.projected_pos[1], ele, 1.0);
-    const float z = float(drawable.pitch_with_map) * projected_pos.z / projected_pos.w;
-    const float2 pos_rot = a_offset / 32.0 * fontScale;
-    const float2 pos0 = projected_pos.xy / projected_pos.w + rotation_matrix * pos_rot;
+    const float2 offset = rotation_matrix * (a_offset / 32.0 * fontScale);
+    const float pull = max(offset.y, 0.0) * drawable.depth_pull_per_pixel;
+    const float z = drawable.pitch_with_map ? projected_pos.z / projected_pos.w
+                                            : anchor_depth(projectedPoint.w, drawable.depth_a, drawable.depth_b, pull);
+    const float2 pos0 = projected_pos.xy / projected_pos.w + offset;
     const float4 position = drawable.coord_matrix * float4(pos0, z, 1.0);
     const float gamma_scale = position.w;
     const bool is_icon = (is_sdf == ICON);

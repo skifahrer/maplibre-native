@@ -213,6 +213,11 @@ inline float depth_opacity(float4 pos,
     return depth_opacity(pos, depth_texture, depth_sampler, 0.0);
 }
 
+// A screen-aligned symbol's depth: its anchor's, at 1 / (1 + pull) of its distance.
+inline float anchor_depth(float distance, float depth_a, float depth_b, float pull) {
+    return saturate(depth_a + depth_b * (1.0 + pull) / distance);
+}
+
 // Whether a clip-space position is visible in front of the terrain, from the packed
 // terrain depth texture. The depth texture and enable flag are passed as arguments.
 inline float calculate_visibility(float4 pos,
