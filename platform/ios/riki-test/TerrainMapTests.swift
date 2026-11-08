@@ -132,6 +132,21 @@ final class TerrainMapTests: TerrainMapTestCase {
         XCTAssertFalse(mapView.setPitchKeepingEye(130), "past maximumPitch nothing moves")
     }
 
+    // 94: from afar the tilt moves the centre across latitudes; tipped back, it is where it was.
+    func testTiltingAroundTheEyeAndBackReturnsTheCentre() throws {
+        try loadMap()
+        mapView.maximumPitch = 120
+        tilt(80, distance: 80_000)
+        waitUntilFullyRendered()
+        let altitude = mapView.centerAltitude
+        let latitude = mapView.centerCoordinate.latitude
+        XCTAssertTrue(mapView.setPitchKeepingEye(120))
+        XCTAssertNotEqual(mapView.centerCoordinate.latitude, latitude, accuracy: 1e-4)
+        XCTAssertTrue(mapView.setPitchKeepingEye(80))
+        XCTAssertEqual(mapView.centerAltitude, altitude, accuracy: 0.5)
+        XCTAssertEqual(mapView.centerCoordinate.latitude, latitude, accuracy: 1e-6)
+    }
+
     func testDrawDistanceFogAndClayKeepTheirValuesAndDraw() throws {
         try loadMap()
         XCTAssertEqual(mapView.drawDistance, 0)
