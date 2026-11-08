@@ -102,6 +102,36 @@ final class TerrainMapTests: TerrainMapTestCase {
         XCTAssertEqual(mapView.centerCoordinate.latitude, Self.center.latitude, accuracy: 1e-6)
     }
 
+    // 94: past the horizon the camera keeps its distance, so the map takes it.
+    func testACameraPastTheHorizonKeepsItsZoom() throws {
+        try loadMap()
+        mapView.maximumPitch = 120
+        tilt(60)
+        waitUntilFullyRendered()
+        let zoom = mapView.zoomLevel
+        let camera = mapView.camera
+        camera.pitch = 110
+        XCTAssertGreaterThan(camera.viewingDistance, 0)
+        mapView.setCamera(camera, animated: false)
+        XCTAssertEqual(mapView.camera.pitch, 110, accuracy: 0.01)
+        XCTAssertEqual(mapView.zoomLevel, zoom, accuracy: 1e-6)
+    }
+
+    // 94: tipped back around the eye, the centre rises and the picture still draws.
+    func testTiltingAroundTheEyeLooksPastTheHorizon() throws {
+        try loadMap()
+        mapView.maximumPitch = 120
+        tilt(80)
+        waitUntilFullyRendered()
+        let zoom = mapView.zoomLevel
+        XCTAssertTrue(mapView.setPitchKeepingEye(110))
+        waitUntilFullyRendered()
+        XCTAssertEqual(mapView.camera.pitch, 110, accuracy: 0.01)
+        XCTAssertEqual(mapView.zoomLevel, zoom, accuracy: 1e-6)
+        XCTAssertGreaterThan(mapView.centerAltitude, 0)
+        XCTAssertFalse(mapView.setPitchKeepingEye(130), "past maximumPitch nothing moves")
+    }
+
     func testDrawDistanceFogAndClayKeepTheirValuesAndDraw() throws {
         try loadMap()
         XCTAssertEqual(mapView.drawDistance, 0)
