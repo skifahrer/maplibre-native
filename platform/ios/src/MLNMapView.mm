@@ -324,6 +324,8 @@ enum { MLNAnnotationTagNotFound = UINT32_MAX };
 
 /// The threshold used to consider when a tilt gesture should start.
 const CLLocationDegrees MLNHorizontalTiltToleranceDegrees = 45.0;
+/// Past this the tilt gesture keeps the eye: the line of sight barely meets the ground.
+const CGFloat MLNEyePivotPitch = 84.0;
 
 /// Mapping from an annotation tag to metadata about that annotation, including
 /// the annotation itself.
@@ -2721,8 +2723,14 @@ public:
       MLNMapCamera *toCamera = [self cameraByTiltingToPitch:pitchNew];
 
       if ([self _shouldChangeFromCamera:oldCamera toCamera:toCamera]) {
-        self.mbglMap.jumpTo(mln::CameraOptions().withPitch(pitchNew).withAnchor(
-            mln::ScreenCoordinate{centerPoint.x, centerPoint.y}));
+        // Near and past the horizon the head tips back: the eye stays, the centre rises.
+        CGFloat clamped = std::clamp(pitchNew, self.minimumPitch, self.maximumPitch);
+        if (std::max(clamped, oldCamera.pitch) > MLNEyePivotPitch) {
+          self.mbglMap.setPitchKeepingEye(clamped);
+        } else {
+          self.mbglMap.jumpTo(mln::CameraOptions().withPitch(pitchNew).withAnchor(
+              mln::ScreenCoordinate{centerPoint.x, centerPoint.y}));
+        }
       }
 
       [self cameraIsChanging];
@@ -3111,10 +3119,10 @@ static void *windowScreenContext = &windowScreenContext;
   mln::LatLng center = camera.center ? *camera.center : mln::LatLng();
 
   CLLocationDirection heading = mln::util::wrap(bearing, 0., 360.);
-  CLLocationDistance altitude = MLNAltitudeForZoomLevel(zoom, pitch, 0, self.frame.size);
+  CLLocationDistance distance = MLNAltitudeForZoomLevel(zoom, 0, 0, self.frame.size);
   self.camera =
       [MLNMapCamera cameraLookingAtCenterCoordinate:MLNLocationCoordinate2DFromLatLng(center)
-                                           altitude:altitude
+                                     acrossDistance:distance
                                               pitch:pitch
                                             heading:heading];
 }
@@ -4102,6 +4110,17 @@ static void *windowScreenContext = &windowScreenContext;
   return moved;
 }
 
+- (BOOL)setPitchKeepingEye:(CGFloat)pitch {
+  MLNLogDebug(@"Setting pitch keeping the eye: %f", pitch);
+  MLNCameraChangeReason previousReasons = self.cameraChangeReasonBitmask;
+  self.cameraChangeReasonBitmask |= MLNCameraChangeReasonProgrammatic;
+  BOOL moved = self.mbglMap.setPitchKeepingEye(pitch);
+  if (!moved) {
+    self.cameraChangeReasonBitmask = previousReasons;
+  }
+  return moved;
+}
+
 - (void)setZoomLevel:(double)zoomLevel animated:(BOOL)animated {
   MLNLogDebug(@"Setting zoomLevel: %f animated: %@", zoomLevel, MLNStringFromBOOL(animated));
   if (zoomLevel == self.zoomLevel) return;
@@ -4710,11 +4729,12 @@ static void *windowScreenContext = &windowScreenContext;
   CLLocationDirection direction =
       cameraOptions.bearing ? mln::util::wrap(*cameraOptions.bearing, 0., 360.) : self.direction;
   CGFloat pitch = cameraOptions.pitch ? *cameraOptions.pitch : *mapCamera.pitch;
-  CLLocationDistance altitude =
-      MLNAltitudeForZoomLevel(zoomLevel, pitch, centerCoordinate.latitude, self.frame.size);
+  // The distance, which past the horizon is all that keeps the zoom.
+  CLLocationDistance distance =
+      MLNAltitudeForZoomLevel(zoomLevel, 0, centerCoordinate.latitude, self.frame.size);
 
   auto camera = [MLNMapCamera cameraLookingAtCenterCoordinate:centerCoordinate
-                                                     altitude:altitude
+                                               acrossDistance:distance
                                                         pitch:pitch
                                                       heading:direction];
 
@@ -4734,7 +4754,7 @@ static void *windowScreenContext = &windowScreenContext;
     options.center = MLNLatLngFromLocationCoordinate2D(camera.centerCoordinate);
   }
   options.padding = MLNEdgeInsetsFromNSEdgeInsets(insets);
-  options.zoom = MLNZoomLevelForAltitude(camera.altitude, camera.pitch,
+  options.zoom = MLNZoomLevelForAltitude(camera.viewingDistance, 0,
                                          camera.centerCoordinate.latitude, self.frame.size);
   if (camera.heading >= 0) {
     options.bearing = camera.heading;

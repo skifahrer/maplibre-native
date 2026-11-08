@@ -296,6 +296,13 @@ public:
     /// zoom limits, the bounds or the constrain mode would cut the move short.
     bool setCenterAltitudeKeepingView(double altitudeMeters);
 
+    /// Tilts to `pitchDegrees` around the camera rather than around the centre: the eye stays
+    /// where it is, as a head tips back, and the centre moves along the new line of sight at the
+    /// same distance, rising into the air once that looks past the horizon. Returns false,
+    /// changing nothing, when the pitch limits, the zoom limits, the bounds or the constrain mode
+    /// would cut the move short.
+    bool setPitchKeepingEye(double pitchDegrees);
+
     /// Metres from the camera to where the line of sight through the centre meets the terrain,
     /// as the renderer last measured it (a frame behind a moving camera). NaN without terrain or
     /// where the line meets no ground. A gesture holds the centre at the height it started on, so

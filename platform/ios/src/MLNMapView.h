@@ -1242,6 +1242,20 @@ of north, the map will automatically snap to exact north.
     NS_SWIFT_NAME(setCenterAltitudeKeepingView(_:));
 
 /**
+ Tilts the camera around its eye rather than around the center.
+
+ The eye stays where it is, as a head tips back; the center moves along the new
+ line of sight at the same distance and rises into the air once that looks past
+ the horizon. The two-finger tilt gesture does this past 84 degrees. Raise
+ `maximumPitch` first.
+
+ @param pitch The pitch, in degrees: 0 looks straight down, 90 at the horizon.
+ @return `NO` if nothing moved: the pitch, zoom or camera bounds would cut the
+    move short.
+ */
+- (BOOL)setPitchKeepingEye:(CGFloat)pitch NS_SWIFT_NAME(setPitchKeepingEye(_:));
+
+/**
  Moves the camera at once to look at a center that may stand above the ground.
 
  A pitch past 90 degrees looks above the horizon, so the camera stays over the

@@ -147,6 +147,8 @@ public:
     /// its height while the ground under the center rises and falls; empty while no gesture is
     /// in progress.
     std::optional<double> gestureHeldCenterAltitude;
+    /// The running gesture tilts around the eye, which moves the centre's height itself.
+    bool gesturePivotsOnEye = false;
     /// How many more ground reports after an anchor may move the center along the line of sight
     /// instead of moving the camera. The anchor takes the height of the ground under the old
     /// center, so on a slope the center lands on a plane above or below the ground it then looks
@@ -184,6 +186,10 @@ public:
     /// of sight nearly grazes the plane at that altitude, the plane is (nearly) at the camera, or
     /// the zoom limits, the bounds or the constrain mode would cut the move short.
     bool setCenterAltitudeKeepingView(double altitudeMeters);
+    bool setPitchKeepingEye(double pitchDegrees);
+    /// Past this pitch the line of sight runs along or above the ground: the centre no longer
+    /// sits on it, and only the eye's clearance moves it.
+    bool looksPastTheGround() const;
     /// Where the line of sight met the terrain when the renderer last looked: latitude,
     /// longitude, height (NaN for no ground).
     std::array<double, 3> sightGround{

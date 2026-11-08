@@ -6,7 +6,17 @@
 
 #include <mln/math/wrap.hpp>
 
-@implementation MLNMapCamera
+#include <cmath>
+
+/// Past this pitch the altitude, the viewing distance times its cosine, no longer tells the
+/// distance: it is zero looking at the horizon and negative above it.
+static BOOL MLNAltitudeTellsDistance(CGFloat pitch) {
+  return std::cos(MLNRadiansFromDegrees(pitch)) > 0.01;
+}
+
+@implementation MLNMapCamera {
+  CLLocationDistance _viewingDistance;
+}
 
 + (BOOL)supportsSecureCoding {
   return YES;
@@ -49,10 +59,12 @@
   CLLocationDirection eyeAngle = 90 - pitch;
   CLLocationDistance altitude = distance * sin(MLNRadiansFromDegrees(eyeAngle));
 
-  return [[self alloc] initWithCenterCoordinate:centerCoordinate
-                                       altitude:altitude
-                                          pitch:pitch
-                                        heading:heading];
+  MLNMapCamera *camera = [[self alloc] initWithCenterCoordinate:centerCoordinate
+                                                       altitude:altitude
+                                                          pitch:pitch
+                                                        heading:heading];
+  camera.viewingDistance = distance;
+  return camera;
 }
 
 + (instancetype)cameraLookingAtCenterCoordinate:(CLLocationCoordinate2D)centerCoordinate
@@ -88,6 +100,9 @@
     _centerCoordinate = centerCoordinate;
     _altitude = altitude;
     _pitch = pitch;
+    _viewingDistance = MLNAltitudeTellsDistance(pitch)
+                           ? altitude / std::cos(MLNRadiansFromDegrees(pitch))
+                           : std::abs(altitude);
     _heading = heading;
     _roll = 0;
   }
@@ -101,6 +116,9 @@
                                                    [coder decodeDoubleForKey:@"centerLongitude"]);
     _altitude = [coder decodeDoubleForKey:@"altitude"];
     _pitch = [coder decodeDoubleForKey:@"pitch"];
+    _viewingDistance = [coder containsValueForKey:@"viewingDistance"]
+                           ? [coder decodeDoubleForKey:@"viewingDistance"]
+                           : std::abs(_altitude / std::cos(MLNRadiansFromDegrees(_pitch)));
     _heading = [coder decodeDoubleForKey:@"heading"];
     _roll = [coder decodeDoubleForKey:@"roll"];
   }
@@ -112,6 +130,7 @@
   [coder encodeDouble:_centerCoordinate.longitude forKey:@"centerLongitude"];
   [coder encodeDouble:_altitude forKey:@"altitude"];
   [coder encodeDouble:_pitch forKey:@"pitch"];
+  [coder encodeDouble:_viewingDistance forKey:@"viewingDistance"];
   [coder encodeDouble:_heading forKey:@"heading"];
   [coder encodeDouble:_roll forKey:@"roll"];
 }
@@ -122,6 +141,7 @@
                                                                              pitch:_pitch
                                                                            heading:_heading];
   copy.roll = _roll;
+  copy.viewingDistance = _viewingDistance;
   return copy;
 }
 
@@ -130,14 +150,36 @@
 }
 
 - (CLLocationDistance)viewingDistance {
-  CLLocationDirection eyeAngle = 90 - self.pitch;
-  return self.altitude / sin(MLNRadiansFromDegrees(eyeAngle));
+  return _viewingDistance;
 }
 
 - (void)setViewingDistance:(CLLocationDistance)distance {
   MLNLogDebug(@"Setting viewingDistance: %f", distance);
-  CLLocationDirection eyeAngle = 90 - self.pitch;
-  self.altitude = distance * sin(MLNRadiansFromDegrees(eyeAngle));
+  [self willChangeValueForKey:@"altitude"];
+  _viewingDistance = distance;
+  _altitude = distance * std::cos(MLNRadiansFromDegrees(_pitch));
+  [self didChangeValueForKey:@"altitude"];
+}
+
+- (void)setAltitude:(CLLocationDistance)altitude {
+  _altitude = altitude;
+  if (MLNAltitudeTellsDistance(_pitch)) {
+    _viewingDistance = altitude / std::cos(MLNRadiansFromDegrees(_pitch));
+  }
+}
+
+/// Below the horizon a new pitch keeps the altitude, as it always has; near and past it, the
+/// distance, which is all that still says how far the camera is.
+- (void)setPitch:(CGFloat)pitch {
+  const BOOL keepsAltitude = MLNAltitudeTellsDistance(_pitch) && MLNAltitudeTellsDistance(pitch);
+  [self willChangeValueForKey:@"altitude"];
+  _pitch = pitch;
+  if (keepsAltitude) {
+    _viewingDistance = _altitude / std::cos(MLNRadiansFromDegrees(pitch));
+  } else {
+    _altitude = _viewingDistance * std::cos(MLNRadiansFromDegrees(pitch));
+  }
+  [self didChangeValueForKey:@"altitude"];
 }
 
 - (NSString *)description {
