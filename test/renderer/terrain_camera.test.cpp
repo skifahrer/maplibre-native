@@ -462,6 +462,26 @@ TEST(TerrainCamera, PitchKeepingTheEyeLooksPastTheHorizon) {
     EXPECT_NEAR(*test.map.getCameraOptions({}).centerAltitude, 0.0, 0.5);
 }
 
+// 94 Facing north or south the tilt moves the centre across latitudes, where a metre is a
+// different number of pixels; the eye stays put all the same.
+TEST(TerrainCamera, PitchKeepingTheEyeAcrossLatitudes) {
+    for (const double bearing : {0.0, 180.0}) {
+        TerrainCameraTest test;
+        test.map.setCenterClampedToGround(false);
+        test.map.setBounds(BoundOptions().withMaxPitch(120.0));
+        test.map.jumpTo(CameraOptions().withZoom(7.0).withPitch(80.0).withBearing(bearing));
+        const vec3 before = test.eye();
+        const double latitude = test.map.getCameraOptions({}).center->latitude();
+
+        ASSERT_TRUE(test.map.setPitchKeepingEye(120.0));
+        EXPECT_GT(std::abs(test.map.getCameraOptions({}).center->latitude() - latitude), 0.1) << bearing;
+        test.expectEyeAt(before);
+        ASSERT_TRUE(test.map.setPitchKeepingEye(80.0));
+        test.expectEyeAt(before);
+        EXPECT_NEAR(*test.map.getCameraOptions({}).centerAltitude, 0.0, 0.5) << bearing;
+    }
+}
+
 // Anchoring raises the zoom. Past the maximum zoom, jumpTo would clamp it and the view would step
 // back, so the anchor leaves the camera alone there.
 TEST(TerrainCamera, AnchoringPastMaxZoomLeavesTheCameraAlone) {
