@@ -33,10 +33,10 @@
   double zoomLevel = *cameraOptions.zoom;
   CLLocationDirection direction = mln::util::wrap(*cameraOptions.bearing, 0., 360.);
   CGFloat pitch = *cameraOptions.pitch;
-  CLLocationDistance altitude =
-      MLNAltitudeForZoomLevel(zoomLevel, pitch, centerCoordinate.latitude, self.mapFrameSize);
+  CLLocationDistance distance =
+      MLNAltitudeForZoomLevel(zoomLevel, 0, centerCoordinate.latitude, self.mapFrameSize);
   return [MLNMapCamera cameraLookingAtCenterCoordinate:centerCoordinate
-                                              altitude:altitude
+                                        acrossDistance:distance
                                                  pitch:pitch
                                                heading:direction];
 }
@@ -47,7 +47,7 @@
     cameraOptions.center = MLNLatLngFromLocationCoordinate2D(camera.centerCoordinate);
   }
   cameraOptions.padding = MLNEdgeInsetsFromNSEdgeInsets(insets);
-  cameraOptions.zoom = MLNZoomLevelForAltitude(camera.altitude, camera.pitch,
+  cameraOptions.zoom = MLNZoomLevelForAltitude(camera.viewingDistance, 0,
                                                camera.centerCoordinate.latitude, self.mapFrameSize);
   if (camera.heading >= 0) {
     cameraOptions.bearing = camera.heading;

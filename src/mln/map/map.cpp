@@ -699,6 +699,17 @@ bool Map::setCenterAltitudeKeepingView(double altitudeMeters) {
     return moved;
 }
 
+bool Map::setPitchKeepingEye(double pitchDegrees) {
+    impl->settleCenterAwaitingSeaLevel();
+    const bool moved = impl->setPitchKeepingEye(pitchDegrees);
+    if (moved) {
+        impl->noteCameraSet();
+        impl->cameraMutated = true;
+    }
+    impl->onUpdate();
+    return moved;
+}
+
 double Map::getSightGroundDistance() const {
     return impl->getSightGroundDistance();
 }

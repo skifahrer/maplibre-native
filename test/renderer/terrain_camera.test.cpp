@@ -437,6 +437,31 @@ TEST(TerrainCamera, AnchoringAtAGrazingPitchLeavesTheCameraAlone) {
     test.expectEyeAt(before);
 }
 
+// Tipping the head back: past the horizon the eye stays and the centre rises into the air.
+TEST(TerrainCamera, PitchKeepingTheEyeLooksPastTheHorizon) {
+    TerrainCameraTest test;
+    test.map.setCenterClampedToGround(false);
+    test.map.setBounds(BoundOptions().withMaxPitch(120.0));
+    test.map.jumpTo(CameraOptions().withZoom(10.0).withPitch(80.0).withBearing(30.0));
+    const vec3 before = test.eye();
+    const double zoom = *test.map.getCameraOptions({}).zoom;
+
+    for (const double pitch : {95.0, 110.0, 120.0}) {
+        EXPECT_TRUE(test.map.setPitchKeepingEye(pitch));
+        const auto camera = test.map.getCameraOptions({});
+        EXPECT_NEAR(*camera.pitch, pitch, 1e-6);
+        EXPECT_NEAR(*camera.zoom, zoom, 1e-9);
+        test.expectEyeAt(before);
+    }
+    EXPECT_GT(*test.map.getCameraOptions({}).centerAltitude, 0.0);
+    // Past the limit nothing moves.
+    EXPECT_FALSE(test.map.setPitchKeepingEye(130.0));
+    // And back down the same way.
+    EXPECT_TRUE(test.map.setPitchKeepingEye(80.0));
+    test.expectEyeAt(before);
+    EXPECT_NEAR(*test.map.getCameraOptions({}).centerAltitude, 0.0, 0.5);
+}
+
 // Anchoring raises the zoom. Past the maximum zoom, jumpTo would clamp it and the view would step
 // back, so the anchor leaves the camera alone there.
 TEST(TerrainCamera, AnchoringPastMaxZoomLeavesTheCameraAlone) {

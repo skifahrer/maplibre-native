@@ -133,6 +133,7 @@ void Map::Impl::onUpdate() {
 
     if (!transform.isGestureInProgress()) {
         gestureHeldCenterAltitude.reset();
+        gesturePivotsOnEye = false;
     }
 
     // The clamp stood aside for a transition or a gesture (applyCenterClamp); now that it is
@@ -475,6 +476,48 @@ bool Map::Impl::setCenterAltitudeKeepingView(double altitudeMeters) {
     return true;
 }
 
+bool Map::Impl::looksPastTheGround() const {
+    // Where setCenterAltitudeKeepingView gives up: the line of sight barely meets the plane.
+    return std::cos(transform.getState().getPitch()) < 0.1;
+}
+
+bool Map::Impl::setPitchKeepingEye(double pitchDegrees) {
+    const TransformState& state = transform.getState();
+    const CameraOptions camera = transform.getCameraOptions(std::nullopt);
+    if (!camera.center || !camera.zoom) {
+        return false;
+    }
+    const double from = util::deg2rad(camera.pitch.value_or(0.0));
+    const double to = util::deg2rad(pitchDegrees);
+    const double bearing = util::deg2rad(camera.bearing.value_or(0.0));
+    const double distance = state.getCameraToCenterDistance();
+    // The eye is `distance` back along the line of sight: forward on the ground by sin(pitch),
+    // up by cos(pitch). Keeping it, the centre moves by the difference of the two sights.
+    const double ahead = distance * (std::sin(to) - std::sin(from));
+    const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(camera.center->latitude(), *camera.zoom);
+    const double rise = distance * (std::cos(from) - std::cos(to)) * metresPerPixel;
+    const double scale = state.getScale();
+    const Point<double> center = Projection::project(*camera.center, scale);
+    // Forward is along the bearing; y grows southwards.
+    const LatLng moved = Projection::unproject(
+        {center.x + ahead * std::sin(bearing), center.y - ahead * std::cos(bearing)}, scale);
+    const auto tilted = CameraOptions().withCenter(moved).withPitch(pitchDegrees).withCenterAltitude(
+        state.getCenterAltitude() + rise);
+
+    Transform trial(state);
+    trial.jumpTo(tilted);
+    const LatLng reached = trial.getLatLng();
+    if (std::abs(util::rad2deg(trial.getState().getPitch()) - pitchDegrees) > 1e-6 ||
+        std::abs(trial.getZoom() - *camera.zoom) > 1e-9 ||
+        std::abs(reached.latitude() - moved.latitude()) > 1e-9 ||
+        std::abs(util::wrap(reached.longitude() - moved.longitude(), -180.0, 180.0)) > 1e-9) {
+        return false;
+    }
+    transform.jumpTo(tilted);
+    gesturePivotsOnEye = transform.isGestureInProgress();
+    return true;
+}
+
 void Map::Impl::returnCenterToSeaLevel() {
     centerAwaitingSeaLevel = false;
     // Where the limits refuse the move that keeps the view, keep the centre and zoom instead, as
@@ -555,6 +598,11 @@ void Map::Impl::applyCenterClamp() {
         anchorPassesLeft = 0;
         centerSettledBesideACliff = false;
         target = std::max(*gestureHeldCenterAltitude, eyeClearCenterAltitude());
+        // A tilt that keeps the eye (setPitchKeepingEye) moves the centre itself; hold that.
+        if (gesturePivotsOnEye) {
+            gestureHeldCenterAltitude = transform.getState().getCenterAltitude();
+            target = std::max(*gestureHeldCenterAltitude, eyeClearCenterAltitude());
+        }
     } else {
         // The eye's height can be reported before the center's.
         if (std::isnan(terrainCenterElevation)) {
@@ -564,6 +612,15 @@ void Map::Impl::applyCenterClamp() {
         // fling: anchor first, so the passes below handle it rather than a plain jump.
         if (centerAwaitingTerrainAnchor && centerAnchorKeepsView) {
             anchorAfterHold();
+        }
+        // Looking along or above the ground, the centre is in the air where the eye put it.
+        if (looksPastTheGround()) {
+            anchorPassesLeft = 0;
+            target = std::max(transform.getState().getCenterAltitude(), eyeClearCenterAltitude());
+            if (clampCenterToTerrain(target)) {
+                onUpdate();
+            }
+            return;
         }
         target = clampedCenterAltitude();
         if (centerSettledBesideACliff && target == terrainCenterElevation) {
