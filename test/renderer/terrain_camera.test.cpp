@@ -437,7 +437,7 @@ TEST(TerrainCamera, AnchoringAtAGrazingPitchLeavesTheCameraAlone) {
     test.expectEyeAt(before);
 }
 
-// Tipping the head back: past the horizon the eye stays and the centre rises into the air.
+// 94 Tipping the head back: past the horizon the eye stays and the centre rises into the air.
 TEST(TerrainCamera, PitchKeepingTheEyeLooksPastTheHorizon) {
     TerrainCameraTest test;
     test.map.setCenterClampedToGround(false);
