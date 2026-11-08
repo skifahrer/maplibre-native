@@ -494,15 +494,16 @@ bool Map::Impl::setPitchKeepingEye(double pitchDegrees) {
     // The eye is `distance` back along the line of sight: forward on the ground by sin(pitch),
     // up by cos(pitch). Keeping it, the centre moves by the difference of the two sights.
     const double ahead = distance * (std::sin(to) - std::sin(from));
-    const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(camera.center->latitude(), *camera.zoom);
-    const double rise = distance * (std::cos(from) - std::cos(to)) * metresPerPixel;
     const double scale = state.getScale();
     const Point<double> center = Projection::project(*camera.center, scale);
     // Forward is along the bearing; y grows southwards.
     const LatLng moved = Projection::unproject(
         {center.x + ahead * std::sin(bearing), center.y - ahead * std::cos(bearing)}, scale);
-    const auto tilted = CameraOptions().withCenter(moved).withPitch(pitchDegrees).withCenterAltitude(
-        state.getCenterAltitude() + rise);
+    // Heights are metres at the centre's latitude, so the moved centre measures them anew.
+    const double before = Projection::getMetersPerPixelAtLatitude(camera.center->latitude(), *camera.zoom);
+    const double after = Projection::getMetersPerPixelAtLatitude(moved.latitude(), *camera.zoom);
+    const double height = state.getCenterAltitude() / before + distance * (std::cos(from) - std::cos(to));
+    const auto tilted = CameraOptions().withCenter(moved).withPitch(pitchDegrees).withCenterAltitude(height * after);
 
     Transform trial(state);
     trial.jumpTo(tilted);
