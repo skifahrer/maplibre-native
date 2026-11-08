@@ -98,6 +98,35 @@ BufferResource Context::createBuffer(
     return {const_cast<Context&>(*this), data, size, MTL::ResourceStorageModeShared, isIndexBuffer, persistent};
 }
 
+namespace {
+ShaderFunctions makeShaderFunctions(MTL::Library* library,
+                                    NS::Error* error,
+                                    const std::string& vertexName,
+                                    const std::string& fragmentName) {
+    const auto pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
+    if (!library || error) {
+        const auto errPtr = error ? error->localizedDescription()->utf8String() : nullptr;
+        const auto errStr = (errPtr && errPtr[0]) ? ": " + std::string(errPtr) : std::string();
+        return {.vertex = {}, .fragment = {}, .error = "compile failed" + errStr};
+    }
+
+    auto vertex = NS::TransferPtr(library->newFunction(NS::String::string(vertexName.c_str(), NS::UTF8StringEncoding)));
+    if (!vertex) {
+        return {.vertex = {}, .fragment = {}, .error = "missing vertex function " + vertexName};
+    }
+
+    MTLFunctionPtr fragment;
+    if (!fragmentName.empty()) {
+        fragment = NS::TransferPtr(
+            library->newFunction(NS::String::string(fragmentName.c_str(), NS::UTF8StringEncoding)));
+        if (!fragment) {
+            return {.vertex = {}, .fragment = {}, .error = "missing fragment function " + fragmentName};
+        }
+    }
+    return {.vertex = std::move(vertex), .fragment = std::move(fragment), .error = {}};
+}
+} // namespace
+
 // If enabled, ubsan flags the implicit cast from assigning `NS::String*` to `NS::Object*` here
 // as an alignment error.  The ObjC NSString allocations are cast to a C++ object pointer by
 // `NS::Object::sendMessage`, and the alignment rules are different.  We assume that, because
@@ -154,50 +183,30 @@ UniqueShaderProgram Context::createProgram(shaders::BuiltIn shaderID,
     // requires a check for iOS 16+
     // options->setOptimizationLevel(MTL::LibraryOptimizationLevelDefault);
 
-    NS::Error* error = nullptr;
     NS::String* nsSource = NS::String::string(
         source.data(), NS::UTF8StringEncoding); // NOLINT(bugprone-suspicious-stringview-data-usage)
 
+    // Metal compiles on its own threads, so the programs a frame needs build side by side and the
+    // render thread waits only when a draw needs one that is not done yet.
+    auto pending = std::make_shared<util::Pending<ShaderFunctions>>();
     const auto& device = backend.getDevice();
-    auto library = NS::TransferPtr(device->newLibrary(nsSource, options.get(), &error));
-    if (!library || error) {
-        const auto errPtr = error ? error->localizedDescription()->utf8String() : nullptr;
-        const auto errStr = (errPtr && errPtr[0]) ? ": " + std::string(errPtr) : std::string();
-        Log::Error(Event::Shader, name + " compile failed" + errStr);
-        observer->onShaderCompileFailed(shaderID, gfx::Backend::Type::Metal, defineStr);
-        assert(false);
-        return nullptr;
-    }
+    device->newLibrary(nsSource,
+                       options.get(),
+                       [pending, vertexName = std::string(vertexName), fragmentName = std::string(fragmentName)](
+                           MTL::Library* library, NS::Error* error) {
+                           pending->set(makeShaderFunctions(library, error, vertexName, fragmentName));
+                       });
 
-    const auto nsVertName = NS::String::string(
-        vertexName.data(), NS::UTF8StringEncoding); // NOLINT(bugprone-suspicious-stringview-data-usage)
-    MTLFunctionPtr vertexFunction = NS::TransferPtr(library->newFunction(nsVertName));
-    if (!vertexFunction) {
-        Log::Error(Event::Shader, name + " missing vertex function " + vertexName.data());
-        observer->onShaderCompileFailed(shaderID, gfx::Backend::Type::Metal, defineStr);
-        assert(false);
-        return nullptr;
-    }
-
-    // fragment function is optional
-    MTLFunctionPtr fragmentFunction;
-    if (!fragmentName.empty()) {
-        const auto nsFragName = NS::String::string(
-            fragmentName.data(), NS::UTF8StringEncoding); // NOLINT(bugprone-suspicious-stringview-data-usage)
-        fragmentFunction = NS::TransferPtr(library->newFunction(nsFragName));
-        if (!fragmentFunction) {
-            Log::Error(Event::Shader, name + " missing fragment function " + fragmentName.data());
-            observer->onShaderCompileFailed(shaderID, gfx::Backend::Type::Metal, defineStr);
-            assert(false);
-            return nullptr;
+    auto onCompiled = [observer = observer, shaderID, name, defineStr](const ShaderFunctions& compiled) {
+        if (compiled.vertex) {
+            observer->onPostCompileShader(shaderID, gfx::Backend::Type::Metal, defineStr);
+            return;
         }
-    }
-
-    auto shader = std::make_unique<ShaderProgram>(
-        std::move(name), backend, std::move(vertexFunction), std::move(fragmentFunction));
-    observer->onPostCompileShader(shaderID, gfx::Backend::Type::Metal, defineStr);
-
-    return shader;
+        Log::Error(Event::Shader, name + " " + compiled.error);
+        observer->onShaderCompileFailed(shaderID, gfx::Backend::Type::Metal, defineStr);
+        assert(false);
+    };
+    return std::make_unique<ShaderProgram>(std::move(name), backend, std::move(pending), std::move(onCompiled));
 }
 
 MTLTexturePtr Context::createMetalTexture(MTLTextureDescriptorPtr textureDescriptor) const {

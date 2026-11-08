@@ -465,6 +465,7 @@ list(APPEND INCLUDE_FILES
     ${PROJECT_SOURCE_DIR}/include/mln/util/math.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/util/noncopyable.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/util/padding.hpp
+    ${PROJECT_SOURCE_DIR}/include/mln/util/pending.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/util/platform.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/util/premultiply.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/util/projection.hpp

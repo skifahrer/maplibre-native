@@ -867,6 +867,7 @@ MLN_CORE_HEADERS = [
     "include/mln/util/monotonic_timer.hpp",
     "include/mln/util/noncopyable.hpp",
     "include/mln/util/padding.hpp",
+    "include/mln/util/pending.hpp",
     "include/mln/util/platform.hpp",
     "include/mln/util/premultiply.hpp",
     "include/mln/util/projection.hpp",

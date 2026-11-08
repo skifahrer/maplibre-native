@@ -3,9 +3,12 @@
 #include <mln/shaders/shader_program_base.hpp>
 #include <mln/mtl/mtl_fwd.hpp>
 #include <mln/mtl/vertex_attribute.hpp>
+#include <mln/util/pending.hpp>
 
 #include <Foundation/NSSharedPtr.hpp>
 
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -43,12 +46,27 @@ class RendererBackend;
 class ShaderProgram;
 using UniqueShaderProgram = std::unique_ptr<ShaderProgram>;
 
+/// A program's functions, or why Metal could not make them (vertex is null then).
+struct ShaderFunctions {
+    MTLFunctionPtr vertex;
+    MTLFunctionPtr fragment;
+    std::string error;
+};
+using PendingShaderFunctions = std::shared_ptr<util::Pending<ShaderFunctions>>;
+
 class ShaderProgram final : public gfx::ShaderProgramBase {
 public:
+    using CompiledCallback = std::function<void(const ShaderFunctions&)>;
+
     ShaderProgram(std::string name,
                   RendererBackend& backend,
                   MTLFunctionPtr vertexFunction,
                   MTLFunctionPtr fragmentFunction);
+    /// `onCompiled` runs once, on the render thread, when a draw first needs the functions.
+    ShaderProgram(std::string name,
+                  RendererBackend& backend,
+                  PendingShaderFunctions functions,
+                  CompiledCallback onCompiled);
     ~ShaderProgram() noexcept override;
 
     static constexpr std::string_view Name{"GenericMTLShader"};
@@ -72,8 +90,8 @@ public:
 protected:
     std::string shaderName;
     RendererBackend& backend;
-    MTLFunctionPtr vertexFunction;
-    MTLFunctionPtr fragmentFunction;
+    PendingShaderFunctions functions;
+    mutable CompiledCallback onCompiled;
     VertexAttributeArray vertexAttributes;
     VertexAttributeArray instanceAttributes;
     std::array<std::optional<size_t>, shaders::maxTextureCountPerShader> textureBindings;

@@ -76,8 +76,19 @@ ShaderProgram::ShaderProgram(std::string name, RendererBackend& backend_, MTLFun
     : ShaderProgramBase(),
       shaderName(std::move(name)),
       backend(backend_),
-      vertexFunction(std::move(vert)),
-      fragmentFunction(std::move(frag)) {}
+      functions(std::make_shared<util::Pending<ShaderFunctions>>()) {
+    functions->set(ShaderFunctions{.vertex = std::move(vert), .fragment = std::move(frag), .error = {}});
+}
+
+ShaderProgram::ShaderProgram(std::string name,
+                             RendererBackend& backend_,
+                             PendingShaderFunctions functions_,
+                             CompiledCallback onCompiled_)
+    : ShaderProgramBase(),
+      shaderName(std::move(name)),
+      backend(backend_),
+      functions(std::move(functions_)),
+      onCompiled(std::move(onCompiled_)) {}
 
 ShaderProgram::~ShaderProgram() noexcept = default;
 
@@ -85,6 +96,17 @@ MTLRenderPipelineStatePtr ShaderProgram::getRenderPipelineState(const gfx::Rende
                                                                 const MTLVertexDescriptorPtr& vertexDescriptor,
                                                                 const gfx::ColorMode& colorMode,
                                                                 const std::optional<std::size_t> reuseHash) const {
+    // Blocks only when Metal is still compiling, alongside every other program this frame asked for.
+    const auto& compiled = functions->wait();
+    if (onCompiled) {
+        const auto callback = std::move(onCompiled);
+        onCompiled = nullptr;
+        callback(compiled);
+    }
+    if (!compiled.vertex) {
+        return {};
+    }
+
     auto pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
 
     const auto& renderableResource = renderable.getResource<RenderableResource>();
@@ -129,8 +151,8 @@ MTLRenderPipelineStatePtr ShaderProgram::getRenderPipelineState(const gfx::Rende
 
     auto desc = NS::TransferPtr(MTL::RenderPipelineDescriptor::alloc()->init());
     desc->setLabel(NS::String::string(shaderName.data(), NS::UTF8StringEncoding));
-    desc->setVertexFunction(vertexFunction.get());
-    desc->setFragmentFunction(fragmentFunction.get());
+    desc->setVertexFunction(compiled.vertex.get());
+    desc->setFragmentFunction(compiled.fragment.get());
     desc->setVertexDescriptor(vertexDescriptor.get());
 
     if (auto* colorTarget = desc->colorAttachments()->object(0)) {
