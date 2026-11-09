@@ -974,6 +974,7 @@ TEST(TileCover, CacheSharesOnlyTheSameCover) {
 TEST(TileCover, GroundNearerThanTheCentreDrawsFiner) {
     Transform transform;
     transform.resize({428, 926});
+    transform.setMaxPitch(85.0);
     transform.jumpTo(CameraOptions().withCenter(LatLng{49.22, 20.0}).withZoom(12.1).withPitch(79.0));
     util::TileCoverParameters params{transform.getState()};
     params.tileLodMode = TileLodMode::Adaptive;
