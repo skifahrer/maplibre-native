@@ -969,6 +969,25 @@ TEST(TileCover, CacheSharesOnlyTheSameCover) {
     EXPECT_EQ(util::tileCover(params, 12, zoomRange), cache.cover(params, 12, zoomRange));
 }
 
+// Riki Maps AHkQ: at z12 tipped 79 degrees the camera stands kilometres back, so the slope
+// in front lay past the near radius and was drawn no finer than the centre.
+TEST(TileCover, GroundNearerThanTheCentreDrawsFiner) {
+    Transform transform;
+    transform.resize({428, 926});
+    transform.jumpTo(CameraOptions().withCenter(LatLng{49.22, 20.0}).withZoom(12.1).withPitch(79.0));
+    util::TileCoverParameters params{transform.getState()};
+    params.tileLodMode = TileLodMode::Adaptive;
+    params.nearDetail = util::nearDetailLevels();
+
+    const auto tiles = util::tileCover(params, 12, zoomRange);
+    ASSERT_GT(transform.getState().getPitch(), util::deg2rad(78.0));
+    const auto finer = std::count_if(tiles.begin(), tiles.end(), [](const auto& id) {
+        return id.canonical.z > 12;
+    });
+    EXPECT_GT(finer, 0);
+    EXPECT_LT(tiles.size(), 200u);
+}
+
 namespace {
 class HighGround : public util::TileElevationProvider {
 public:
