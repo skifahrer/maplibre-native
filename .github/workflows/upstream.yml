@@ -1,6 +1,6 @@
 name: upstream
 
-# Keeps a branch of ours for each upstream branch we follow, with master merged into it, and a
+# Keeps one branch of ours with every upstream branch we follow and master merged into it, and one
 # pull request from it into master whose terrain-ios run tests that merge. Nothing merges on its own.
 on:
   schedule:
@@ -48,88 +48,93 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.UPSTREAM_TOKEN || github.token }}
 
-      - name: Merge master into each upstream branch, open its pull request and test it
+      - name: Merge every upstream branch and master into one branch, open its pull request and test it
         env:
           # 90: a token with the repo and workflow scopes; the default one may not push
           # upstream's workflow changes, and its pushes start no pipeline
           PUSH_TOKEN: ${{ secrets.UPSTREAM_TOKEN }}
+          # 104: one branch and one pull request for all of upstream
+          SYNC: upstream
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          failed=false
+          sync="$SYNC"
+          behind=""
           for branch in $BRANCHES; do
-            sync="upstream-${branch//\//-}"
             git fetch -q --no-tags "https://github.com/$UPSTREAM.git" "+$branch:refs/upstream/$branch"
-            if git merge-base --is-ancestor "refs/upstream/$branch" origin/master; then
-              echo "master has all of $branch."
-              continue
-            fi
-            old=$(git rev-parse -q --verify "origin/$sync" || true)
-            git checkout -q -B "$sync" "${old:-refs/upstream/$branch}"
+            git merge-base --is-ancestor "refs/upstream/$branch" origin/master || behind="$behind $branch"
+          done
+          if [ -z "$behind" ]; then
+            echo "master has all of $BRANCHES."
+            exit 0
+          fi
+          old=$(git rev-parse -q --verify "origin/$sync" || true)
+          git checkout -q -B "$sync" "${old:-origin/master}"
 
-            # 90: kept on the branch, so a conflict resolved there by hand stays resolved
-            conflict=""
+          # 90: kept on the branch, so a conflict resolved there by hand stays resolved
+          conflict=""
+          for branch in $BRANCHES; do
             if ! git merge -q --no-edit -m "Merge upstream $branch into $sync" "refs/upstream/$branch"; then
               git merge --abort
               conflict="upstream's $branch conflicts with $sync"
-            elif ! git merge -q --no-edit -m "Merge master into $sync" origin/master; then
-              git merge --abort
-              conflict="master conflicts with upstream's $branch"
-            fi
-            head=$(git rev-parse HEAD)
-
-            pushed=false
-            if [ "$head" != "$old" ]; then
-              if ! out=$(git push origin "HEAD:refs/heads/$sync" 2>&1); then
-                echo "$out"
-                if grep -q "workflows. permission" <<< "$out"; then
-                  echo "::error::$branch changes upstream's workflows; add an UPSTREAM_TOKEN secret with the workflow scope"
-                fi
-                failed=true
-                continue
-              fi
-              pushed=true
-            fi
-
-            opened=false
-            pr=$(gh pr list -R "$GITHUB_REPOSITORY" --state open --base master --head "$sync" \
-                   --json number -q '.[0].number // empty')
-            if [ -z "$pr" ]; then
-              pr=$(GH_TOKEN=${PUSH_TOKEN:-$GH_TOKEN} gh pr create -R "$GITHUB_REPOSITORY" \
-                     --base master --head "$sync" --title "Upstream $branch comes in" \
-                     --body "Booking. @skifahrer" | grep -o '[0-9]*$')
-              gh pr edit "$pr" -R "$GITHUB_REPOSITORY" --title "$pr Upstream $branch comes in" --body "$UPSTREAM's \`$branch\` with \`master\` merged into it, on \`$sync\`. It follows both as they move.
-
-          The \`terrain-ios\` status builds that merge and runs upstream's iOS tests and ours on a simulator, again each time either moves. Merge only when it is green on the head.
-
-          On a conflict: check out \`$sync\`, merge \`master\` into it, resolve, build and push; the next nightly run keeps what you resolved.
-
-          @skifahrer"
-              echo "opened #$pr for $branch"
-              opened=true
-            fi
-
-            if [ -n "$conflict" ]; then
-              echo "::warning::#$pr: $conflict"
-              gh api "repos/$GITHUB_REPOSITORY/statuses/$head" -f state=failure -f context=terrain-ios \
-                -f description="$conflict; merge it by hand" > /dev/null
-              continue
-            fi
-            # a push or pull request by the default token starts no workflow; one by ours does
-            if [ -n "$PUSH_TOKEN" ] && { [ "$pushed" = true ] || [ "$opened" = true ]; }; then
-              echo "#$pr at ${head:0:7}: its pull request run tests it"
-              continue
-            fi
-            state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/status" \
-                      -q '[.statuses[] | select(.context == "terrain-ios")][0].state // ""')
-            # pending with no run left: its build was dropped for lack of a Mac
-            active=$(gh run list -R "$GITHUB_REPOSITORY" --workflow terrain-ios.yml --branch "$sync" \
-                       --json status -q '[.[] | select(.status != "completed")] | length')
-            if [ "$pushed" = true ] || [ -z "$state" ] || { [ "$state" = pending ] && [ "$active" = 0 ]; }; then
-              gh workflow run terrain-ios.yml -R "$GITHUB_REPOSITORY" --ref "$sync"
-              echo "testing #$pr at ${head:0:7}"
-            else
-              echo "#$pr at ${head:0:7} is $state"
+              break
             fi
           done
-          [ "$failed" = false ]
+          if [ -z "$conflict" ] && ! git merge -q --no-edit -m "Merge master into $sync" origin/master; then
+            git merge --abort
+            conflict="master conflicts with $sync"
+          fi
+          head=$(git rev-parse HEAD)
+
+          pushed=false
+          if [ "$head" != "$old" ]; then
+            if ! out=$(git push origin "HEAD:refs/heads/$sync" 2>&1); then
+              echo "$out"
+              if grep -q "workflows. permission" <<< "$out"; then
+                echo "::error::upstream changes its workflows; add an UPSTREAM_TOKEN secret with the workflow scope"
+              fi
+              exit 1
+            fi
+            pushed=true
+          fi
+
+          opened=false
+          pr=$(gh pr list -R "$GITHUB_REPOSITORY" --state open --base master --head "$sync" \
+                 --json number -q '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            pr=$(GH_TOKEN=${PUSH_TOKEN:-$GH_TOKEN} gh pr create -R "$GITHUB_REPOSITORY" \
+                   --base master --head "$sync" --title "Upstream comes in" \
+                   --body "Booking. @skifahrer" | grep -o '[0-9]*$')
+            gh pr edit "$pr" -R "$GITHUB_REPOSITORY" --title "$pr Upstream comes in" --body "$UPSTREAM's \`${BRANCHES// /\` and \`}\` with \`master\` merged in, on \`$sync\`. It follows all of them as they move.
+
+          The \`terrain-ios\` status builds that merge and runs upstream's iOS tests and ours on a simulator, again each time one moves. Merge only when it is green on the head.
+
+          On a conflict: check out \`$sync\`, merge the branch named in the status into it, resolve, build and push; the next nightly run keeps what you resolved.
+
+          @skifahrer"
+            echo "opened #$pr"
+            opened=true
+          fi
+
+          if [ -n "$conflict" ]; then
+            echo "::warning::#$pr: $conflict"
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$head" -f state=failure -f context=terrain-ios \
+              -f description="$conflict; merge it by hand" > /dev/null
+            exit 0
+          fi
+          # a push or pull request by the default token starts no workflow; one by ours does
+          if [ -n "$PUSH_TOKEN" ] && { [ "$pushed" = true ] || [ "$opened" = true ]; }; then
+            echo "#$pr at ${head:0:7}: its pull request run tests it"
+            exit 0
+          fi
+          state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/status" \
+                    -q '[.statuses[] | select(.context == "terrain-ios")][0].state // ""')
+          # pending with no run left: its build was dropped for lack of a Mac
+          active=$(gh run list -R "$GITHUB_REPOSITORY" --workflow terrain-ios.yml --branch "$sync" \
+                     --json status -q '[.[] | select(.status != "completed")] | length')
+          if [ "$pushed" = true ] || [ -z "$state" ] || { [ "$state" = pending ] && [ "$active" = 0 ]; }; then
+            gh workflow run terrain-ios.yml -R "$GITHUB_REPOSITORY" --ref "$sync"
+            echo "testing #$pr at ${head:0:7}"
+          else
+            echo "#$pr at ${head:0:7} is $state"
+          fi
