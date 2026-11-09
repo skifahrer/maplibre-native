@@ -602,6 +602,19 @@ MLN_EXPORT
 @property (nonatomic, assign) CLLocationDistance drawDistance;
 
 /**
+ Whether a layer whose shader Metal is still compiling waits only a moment, then
+ draws a frame later, instead of holding the frame until the compile finishes.
+
+ The first frames after an app update then stay responsive, at the cost of a
+ label or line appearing a frame or more late. Snapshots always wait.
+
+ The default value of this property is `NO`.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic, assign) BOOL compilesShadersAsynchronously;
+
+/**
  The color 3D terrain fades into with distance, or `nil` for no fog.
 
  From ``MLNMapView/fogStartDistance`` to ``MLNMapView/fogEndDistance`` from the

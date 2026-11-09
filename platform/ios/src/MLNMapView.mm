@@ -11,6 +11,7 @@
 #if MLN_RENDER_BACKEND_METAL
 #include <mln/mtl/mtl_fwd.hpp>
 #include <mln/mtl/render_pass.hpp>
+#include <mln/mtl/renderer_backend.hpp>
 #endif
 #include <mln/plugin/plugin_layer.hpp>
 #include <mln/plugin/plugin_layer_factory.hpp>
@@ -3284,6 +3285,21 @@ static void *windowScreenContext = &windowScreenContext;
 
 - (CLLocationDistance)drawDistance {
   return _mbglMap->getDrawDistance();
+}
+
+- (void)setCompilesShadersAsynchronously:(BOOL)compilesShadersAsynchronously {
+#if MLN_RENDER_BACKEND_METAL
+  static_cast<mln::mtl::RendererBackend&>(_mbglView->getRendererBackend())
+      .setCompilesShadersAsynchronously(compilesShadersAsynchronously);
+#endif
+}
+
+- (BOOL)compilesShadersAsynchronously {
+#if MLN_RENDER_BACKEND_METAL
+  return static_cast<mln::mtl::RendererBackend&>(_mbglView->getRendererBackend()).compilesShadersAsynchronously();
+#else
+  return NO;
+#endif
 }
 
 - (void)setFogColor:(UIColor *)fogColor {

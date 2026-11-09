@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include <mln/gfx/renderer_backend.hpp>
 #include <mln/mtl/mtl_fwd.hpp>
 #include <mln/util/image.hpp>
@@ -30,6 +32,10 @@ public:
     const MTLCommandQueuePtr& getCommandQueue() const { return commandQueue; }
     bool isBaseVertexInstanceDrawingSupported() const { return baseVertexInstanceDrawingSupported; }
 
+    /// Off, a draw waits for its shaders, as a snapshot must have every layer.
+    void setCompilesShadersAsynchronously(bool on) { asyncCompiles = on; }
+    bool compilesShadersAsynchronously() const { return asyncCompiles; }
+
 protected:
     std::unique_ptr<gfx::Context> createContext() override;
 
@@ -39,6 +45,7 @@ protected:
     MTLDevicePtr device;
     MTLCommandQueuePtr commandQueue;
     bool baseVertexInstanceDrawingSupported = false;
+    std::atomic<bool> asyncCompiles{false};
 };
 
 } // namespace mtl

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <utility>
+
 #include <mln/actor/scheduler.hpp>
 #include <mln/gfx/backend.hpp>
 #include <mln/gfx/command_encoder.hpp>
@@ -130,6 +132,10 @@ public:
     }
     bool newTileBuildWasDeferred() const { return newTileBuildDeferred; }
 
+    /// A draw skipped while its shader compiles; the frame asks for another to draw it.
+    void noteDrawWaitingOnCompile() { drawWaitedOnCompile = true; }
+    bool takeDrawWaitedOnCompile() { return std::exchange(drawWaitedOnCompile, false); }
+
     void threadSafeAccessRenderingStats(const std::function<void(RenderingStats&)>& function) {
         std::scoped_lock lock(renderingStatsMutex);
         function(stats);
@@ -234,6 +240,7 @@ protected:
     // effectively unlimited so any path that never resets it is unaffected.
     int newTileBudget = 1 << 30;
     bool newTileBuildDeferred = false;
+    bool drawWaitedOnCompile = false;
     std::unordered_set<std::size_t> newTilesAllowed;
 };
 

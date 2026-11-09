@@ -240,7 +240,7 @@ void Drawable::draw(PaintParameters& parameters) const {
     if (impl->pipelineState) {
         renderPass.setRenderPipelineState(impl->pipelineState);
     } else {
-        assert(!"Failed to create render pipeline state");
+        assert(shaderMTL.isWaitingOnCompile() || !"Failed to create render pipeline state");
         return;
     }
 

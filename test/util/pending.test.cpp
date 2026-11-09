@@ -45,3 +45,24 @@ TEST(Pending, ReleasesEveryWaiter) {
     second.join();
     EXPECT_EQ(2, released);
 }
+
+// 97 a draw whose shader is still compiling gives up after its short wait
+TEST(Pending, WaitForGivesUpWhileUnset) {
+    Pending<int> pending;
+    const auto began = std::chrono::steady_clock::now();
+    EXPECT_EQ(nullptr, pending.waitFor(std::chrono::milliseconds(5)));
+    EXPECT_GE(std::chrono::steady_clock::now() - began, std::chrono::milliseconds(5));
+}
+
+// 97 a compile that lands within the wait still draws in the same frame
+TEST(Pending, WaitForTakesAValueSetMeanwhile) {
+    Pending<int> pending;
+    std::thread compiler([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        pending.set(7);
+    });
+    const auto* value = pending.waitFor(std::chrono::seconds(5));
+    compiler.join();
+    ASSERT_NE(nullptr, value);
+    EXPECT_EQ(7, *value);
+}
