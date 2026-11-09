@@ -228,7 +228,7 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     // Adaptive goes no finer than the zoom the view asks for: under a steep pitch gl-js's
     // function sends the ground at the camera to the source's max zoom, and a few hundred such
     // tiles cost more than a tile budget allows. Only the ground within kNearDetailMetres of the
-    // camera may go state.nearDetail levels finer.
+    // camera, or nearer than the centre, may go state.nearDetail levels finer.
     constexpr double kNearDetailMetres = 1500.0;
     const uint8_t adaptiveMax = std::min<uint8_t>(zoomRange.max, static_cast<uint8_t>(z + state.nearDetail));
     const uint8_t maxZoom = (variableZoomMode && allowVariableZoom) ? (adaptiveLod ? adaptiveMax : zoomRange.max) : z;
@@ -325,8 +325,10 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
                 .fullyVisible = false};
     };
 
-    const double nearRadius = kNearDetailMetres / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
-                                                   util::M2PI * util::EARTH_RADIUS_M);
+    // Ground nearer than the centre is seen closer than the view's zoom, however far that is.
+    const double nearRadius = std::max(distanceToCenter2d,
+                                       kNearDetailMetres / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
+                                                            util::M2PI * util::EARTH_RADIUS_M));
 
     // Perform depth-first traversal on tile tree to find visible tiles
     std::vector<Node> stack;
