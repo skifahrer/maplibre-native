@@ -241,6 +241,9 @@ void Drawable::draw(PaintParameters& parameters) const {
         renderPass.setRenderPipelineState(impl->pipelineState);
     } else {
         assert(shaderMTL.isWaitingOnCompile() || !"Failed to create render pipeline state");
+        // Skipped while compiling: undo the bindings, as a finished draw does.
+        unbindTextures(renderPass);
+        unbindAttributes(renderPass);
         return;
     }
 
