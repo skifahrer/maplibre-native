@@ -106,8 +106,7 @@ void CircleLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
         // The terrain surface writes depth (so its skirts get occluded); circles
         // are elevated onto that surface and must not depth-test against it, or
         // they would be culled by the ground they sit on. Depth stays on without
-        // terrain. Their occlusion comes from the terrain depth texture instead
-        // (Metal only; the other backends still draw them on top).
+        // terrain. Their occlusion behind terrain comes from the depth texture above.
         drawable.setEnableDepth(!terrainEnabled);
 
 #if MLN_UBO_CONSOLIDATION

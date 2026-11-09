@@ -34,6 +34,9 @@ public:
     /// pyramid's edge; still known once the pyramid has let it go.
     bool tileHasNoData(const UnwrappedTileID&) const;
 
+    /// Every tile the pyramid currently holds, rendered or merely retained (e.g. DEM ancestors).
+    const TilePyramid& getTilePyramid() const { return tilePyramid; }
+
     std::unordered_map<std::string, std::vector<Feature>> queryRenderedFeatures(
         const ScreenLineString& geometry,
         const TransformState& transformState,

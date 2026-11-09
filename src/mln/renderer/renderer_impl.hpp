@@ -25,6 +25,7 @@ class RenderTerrain;
 class TransformState;
 class RenderStaticData;
 class RenderTree;
+class TerrainElevationIndex;
 
 namespace gfx {
 class RendererBackend;
@@ -130,6 +131,10 @@ private:
     /// The sight ground last reported, NaN for none, so it is posted only when it moves.
     std::array<double, 3> lastReportedSightGround{
         {std::numeric_limits<double>::quiet_NaN(), 0.0, std::numeric_limits<double>::quiet_NaN()}};
+
+    /// The terrain height copy last handed to the observer (null: none, or terrain off), so it
+    /// is sent once per change rather than once per frame.
+    std::shared_ptr<const TerrainElevationIndex> reportedElevationIndex;
 
     enum class RenderState {
         Never,
