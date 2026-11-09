@@ -396,7 +396,7 @@ double RenderTerrain::screenEdge(const UnwrappedTileID& id, const TransformState
     const double north = id.canonical.y / tiles * worldSize;
     const double side = worldSize / tiles;
     const LatLng middle = Projection::unproject({west + side / 2, north + side / 2}, state.getScale());
-    const double height = getElevationForLatLng(middle) /
+    const double height = getElevationForLatLng(middle).value_or(0.0) /
                           Projection::getMetersPerPixelAtLatitude(middle.latitude(), state.getZoom());
     const auto& projection = state.getProjectionMatrix();
     const auto size = state.getSize();
@@ -433,7 +433,8 @@ bool RenderTerrain::sightBlocked(const TransformState& state) const {
     double highest = -std::numeric_limits<double>::infinity();
     for (int i = 2; i < samples; ++i) {
         const double f = static_cast<double>(i) / samples;
-        const double ground = getElevationForLatLng(LatLng(centre.latitude() + f * dLat, centre.longitude() + f * dLng));
+        const LatLng along(centre.latitude() + f * dLat, centre.longitude() + f * dLng);
+        const double ground = getElevationForLatLng(along).value_or(0.0);
         if (ground != 0.0) {
             highest = std::max(highest, ground - (centreAltitude + f * (eye->altitude - centreAltitude)));
         }
