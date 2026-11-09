@@ -821,6 +821,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     // Add the feature info from the render orchestrator
     stats->frameRenderedFeatures = std::move(orchestrator.moveFrameRenderedFeatures());
     drapeDeferredLastFrame = drapeWorkDeferred;
+    const bool drawWaitedOnCompile = context.takeDrawWaitedOnCompile();
 
     observer->onDidFinishRenderingFrame(
         renderTreeParameters.loaded ? RendererObserver::RenderMode::Full : RendererObserver::RenderMode::Partial,
@@ -828,7 +829,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // budget deferred any new tile, so deferred drapes/tiles catch up progressively even
         // after the interaction stops.
         renderTreeParameters.needsRepaint || drapeWorkDeferred || drapeGrowthHeldBack ||
-            context.newTileBuildWasDeferred() || terrainCoverPending,
+            context.newTileBuildWasDeferred() || terrainCoverPending || drawWaitedOnCompile,
         renderTreeParameters.placementChanged,
         std::move(stats));
 

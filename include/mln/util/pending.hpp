@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <optional>
@@ -28,6 +29,12 @@ public:
     bool isSet() const {
         std::lock_guard<std::mutex> lock(mutex);
         return value.has_value();
+    }
+
+    /// Null when the value is not set within `timeout`.
+    const T* waitFor(std::chrono::microseconds timeout) const {
+        std::unique_lock<std::mutex> lock(mutex);
+        return changed.wait_for(lock, timeout, [this] { return value.has_value(); }) ? &*value : nullptr;
     }
 
     const T& wait() const {

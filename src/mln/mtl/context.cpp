@@ -428,7 +428,7 @@ bool Context::renderTileClippingMasks(gfx::RenderPass& renderPass,
     if (clipMaskPipelineState) {
         mtlRenderPass.setRenderPipelineState(clipMaskPipelineState);
     } else {
-        assert(!"Failed to create render pipeline state for clip masking");
+        assert(mtlShader.isWaitingOnCompile() || !"Failed to create render pipeline state for clip masking");
         return false;
     }
 

@@ -77,6 +77,9 @@ public:
                                                      const gfx::ColorMode& colorMode,
                                                      const std::optional<std::size_t> reuseHash) const;
 
+    /// A draw skipped this frame because Metal is still compiling for it.
+    bool isWaitingOnCompile() const;
+
     std::optional<size_t> getSamplerLocation(const size_t id) const override;
 
     const gfx::VertexAttributeArray& getVertexAttributes() const override { return vertexAttributes; }
@@ -97,6 +100,12 @@ protected:
     std::array<std::optional<size_t>, shaders::maxTextureCountPerShader> textureBindings;
 
     mutable mln::unordered_map<std::size_t, MTLRenderPipelineStatePtr> renderPipelineStateCache;
+    mutable mln::unordered_map<std::size_t, std::shared_ptr<util::Pending<MTLRenderPipelineStatePtr>>>
+        pendingPipelineStates;
+
+private:
+    const ShaderFunctions* awaitFunctions() const;
+    MTLRenderPipelineStatePtr awaitPipelineState(std::size_t cacheKey) const;
 };
 
 } // namespace mtl

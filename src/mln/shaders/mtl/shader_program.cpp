@@ -96,8 +96,11 @@ MTLRenderPipelineStatePtr ShaderProgram::getRenderPipelineState(const gfx::Rende
                                                                 const MTLVertexDescriptorPtr& vertexDescriptor,
                                                                 const gfx::ColorMode& colorMode,
                                                                 const std::optional<std::size_t> reuseHash) const {
-    // Blocks only when Metal is still compiling, alongside every other program this frame asked for.
-    const auto& compiled = functions->wait();
+    const auto* awaited = awaitFunctions();
+    if (!awaited) {
+        return {};
+    }
+    const auto& compiled = *awaited;
     if (onCompiled) {
         const auto callback = std::move(onCompiled);
         onCompiled = nullptr;
@@ -147,6 +150,9 @@ MTLRenderPipelineStatePtr ShaderProgram::getRenderPipelineState(const gfx::Rende
         if (auto it = renderPipelineStateCache.find(*cacheKey); it != renderPipelineStateCache.end()) {
             return it->second;
         }
+        if (pendingPipelineStates.contains(*cacheKey)) {
+            return awaitPipelineState(*cacheKey);
+        }
     }
 
     auto desc = NS::TransferPtr(MTL::RenderPipelineDescriptor::alloc()->init());
@@ -194,8 +200,23 @@ MTLRenderPipelineStatePtr ShaderProgram::getRenderPipelineState(const gfx::Rende
         desc->setStencilAttachmentPixelFormat(*stencilFormat);
     }
 
-    NS::Error* error = nullptr;
     const auto& device = backend.getDevice();
+    // A state no reuse key can find again is made on the spot, as before.
+    if (backend.compilesShadersAsynchronously() && cacheKey) {
+        auto pending = std::make_shared<util::Pending<MTLRenderPipelineStatePtr>>();
+        pendingPipelineStates[*cacheKey] = pending;
+        device->newRenderPipelineState(
+            desc.get(), [pending, name = shaderName](MTL::RenderPipelineState* state, NS::Error* error) {
+                if (!state) {
+                    const auto* why = error ? error->localizedDescription()->utf8String() : "";
+                    Log::Error(Event::Shader, name + " newRenderPipelineState failed: " + why);
+                }
+                pending->set(NS::RetainPtr(state));
+            });
+        return awaitPipelineState(*cacheKey);
+    }
+
+    NS::Error* error = nullptr;
     auto rps = NS::TransferPtr(device->newRenderPipelineState(desc.get(), &error));
 
     if (!rps || error) {
@@ -211,6 +232,42 @@ MTLRenderPipelineStatePtr ShaderProgram::getRenderPipelineState(const gfx::Rende
     }
 
     return rps;
+}
+
+namespace {
+// Long enough for a cache hit to draw in the same frame, short enough not to hold it.
+constexpr std::chrono::microseconds compileWait{4000};
+} // namespace
+
+const ShaderFunctions* ShaderProgram::awaitFunctions() const {
+    if (!backend.compilesShadersAsynchronously()) {
+        return &functions->wait();
+    }
+    if (const auto* done = functions->waitFor(compileWait)) {
+        return done;
+    }
+    backend.getContext().noteDrawWaitingOnCompile();
+    return nullptr;
+}
+
+MTLRenderPipelineStatePtr ShaderProgram::awaitPipelineState(std::size_t cacheKey) const {
+    const auto pending = pendingPipelineStates.at(cacheKey);
+    const auto* state = pending->waitFor(compileWait);
+    if (!state) {
+        backend.getContext().noteDrawWaitingOnCompile();
+        return {};
+    }
+    auto made = *state;
+    pendingPipelineStates.erase(cacheKey);
+    assert(made);
+    if (made) {
+        renderPipelineStateCache[cacheKey] = made;
+    }
+    return made;
+}
+
+bool ShaderProgram::isWaitingOnCompile() const {
+    return !functions->isSet() || !pendingPipelineStates.empty();
 }
 
 std::optional<size_t> ShaderProgram::getSamplerLocation(const size_t id) const {
