@@ -4,6 +4,7 @@
 #include <mln/gfx/vertex_buffer.hpp>
 #include <mln/webgpu/renderer_backend.hpp>
 #include <mln/webgpu/buffer_resource.hpp>
+#include <map>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -105,6 +106,10 @@ public:
     /// and sampler. Mirrors the Vulkan backend's getDummyTexture().
     const std::shared_ptr<Texture2D>& getDummyTexture();
 
+    /// A shared vertex buffer of at least `size` bytes holding the default value of `type`,
+    /// for attributes a drawable doesn't provide
+    const VertexBufferResource& getDefaultVertexBuffer(gfx::AttributeDataType type, std::size_t size);
+
     // Tile clipping mask rendering
     bool renderTileClippingMasks(gfx::RenderPass& renderPass,
                                  RenderStaticData& staticData,
@@ -140,6 +145,9 @@ private:
 
     // Fallback texture for shader-declared but unbound texture slots
     std::shared_ptr<Texture2D> dummyTexture;
+
+    // Default attribute buffers by type, largest last. Bindings may still point at the smaller ones.
+    std::map<gfx::AttributeDataType, std::vector<std::unique_ptr<VertexBufferResource>>> defaultVertexBuffers;
 
     // Cached clipping resources
     gfx::ShaderProgramBasePtr clipMaskShader;
