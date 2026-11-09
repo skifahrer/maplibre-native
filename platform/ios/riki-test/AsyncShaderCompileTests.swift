@@ -18,7 +18,7 @@ final class AsyncShaderCompileTests: XCTestCase, MLNMapViewDelegate {
         XCTAssertTrue(mapView.compilesShadersAsynchronously)
     }
 
-    // 97 switched on, each skipped layer gets the frame that draws it, so the map settles
+    // 97 switched on, each skipped layer gets a frame that draws it, so the map settles
     func testAMapThatSkipsLayersWhileCompilingStillSettles() throws {
         try loadMap(async: true)
         idle = expectation(description: "map settles once every compile has landed")
