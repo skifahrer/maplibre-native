@@ -3,6 +3,7 @@
 #include <mln/map/transform.hpp>
 #include <mln/math/angles.hpp>
 #include <mln/util/projection.hpp>
+#include <mln/util/tile_coordinate.hpp>
 #include <mln/util/mat4.hpp>
 #include <mln/util/interpolate.hpp>
 
@@ -987,6 +988,66 @@ TEST(TileCover, GroundNearerThanTheCentreDrawsFiner) {
     });
     EXPECT_GT(finer, 0);
     EXPECT_LT(tiles.size(), 200u);
+}
+
+namespace {
+struct Relief : util::TileElevationProvider {
+    double top;
+    explicit Relief(double top_)
+        : top(top_) {}
+    std::optional<Range<double>> getTileElevationRange(const CanonicalTileID&) const override {
+        return Range<double>{0.0, top};
+    }
+};
+
+// The zoom of the tile drawn `metres` ahead of the centre, north along the view.
+int zoomAhead(const std::vector<OverscaledTileID>& tiles, const LatLng& centre, double metres) {
+    const LatLng ahead{centre.latitude() + metres / 111320.0, centre.longitude()};
+    int found = -1;
+    for (const auto& id : tiles) {
+        const auto point = TileCoordinate::fromLatLng(id.canonical.z, ahead).p;
+        if (static_cast<uint32_t>(point.x) == id.canonical.x && static_cast<uint32_t>(point.y) == id.canonical.y) {
+            found = std::max(found, static_cast<int>(id.canonical.z));
+        }
+    }
+    return found;
+}
+} // namespace
+
+// The zoom of the tile a kilometre past the centre of a z17 view tipped to `pitch` degrees.
+int zoomPastTheCentre(double pitch, const util::TileElevationProvider& ground, std::size_t* count = nullptr) {
+    const LatLng centre{49.17, 20.08};
+    Transform transform;
+    transform.resize({428, 926});
+    transform.setMaxPitch(89.0);
+    transform.jumpTo(CameraOptions().withCenter(centre).withZoom(17.0).withPitch(pitch));
+    util::TileCoverParameters params{transform.getState()};
+    params.tileLodMode = TileLodMode::Adaptive;
+    params.elevationProvider = &ground;
+    const auto tiles = util::tileCover(params, 17, Range<uint8_t>{0, 17});
+    if (count) {
+        *count = tiles.size();
+    }
+    return zoomAhead(tiles, centre, 1000.0);
+}
+
+// 106 Tipped to the horizon, the mountainside across the valley was a blur: every tile was taken
+// for flat ground seen edge-on from the camera's height over the centre.
+TEST(TileCover, ASlopeAheadStaysSharpTippedToTheHorizon) {
+    const int onFlatGround = zoomPastTheCentre(88.0, Relief(0.0));
+    std::size_t tiles = 0;
+    const int onTheSlope = zoomPastTheCentre(88.0, Relief(800.0), &tiles);
+
+    ASSERT_GE(onFlatGround, 0);
+    EXPECT_GT(onTheSlope, onFlatGround);
+    EXPECT_LT(tiles, 100u);
+}
+
+// 106 Looking down, the camera is high over all of it, and the slope draws as it did.
+TEST(TileCover, LookingDownASlopeDrawsAsFlatGroundDoes) {
+    const int onFlatGround = zoomPastTheCentre(60.0, Relief(0.0));
+    ASSERT_GE(onFlatGround, 0);
+    EXPECT_EQ(zoomPastTheCentre(60.0, Relief(800.0)), onFlatGround);
 }
 
 namespace {

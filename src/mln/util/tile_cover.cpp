@@ -330,6 +330,41 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
                                        kNearDetailMetres / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
                                                             util::M2PI * util::EARTH_RADIUS_M));
 
+    // Tipped level, the ground in view is the slope across the valley, which faces the camera;
+    // on the centre's plane it counts as flat ground seen edge-on, and draws coarse. From 75 to
+    // 85 degrees the tiles come to be judged by their own heights, so no tilt snaps.
+    const double tippedLevel = std::clamp(
+        (std::cos(util::deg2rad(75.0)) - std::abs(std::cos(transform.getPitch()))) /
+            (std::cos(util::deg2rad(75.0)) - std::cos(util::deg2rad(85.0))),
+        0.0,
+        1.0);
+    const double metresToMercator = 1.0 / (std::cos(util::deg2rad(transform.getLatLng().latitude())) * util::M2PI *
+                                           util::EARTH_RADIUS_M);
+    const auto zoomOnItsGround = [&](const Node& node, double distanceToTile2d) -> std::optional<double> {
+        if (tippedLevel <= 0.0 || !state.elevationProvider) {
+            return std::nullopt;
+        }
+        const auto range = state.elevationProvider->getTileElevationRange(CanonicalTileID(node.zoom, node.x, node.y));
+        if (!range) {
+            return std::nullopt;
+        }
+        const double cameraZ = cameraCoord[2] / numTiles;
+        const double low = range->min * metresToMercator;
+        const double high = range->max * metresToMercator;
+        const double nearest = std::hypot(distanceToTile2d, std::max({low - cameraZ, cameraZ - high, 0.0}));
+        const double farthest = std::hypot(distanceToTile2d,
+                                           std::max(std::abs(cameraZ - low), std::abs(cameraZ - high)));
+        if (nearest <= 0.0) {
+            return std::nullopt;
+        }
+        // As steep as it rises across its own width, or as it lies under the camera.
+        const double rise = (high - low) * std::exp2(node.zoom);
+        const double facing = std::clamp(std::max(rise, std::sqrt(1.0 - std::pow(distanceToTile2d / farthest, 2.0))),
+                                         1e-6,
+                                         1.0);
+        return tileZoom.onItsGround(requestedCenterZoom, nearest, facing, distanceToCenter3d, distanceToCenterZ);
+    };
+
     // Perform depth-first traversal on tile tree to find visible tiles
     std::vector<Node> stack;
     std::vector<ResultTile> result;
@@ -432,9 +467,13 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
             // below, rather than elevatedAABB.
             const vec3 camToTile = node.aabb.distanceXYZ(cameraCoord);
             const double distanceToTile2d = std::hypot(camToTile[0], camToTile[1]) / numTiles;
-            const double rawZoom = tileZoom(
-                requestedCenterZoom, distanceToTile2d, distanceToCenterZ, distanceToCenter3d) -
-                                  std::log2(std::max(1.0, state.tileLodScale));
+            double tileZoomHere = tileZoom(
+                requestedCenterZoom, distanceToTile2d, distanceToCenterZ, distanceToCenter3d);
+            // Only ever finer than the centre's plane gives, so no view loses detail to this.
+            if (const auto own = zoomOnItsGround(node, distanceToTile2d); own && *own > tileZoomHere) {
+                tileZoomHere += tippedLevel * (*own - tileZoomHere);
+            }
+            const double rawZoom = tileZoomHere - std::log2(std::max(1.0, state.tileLodScale));
             const double desiredZoom = state.roundZoom ? std::round(rawZoom) : std::floor(rawZoom);
             const uint8_t cap = distanceToTile2d < nearRadius ? maxZoom : std::min(maxZoom, z);
             shouldSplitTile = node.zoom < std::clamp(desiredZoom, 0.0, static_cast<double>(cap));
