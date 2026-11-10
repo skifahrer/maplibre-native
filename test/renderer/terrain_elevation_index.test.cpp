@@ -166,8 +166,8 @@ TEST(TerrainElevationIndex, ProjectionRoundTripsOnTheSurface) {
     const ScreenCoordinate atHeight = test.map.pixelForLatLng(target, plateauMeters);
     EXPECT_NEAR(onSurface.x, atHeight.x, 0.5);
     EXPECT_NEAR(onSurface.y, atHeight.y, 0.5);
-    // Pitched, the plateau sits visibly off the sea-level position.
-    const ScreenCoordinate atSeaLevel = test.map.pixelForLatLng(target);
+    // 105 Pitched, the plateau sits off sea level; without a height the fork answers the ground.
+    const ScreenCoordinate atSeaLevel = test.map.pixelForLatLng(target, 0.0);
     EXPECT_GT(std::abs(onSurface.y - atSeaLevel.y), 5.0);
 
     const LatLng picked = test.map.latLngForPixelOnTerrain(onSurface);
@@ -384,7 +384,8 @@ TEST(TerrainElevationIndex, SymbolCollisionBoxesSitOnTheTerrain) {
 
     const LatLng pin{47.28, 11.42};
     const ScreenCoordinate onSurface = test.map.pixelForLatLngOnTerrain(pin);
-    const ScreenCoordinate atSeaLevel = test.map.pixelForLatLng(pin);
+    // 105 Sea level is asked for by name: without a height the fork answers the ground.
+    const ScreenCoordinate atSeaLevel = test.map.pixelForLatLng(pin, 0.0);
     // Far enough apart that an 8 px icon (with its collision padding) cannot cover both
     ASSERT_GT(std::hypot(onSurface.x - atSeaLevel.x, onSurface.y - atSeaLevel.y), 20.0);
 
