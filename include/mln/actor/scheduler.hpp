@@ -66,7 +66,7 @@ public:
     /// current task queue.
     ///
     /// The |TaskFn| return type must be compatible with the |ReplyFn| argument
-    /// type. Note: the task result is copied and passed by value.
+    /// type. The task result is moved into the reply, never copied.
     template <typename TaskFn, typename ReplyFn>
     void scheduleAndReplyValue(const util::SimpleIdentity tag, TaskFn&& task, ReplyFn&& reply) {
         assert(GetCurrent());
@@ -116,7 +116,8 @@ private:
                                mapbox::base::WeakPtr<Scheduler> replyScheduler) {
         schedule(tag, [replyScheduler = std::move(replyScheduler), tag, task, reply] {
             if (auto guard = replyScheduler.lock(); replyScheduler) {
-                replyScheduler->schedule(tag, [reply, result = task()] { reply(result); });
+                // A GeoJSON tile's features copied twice ran a phone out of memory.
+                replyScheduler->schedule(tag, [reply, result = task()]() mutable { reply(std::move(result)); });
             }
         });
     }
@@ -141,7 +142,7 @@ public:
     void runRenderJobs(bool closeQueue = false) { scheduler->runRenderJobs(tag, closeQueue); }
     void waitForEmpty() const noexcept { scheduler->waitForEmpty(tag); }
 
-    /// type. Note: the task result is copied and passed by value.
+    /// type. The task result is moved into the reply, never copied.
     template <typename TaskFn, typename ReplyFn>
     void scheduleAndReplyValue(TaskFn&& task, ReplyFn&& reply) {
         scheduler->scheduleAndReplyValue(tag, task, reply);
