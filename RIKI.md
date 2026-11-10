@@ -42,7 +42,9 @@ marks it green at once. To try a workflow change, run `terrain-ios` by hand on i
 ## Releases
 
 Each push to `master` that changes the framework runs `terrain-ios` and publishes
-`terrain-<commit>`:
+`terrain-<commit>`. A merge that lands while an earlier one is still building stops that build
+and starts its own, which releases both changes; the stopped commit gets no release.
+The release carries:
 
 - `MapLibre.xcframework.zip`: the dynamic framework, without its dSYMs
 - `MapLibre.framework.dSYM.zip`: the device dSYM, for crash symbolication
