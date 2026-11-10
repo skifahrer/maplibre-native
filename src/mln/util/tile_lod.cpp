@@ -38,27 +38,43 @@ TileZoomFunction::TileZoomFunction(double cameraVerticalFOVDegrees,
       tileCountPitch0(2 * integralOfCosXByP(pitchTileLoadingBehavior - 1, 0, deg2rad(cameraVerticalFOVDegrees / 2))),
       tileCountMaxMinRatio(tileCountMaxMinRatio_) {}
 
-double TileZoomFunction::operator()(double requestedCenterZoom,
-                                    double distanceToTile2D,
-                                    double distanceToTileZ,
-                                    double distanceToCenter3D) const {
-    if (distanceToTileZ != lastTileZ || distanceToCenter3D != lastCenter3D) {
-        const double centerPitch = std::acos(std::min(1.0, distanceToTileZ / distanceToCenter3D));
+double TileZoomFunction::budgetTerm(double distanceToCenterZ, double distanceToCenter3D) const {
+    if (distanceToCenterZ != lastTileZ || distanceToCenter3D != lastCenter3D) {
+        const double centerPitch = std::acos(std::min(1.0, distanceToCenterZ / distanceToCenter3D));
         const double highestPitch = std::min(deg2rad(maxMercatorHorizonAngleDegrees),
                                              centerPitch + deg2rad(cameraVerticalFOV / 2));
         const double lowestPitch = std::min(highestPitch, centerPitch - deg2rad(cameraVerticalFOV / 2));
         lastTileCount = integralOfCosXByP(pitchTileLoadingBehavior - 1, lowestPitch, highestPitch);
-        lastTileZ = distanceToTileZ;
+        lastTileZ = distanceToCenterZ;
         lastCenter3D = distanceToCenter3D;
     }
-    const double tileCount = lastTileCount;
+    return std::log2(std::max(1.0, lastTileCount / tileCountPitch0 / tileCountMaxMinRatio)) / 2;
+}
+
+double TileZoomFunction::operator()(double requestedCenterZoom,
+                                    double distanceToTile2D,
+                                    double distanceToTileZ,
+                                    double distanceToCenter3D) const {
     const double thisTilePitch = std::atan(distanceToTile2D / distanceToTileZ);
     const double distanceToTile3D = std::hypot(distanceToTile2D, distanceToTileZ);
     double desired = requestedCenterZoom;
     desired += std::log2(distanceToCenter3D / distanceToTile3D /
                          std::max(0.5, std::cos(deg2rad(cameraVerticalFOV / 2))));
     desired += pitchTileLoadingBehavior * std::log2(std::cos(thisTilePitch)) / 2;
-    desired -= std::log2(std::max(1.0, tileCount / tileCountPitch0 / tileCountMaxMinRatio)) / 2;
+    desired -= budgetTerm(distanceToTileZ, distanceToCenter3D);
+    return desired;
+}
+
+double TileZoomFunction::onItsGround(double requestedCenterZoom,
+                                     double distanceToTile3D,
+                                     double facing,
+                                     double distanceToCenter3D,
+                                     double distanceToCenterZ) const {
+    double desired = requestedCenterZoom;
+    desired += std::log2(distanceToCenter3D / distanceToTile3D /
+                         std::max(0.5, std::cos(deg2rad(cameraVerticalFOV / 2))));
+    desired += pitchTileLoadingBehavior * std::log2(facing) / 2;
+    desired -= budgetTerm(distanceToCenterZ, distanceToCenter3D);
     return desired;
 }
 

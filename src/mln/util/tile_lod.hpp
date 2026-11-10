@@ -25,12 +25,21 @@ public:
                       double distanceToTileZ,
                       double distanceToCenter3D) const;
 
+    /// The same for ground that is not the centre's plane: a tile `distanceToTile3D` away, seen `facing`
+    /// squarely (1 face-on, towards 0 edge-on). `distanceToCenterZ` still sets the tile budget.
+    double onItsGround(double requestedCenterZoom,
+                       double distanceToTile3D,
+                       double facing,
+                       double distanceToCenter3D,
+                       double distanceToCenterZ) const;
+
 private:
     double cameraVerticalFOV;
     double pitchTileLoadingBehavior;
     double tileCountPitch0;
     double tileCountMaxMinRatio;
     // One cover asks with the same camera distances for every tile: the integral once.
+    double budgetTerm(double distanceToCenterZ, double distanceToCenter3D) const;
     mutable double lastTileZ = -1;
     mutable double lastCenter3D = -1;
     mutable double lastTileCount = 0;
