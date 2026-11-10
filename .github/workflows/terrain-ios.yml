@@ -23,9 +23,10 @@ permissions:
   contents: write
   statuses: write
 
+# 107: master too, where the newest merge carries every change since the last release
 concurrency:
   group: terrain-ios-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+  cancel-in-progress: true
 
 env:
   BAZEL_FLAGS: --compilation_mode=opt --//:renderer=metal --features=thin_lto --apple_generate_dsym
