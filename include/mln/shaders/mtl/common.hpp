@@ -179,10 +179,12 @@ inline bool ground_throughout(texture2d<float, access::sample> dem, float4 dem_c
     return true;
 }
 
-// The camera distance (clip w) the terrain depth pass packed (mtl/terrain_depth.hpp)
+// The camera distance (clip w) the terrain depth pass packed (mtl/terrain_depth.hpp), exactly:
+// four base-256 digits stored as k / 255. The sky's white clear colour reads past kSkyDistance.
+constant float kSkyDistance = 16776960.0;
 inline float unpack_distance(float4 rgba_depth) {
-    const float4 bit_shift = float4(1.0 / (256.0 * 256.0 * 256.0), 1.0 / (256.0 * 256.0), 1.0 / 256.0, 1.0);
-    return dot(rgba_depth, bit_shift) * 16777216.0;
+    const float4 digits = round(rgba_depth * 255.0);
+    return dot(digits, float4(65536.0, 256.0, 1.0, 1.0 / 256.0));
 }
 
 // Opacity of a clip-space position behind the terrain, in [0, 1]: 1 fully visible, 0
@@ -198,7 +200,7 @@ inline float depth_opacity(float4 pos,
                            float sky) {
     const float2 uv = pos.xy / pos.w * 0.5 + 0.5;
     const float terrain = unpack_distance(depth_texture.sample(depth_sampler, float2(uv.x, 1.0 - uv.y)));
-    if (terrain >= 16777216.0) {
+    if (terrain > kSkyDistance) {
         return sky;
     }
     const float behind = pos.w / terrain - 1.0;
@@ -223,7 +225,8 @@ inline float anchor_depth(float distance, float depth_a, float depth_b, float pu
 inline float calculate_visibility(float4 pos,
                                   texture2d<float, access::sample> depth_texture,
                                   sampler depth_sampler,
-                                  float depth_enabled) {
+                                  float depth_enabled,
+                                  float units_to_pixels_y) {
     if (depth_enabled == 0.0) {
         return 1.0;
     }
@@ -430,6 +433,5 @@ enum {
 };
 
 )";
-
 }
 } // namespace mln

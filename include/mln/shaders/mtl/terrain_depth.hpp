@@ -77,14 +77,17 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     if (in.skirt > 0.5 && in.ground < 0.999) {
         discard_fragment();
     }
-    // Pack the camera distance / 2^24 into RGBA8, unpacked by unpack_distance(); the
-    // white clear colour unpacks as farther than any terrain
-    const float depth = in.distance / 16777216.0;
-    const float4 bit_shift = float4(256.0 * 256.0 * 256.0, 256.0 * 256.0, 256.0, 1.0);
-    const float4 bit_mask = float4(0.0, 1.0 / 256.0, 1.0 / 256.0, 1.0 / 256.0);
-    float4 res = fract(depth * bit_shift);
-    res -= res.xxyz * bit_mask;
-    return half4(res);
+    // The camera distance / 2^24 as four base-256 digits, each k / 255 so the unorm8 target
+    // keeps it exactly; unpack_distance() reads it back. The white clear colour is the sky.
+    float r = min(in.distance / 16777216.0, 1.0 - 1.0 / 65536.0) * 256.0;
+    const float d0 = floor(r);
+    r = (r - d0) * 256.0;
+    const float d1 = floor(r);
+    r = (r - d1) * 256.0;
+    const float d2 = floor(r);
+    r = (r - d2) * 256.0;
+    const float d3 = floor(r);
+    return half4(float4(d0, d1, d2, d3) / 255.0);
 }
 )";
 };

@@ -253,7 +253,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
                                             : anchor_depth(projectedPoint.w, drawable.depth_a, drawable.depth_b, pull);
     const float4 position = drawable.coord_matrix * float4(pos0 + offset, z, 1.0);
     // Fade out symbols hidden behind the terrain (see calculate_visibility)
-    const half vis = half(calculate_visibility(projectedPoint, depthTexture, depthSampler, drawable.depth_enabled));
+    const half vis = half(calculate_visibility(projectedPoint, depthTexture, depthSampler, drawable.depth_enabled, paintParams.units_to_pixels.y));
 
     return {
         .position     = position,
@@ -479,7 +479,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     const float2 pos0 = projected_pos.xy / projected_pos.w + offset;
     const float4 position = drawable.coord_matrix * float4(pos0, z, 1.0);
     // Fade out symbols hidden behind the terrain (see calculate_visibility)
-    const half vis = half(calculate_visibility(projectedPoint, depthTexture, depthSampler, drawable.depth_enabled));
+    const half vis = half(calculate_visibility(projectedPoint, depthTexture, depthSampler, drawable.depth_enabled, paintParams.units_to_pixels.y));
 
     return {
         .position     = position,
@@ -766,7 +766,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     const float gamma_scale = position.w;
     const bool is_icon = (is_sdf == ICON);
     // Fade out symbols hidden behind the terrain (see calculate_visibility)
-    const half vis = half(calculate_visibility(projectedPoint, depthTexture, depthSampler, drawable.depth_enabled));
+    const half vis = half(calculate_visibility(projectedPoint, depthTexture, depthSampler, drawable.depth_enabled, paintParams.units_to_pixels.y));
 
     return {
         .position     = position,

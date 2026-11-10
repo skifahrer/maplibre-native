@@ -66,6 +66,7 @@ public:
     void onWillStartRenderingMap() final;
     void onDidFinishRenderingMap() final;
     void onTerrainCenterElevationChanged(double elevationMeters) final;
+    void onTerrainElevationIndexChanged(std::shared_ptr<const TerrainElevationIndex>) final;
     void onTerrainEyeElevationChanged(double elevationMeters) final;
     void onTerrainTransitionTargetElevationChanged(double elevationMeters) final;
     void onTerrainSightGroundChanged(double latitude, double longitude, double elevationMeters) final;
@@ -213,6 +214,9 @@ public:
     /// Moves the centre altitude to `elevationMeters` keeping lng/lat; false when the change
     /// is under the sub-metre threshold.
     bool clampCenterToTerrain(double elevationMeters);
+    /// The renderer's terrain heights, copied for this side (onTerrainElevationIndexChanged); null
+    /// without terrain. Map's terrain projection reads it so it never waits on the renderer.
+    std::shared_ptr<const TerrainElevationIndex> terrainElevationIndex;
     bool debugAboveGroundLog = false;
 };
 
