@@ -1,4 +1,5 @@
 #include <mln/renderer/render_orchestrator.hpp>
+#include <mln/renderer/placement_pace.hpp>
 
 #include <mln/annotation/annotation_manager.hpp>
 #include <mln/layermanager/layer_manager.hpp>
@@ -450,7 +451,6 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         renderSources.emplace(entry.first, std::move(renderSource));
     }
     transformState = updateParameters->transformState;
-    const bool tiltedView = transformState.getPitch() != 0.0f;
 
     // Create parameters for the render tree.
     auto renderTreeParameters = std::make_unique<RenderTreeParameters>(updateParameters->transformState,
@@ -633,7 +633,7 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         MLN_TRACE_ZONE(placement);
 
         std::optional<Duration> placementUpdatePeriodOverride;
-        if (symbolBucketsAdded && !tiltedView) {
+        if (placesNewSymbolsSoon(symbolBucketsAdded, transformState)) {
             // If the view is not tilted, we want *the new* symbols to show up
             // faster, however simple setting `placementChanged` to `true` would
             // initiate placement too often as new buckets usually come from
