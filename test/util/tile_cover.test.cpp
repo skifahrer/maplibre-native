@@ -970,7 +970,7 @@ TEST(TileCover, CacheSharesOnlyTheSameCover) {
     EXPECT_EQ(util::tileCover(params, 12, zoomRange), cache.cover(params, 12, zoomRange));
 }
 
-// Riki Maps AHkQ: at z12 tipped 79 degrees the camera stands kilometres back, so the slope
+// 124 At z12 tipped 79 degrees the camera stands kilometres back, so the slope
 // in front lay past the near radius and was drawn no finer than the centre.
 TEST(TileCover, GroundNearerThanTheCentreDrawsFiner) {
     Transform transform;
