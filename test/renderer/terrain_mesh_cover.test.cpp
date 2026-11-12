@@ -537,3 +537,127 @@ TEST(TerrainMeshCover, DilatingAWideCoverIsFast) {
     EXPECT_GT(dilated.size(), cover.size());
     EXPECT_LT(elapsed, std::chrono::seconds(2)) << "dilating the cover took too long";
 }
+
+TEST(TerrainMeshCover, AStillViewOverSettledDEMKeepsItsCover) {
+    // 116: Riki Maps build 1122 hung 7 s on the main thread working the same cover out each frame.
+    Transform transform;
+    transform.resize({402, 874});
+    transform.setMaxPitch(85.0);
+    transform.jumpTo(CameraOptions().withCenter(LatLng{46.5, 7.9}).withZoom(14.0).withPitch(75.0));
+    const auto keyOf = [&](uint64_t generation) {
+        const util::TileCoverParameters view{.transformState = transform.getState()};
+        return RenderTerrain::MeshCoverKey::of(view, 0.0, nullptr, generation, 1.5, std::nullopt, 512, {0, 15});
+    };
+    const auto still = keyOf(7);
+    EXPECT_EQ(still, keyOf(7));
+    EXPECT_NE(still, keyOf(8)) << "DEM that arrives changes the cover";
+    transform.jumpTo(CameraOptions().withBearing(10.0));
+    EXPECT_NE(still, keyOf(7)) << "a turned camera sees other ground";
+    transform.jumpTo(CameraOptions().withBearing(0.0).withZoom(14.5));
+    EXPECT_NE(still, keyOf(7));
+}
+
+namespace {
+// 116: every tile as tall as the mountains around it, as the DEM's fallback range reports it.
+struct Mountains final : util::TileElevationProvider {
+    std::optional<Range<double>> getTileElevationRange(const CanonicalTileID&) const override {
+        return Range<double>{600.0, 4000.0};
+    }
+};
+
+std::vector<OverscaledTileID> tippedCover(double pitch, double zoom, size_t limit) {
+    Transform transform;
+    transform.resize({402, 874});
+    transform.setMaxPitch(85.0);
+    transform.jumpTo(
+        CameraOptions().withCenter(LatLng{46.5, 7.9}).withZoom(zoom).withPitch(pitch).withCenterAltitude(3500.0));
+    static const Mountains mountains;
+    util::TileCoverParameters view{.transformState = transform.getState(), .elevationProvider = &mountains};
+    view.tileLodMode = TileLodMode::Adaptive;
+    view.tileLodOrigin = RenderTerrain::meshTileCapOrigin(transform.getState());
+    view.tileLimit = limit;
+    view.tileLimitOrigin = *view.tileLodOrigin;
+    view.coarserPastTheLimit = true;
+    const auto z = static_cast<uint8_t>(util::coveringZoomLevel(zoom, style::SourceType::RasterDEM, 512));
+    return util::tileCover(view, z, Range<uint8_t>{0, 22}, z);
+}
+
+bool within(const OverscaledTileID& tile, const OverscaledTileID& outer) {
+    return tile.wrap == outer.wrap && tile.canonical.z >= outer.canonical.z &&
+           tile.canonical.scaledTo(outer.canonical.z) == outer.canonical;
+}
+} // namespace
+
+TEST(TerrainMeshCover, ATippedViewOverMountainsWalksNoFurtherThanItsLimit) {
+    // 116: Riki Maps build 1122 hung 7 s on the main thread walking tens of thousands of tiles to
+    // the horizon that the mesh-tile cap then merged back into a few dozen.
+    const auto whole = tippedCover(85.0, 17.0, 0);
+    ASSERT_GT(whole.size(), 10000u);
+    const auto start = std::chrono::steady_clock::now();
+    const auto limited = tippedCover(85.0, 17.0, 1024);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    EXPECT_LT(limited.size(), 2048u);
+    EXPECT_LT(elapsed, std::chrono::milliseconds(50));
+    for (const auto& a : limited) {
+        for (const auto& b : limited) {
+            ASSERT_FALSE(a != b && within(a, b)) << "the coarser ground overlaps a tile already taken";
+        }
+    }
+    for (const auto& tile : whole) {
+        ASSERT_TRUE(std::any_of(limited.begin(), limited.end(), [&](const auto& outer) { return within(tile, outer); }))
+            << "the limit left out ground the whole cover has";
+    }
+}
+
+TEST(TerrainMeshCover, AViewWithinTheWalksLimitKeepsItsWholeCover) {
+    // 116: a cover under the limit is the cover it always was.
+    auto whole = tippedCover(60.0, 15.0, 0);
+    auto limited = tippedCover(60.0, 15.0, 1024);
+    std::sort(whole.begin(), whole.end());
+    std::sort(limited.begin(), limited.end());
+    EXPECT_EQ(whole, limited);
+}
+
+namespace {
+// Look Around's view: the eye 1.7 m over the ground, the centre it turns round 200 m ahead.
+util::TileCoverParameters lookingAround(Transform& transform, size_t limit) {
+    transform.resize({402, 874});
+    transform.setMaxPitch(135.0);
+    const double pitch = 85.0;
+    transform.jumpTo(CameraOptions()
+                         .withCenter(LatLng{46.5, 7.9})
+                         .withZoom(19.6)
+                         .withPitch(pitch)
+                         .withCenterAltitude(1500.0 + 1.7 - 200.0 * std::cos(util::deg2rad(pitch))));
+    static const Mountains mountains;
+    util::TileCoverParameters view{.transformState = transform.getState(), .elevationProvider = &mountains};
+    view.tileLodMode = TileLodMode::Adaptive;
+    view.tileLodOrigin = RenderTerrain::meshTileCapOrigin(transform.getState());
+    view.tileLimit = limit;
+    view.tileLimitOrigin = *view.tileLodOrigin;
+    view.coarserPastTheLimit = true;
+    return view;
+}
+} // namespace
+
+TEST(TerrainMeshCover, LookingAroundWalksNoFurtherThanItsLimit) {
+    // 116: Look Around in build 1123 hung on every frame; its mesh cover walked 900 000 tiles.
+    Transform transform;
+    const auto view = lookingAround(transform, 1024);
+    const auto start = std::chrono::steady_clock::now();
+    const auto cover = util::tileCover(view, 20, Range<uint8_t>{0, 22}, uint8_t(20));
+    EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::milliseconds(50));
+    EXPECT_GT(cover.size(), 1024u);
+    EXPECT_LT(cover.size(), 2048u);
+}
+
+TEST(TerrainMeshCover, ASourcePastItsLimitGetsNothingShallowerThanItsMinzoom) {
+    // 116: a source walks to its limit too, and cannot load a tile above its minzoom.
+    Transform transform;
+    auto view = lookingAround(transform, 4096);
+    view.nearDetail = util::nearDetailLevels();
+    const auto cover = util::tileCover(view, 14, Range<uint8_t>{13, 14}, uint8_t(19));
+    EXPECT_GT(cover.size(), 4096u);
+    EXPECT_LT(cover.size(), 8192u);
+    for (const auto& id : cover) ASSERT_GE(id.canonical.z, 13);
+}

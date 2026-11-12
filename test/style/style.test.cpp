@@ -627,3 +627,47 @@ TEST(StyleParsedLayers, StayEditableAfterTheParse) {
     EXPECT_EQ(layerImplIDs(style), (std::vector<std::string>{"d", "b", "c"}));
     EXPECT_THROW(style.addLayer(std::make_unique<BackgroundLayer>("c")), std::runtime_error);
 }
+
+// 115: a layer is found by id after every way the collection changes.
+TEST(StyleLayerLookup, FollowsAddsRemovesAndReloads) {
+    util::RunLoop loop;
+    auto fileSource = std::make_shared<StubFileSource>();
+    Style::Impl style{fileSource, 1.0, {Scheduler::GetBackground(), {}}};
+    style.loadJSON(R"STYLE({"version": 8, "sources": {}, "layers": [
+        {"id": "a", "type": "background"},
+        {"id": "b", "type": "background"}
+    ]})STYLE");
+
+    style.addLayer(std::make_unique<BackgroundLayer>("c"), std::string{"a"});
+    EXPECT_EQ(layerIDs(style), (std::vector<std::string>{"c", "a", "b"}));
+    EXPECT_EQ(style.getLayer("c")->getID(), "c");
+    EXPECT_EQ(style.removeLayer("a")->getID(), "a");
+    EXPECT_EQ(style.getLayer("a"), nullptr);
+    EXPECT_EQ(style.removeLayer("a"), nullptr);
+    style.addLayer(std::make_unique<BackgroundLayer>("a"), std::string{"b"});
+    EXPECT_EQ(layerIDs(style), (std::vector<std::string>{"c", "a", "b"}));
+    EXPECT_EQ(layerImplIDs(style), (std::vector<std::string>{"c", "a", "b"}));
+
+    style.loadJSON(R"STYLE({"version": 8, "sources": {}, "layers": [{"id": "d", "type": "background"}]})STYLE");
+    EXPECT_EQ(style.getLayer("c"), nullptr);
+    EXPECT_EQ(style.getLayer("d")->getID(), "d");
+}
+
+// 115: Riki Maps build 1122 hung on taps that looked many layers up in a style of many layers.
+TEST(StyleLayerLookup, ManyLookupsInAWideStyleAreFast) {
+    util::RunLoop loop;
+    auto fileSource = std::make_shared<StubFileSource>();
+    Style::Impl style{fileSource, 1.0, {Scheduler::GetBackground(), {}}};
+    const auto idOf = [](int i) { return "region-with-a-long-name__layer-" + std::to_string(i); };
+    constexpr int count = 20000;
+    std::string json = R"({"version": 8, "sources": {}, "layers": [)";
+    for (int i = 0; i < count; ++i) {
+        json += (i ? "," : "") + std::string(R"({"type": "background", "id": ")") + idOf(i) + "\"}";
+    }
+    style.loadJSON(json + "]}");
+    ASSERT_EQ(style.getLayers().size(), std::size_t(count));
+
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < count; ++i) ASSERT_NE(style.getLayer(idOf(count - 1 - i)), nullptr);
+    EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::milliseconds(500));
+}

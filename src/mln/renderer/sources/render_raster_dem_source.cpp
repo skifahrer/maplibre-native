@@ -63,6 +63,7 @@ void RenderRasterDEMSource::updateInternal(const Tileset& tileset,
 
 void RenderRasterDEMSource::onTilesetChanged() {
     // The tiles the ranges were decoded from are gone, so the ranges go too.
+    ++elevationGeneration;
     elevationRanges.clear();
     descendantElevationRanges.clear();
 }
@@ -107,6 +108,7 @@ std::optional<Range<int32_t>> RenderRasterDEMSource::getNearbyElevationRange(con
 }
 
 void RenderRasterDEMSource::addElevationRange(const CanonicalTileID& id, const Range<int32_t> range) {
+    ++elevationGeneration;
     elevationRanges.insert_or_assign(id, range);
 
     // Widen the descendant range of each ancestor, from the parent up: O(z) per arrival. Every
@@ -126,6 +128,7 @@ void RenderRasterDEMSource::addElevationRange(const CanonicalTileID& id, const R
 }
 
 void RenderRasterDEMSource::keepElevationRangesOfHeldTiles() {
+    ++elevationGeneration;
     elevationRanges.clear();
     descendantElevationRanges.clear();
     const auto addHeld = [&](const std::map<OverscaledTileID, std::unique_ptr<Tile>>& tiles) {

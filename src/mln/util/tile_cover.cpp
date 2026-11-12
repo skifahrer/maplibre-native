@@ -419,6 +419,25 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
         }
     };
 
+    bool tookTheRestWhole = false;
+    const auto takeTheRestWhole = [&] {
+        tookTheRestWhole = true;
+        for (auto& item : queue) {
+            // A source cannot load a tile shallower than its own minzoom.
+            if (item.node.zoom < minZoom) continue;
+            if (!item.tile && !item.node.fullyVisible) {
+                const AABB box = elevatedAABB(item.node);
+                const bool elevated = box.min[2] != 0.0 || box.max[2] != 0.0;
+                if ((elevated ? frustum.intersectsElevated(box) : frustum.intersects(box)) ==
+                    IntersectionResult::Separate) {
+                    continue;
+                }
+            }
+            result.push_back({.id = tileIdOf(item.node), .sqrDist = tileKey(item.node)});
+        }
+        queue.clear();
+    };
+
     // World copies shall be rendered three times on both sides from closest to farthest
     for (int i = 1; i <= 3; i++) {
         pushNode(newRootTile(-i));
@@ -435,7 +454,10 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
             queue.pop_back();
             if (item.tile) {
                 result.push_back({.id = tileIdOf(item.node), .sqrDist = item.key});
-                if (result.size() >= state.tileLimit) break;
+                if (result.size() >= state.tileLimit) {
+                    if (state.coarserPastTheLimit) takeTheRestWhole();
+                    break;
+                }
                 continue;
             }
             node = std::move(item.node);
@@ -579,7 +601,7 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     }
 
     // Sort results by distance (a limited walk already found them in order)
-    if (!limited || centreAdded) {
+    if (!limited || centreAdded || tookTheRestWhole) {
         std::sort(result.begin(), result.end(), [](const ResultTile& a, const ResultTile& b) {
             return a.sqrDist < b.sqrDist;
         });
@@ -650,6 +672,7 @@ std::vector<OverscaledTileID> TileCoverCache::cover(const TileCoverParameters& s
                   state.nearDetail,
                   state.tileLimit,
                   state.tileLimitOrigin,
+                  state.coarserPastTheLimit,
                   state.elevationProvider,
                   state.tileLodOrigin};
     auto found = covers.find(key);
