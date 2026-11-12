@@ -1,5 +1,6 @@
 #include <unistd.h>
 
+#include <cstdio>
 #include <ios_test_runner.hpp>
 #include <mln/test.hpp>
 #include <mln/util/logging.hpp>
@@ -22,6 +23,8 @@ bool TestRunner::startTest(const std::string& basePath) {
     }
 
     mln::Log::Info(mln::Event::General, "Start TestRunner");
+    // A crash loses a full buffer, and the test it died in with it
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
     int status = mln::runTests(static_cast<uint32_t>(argv.size()), argv.data());
     mln::Log::Info(mln::Event::General, "TestRunner finished with status: '" + std::to_string(status) + "'");
 
