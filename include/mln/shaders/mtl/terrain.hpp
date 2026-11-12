@@ -109,10 +109,11 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     // NEAREST and interpolated after decoding, matching maplibre-gl-js and the
     // elevated layers). Map into the bound DEM tile; an ancestor tile is bound as
     // a fallback while this tile's own DEM loads. dem_coords.w = DEM dimension.
+    const float dem_size = floor(drawable.dem_coords.w);
     float ground = 1.0;
     float elevation = get_ground_elevation(pos, demTexture, drawable.dem_coords, props.unpack,
-                                           drawable.dem_coords.w, props.exaggeration, props.no_ground, ground);
-    if (vertx.pos.z == 1 && !ground_throughout(demTexture, drawable.dem_coords, drawable.dem_coords.w,
+                                           dem_size, props.exaggeration, props.no_ground, ground);
+    if (vertx.pos.z == 1 && !ground_throughout(demTexture, drawable.dem_coords, dem_size,
                                                 props.unpack, props.no_ground)) {
         ground = 0.0;
     }
@@ -120,7 +121,9 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     // Skirt vertices hang below the surface by elevation_offset, forming a curtain
     // that hides the cracks between neighbouring tiles at different zoom levels
     // (maplibre-gl-js u_ele_delta). pos.z carries the skirt flag.
-    const float ele_delta = (float(vertx.pos.z) == 1.0) ? props.elevation_offset : 0.0;
+    const float ele_delta = (float(vertx.pos.z) == 1.0 && curtain_hangs(pos, drawable.dem_coords.w))
+                                ? props.elevation_offset
+                                : 0.0;
     float4 position = drawable.matrix * float4(pos.x, pos.y, elevation - ele_delta, 1.0);
 
     return {
