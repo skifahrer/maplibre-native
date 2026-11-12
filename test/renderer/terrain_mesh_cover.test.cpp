@@ -617,3 +617,47 @@ TEST(TerrainMeshCover, AViewWithinTheWalksLimitKeepsItsWholeCover) {
     std::sort(limited.begin(), limited.end());
     EXPECT_EQ(whole, limited);
 }
+
+namespace {
+// Look Around's view: the eye 1.7 m over the ground, the centre it turns round 200 m ahead.
+util::TileCoverParameters lookingAround(Transform& transform, size_t limit) {
+    transform.resize({402, 874});
+    transform.setMaxPitch(135.0);
+    const double pitch = 85.0;
+    transform.jumpTo(CameraOptions()
+                         .withCenter(LatLng{46.5, 7.9})
+                         .withZoom(19.6)
+                         .withPitch(pitch)
+                         .withCenterAltitude(1500.0 + 1.7 - 200.0 * std::cos(util::deg2rad(pitch))));
+    static const Mountains mountains;
+    util::TileCoverParameters view{.transformState = transform.getState(), .elevationProvider = &mountains};
+    view.tileLodMode = TileLodMode::Adaptive;
+    view.tileLodOrigin = RenderTerrain::meshTileCapOrigin(transform.getState());
+    view.tileLimit = limit;
+    view.tileLimitOrigin = *view.tileLodOrigin;
+    view.coarserPastTheLimit = true;
+    return view;
+}
+} // namespace
+
+TEST(TerrainMeshCover, LookingAroundWalksNoFurtherThanItsLimit) {
+    // 116: Look Around in build 1123 hung on every frame; its mesh cover walked 900 000 tiles.
+    Transform transform;
+    const auto view = lookingAround(transform, 1024);
+    const auto start = std::chrono::steady_clock::now();
+    const auto cover = util::tileCover(view, 20, Range<uint8_t>{0, 22}, uint8_t(20));
+    EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::milliseconds(50));
+    EXPECT_GT(cover.size(), 1024u);
+    EXPECT_LT(cover.size(), 2048u);
+}
+
+TEST(TerrainMeshCover, ASourcePastItsLimitGetsNothingShallowerThanItsMinzoom) {
+    // 116: a source walks to its limit too, and cannot load a tile above its minzoom.
+    Transform transform;
+    auto view = lookingAround(transform, 4096);
+    view.nearDetail = util::nearDetailLevels();
+    const auto cover = util::tileCover(view, 14, Range<uint8_t>{13, 14}, uint8_t(19));
+    EXPECT_GT(cover.size(), 4096u);
+    EXPECT_LT(cover.size(), 8192u);
+    for (const auto& id : cover) ASSERT_GE(id.canonical.z, 13);
+}
