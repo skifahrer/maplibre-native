@@ -2,6 +2,7 @@
 
 #include <mln/gfx/color_mode.hpp>
 #include <mln/gfx/depth_mode.hpp>
+#include <mln/gfx/vertex_layout.hpp>
 #include <mln/mtl/command_encoder.hpp>
 #include <mln/mtl/context.hpp>
 #include <mln/mtl/drawable_impl.hpp>
@@ -260,10 +261,10 @@ void Drawable::draw(PaintParameters& parameters) const {
                 impl->depthStencilState.reset();
             }
         }
-        const auto depthMode = !getEnableDepth()   ? gfx::DepthMode::disabled()
-                               : getDepthAbove3D() ? parameters.depthModeAbove3D(getDepthType())
-                                                   : parameters.depthModeForSublayer(getSubLayerIndex(),
-                                                                                     getDepthType());
+        const auto depthMode = !getEnableDepth() ? gfx::DepthMode::disabled()
+                               : getDepthAbove3D()
+                                   ? parameters.depthModeAbove3D(getDepthType())
+                                   : parameters.depthModeForSublayer(getSubLayerIndex(), getDepthType());
         if (!impl->depthStencilState) {
             if (enableStencil && !newStencilMode) {
                 newStencilMode = parameters.stencilModeForClipping(tileID->toUnwrapped());
@@ -631,10 +632,11 @@ void Drawable::upload(gfx::UploadPass& uploadPass_) {
         }
     }
 
-    if (buildVertexAttribs || buildInstanceAttribs) {
-        // hash
-        std::size_t hash{0};
-
+    // New vertex data in the same layout keeps the descriptor and the pipeline built for it
+    const auto layoutHash = buildVertexAttribs || buildInstanceAttribs
+                                ? gfx::vertexLayoutHash(impl->attributeBindings, impl->instanceBindings)
+                                : impl->vertexDescHash;
+    if (!impl->vertexDesc || layoutHash != impl->vertexDescHash) {
         // Create a layout descriptor for each attribute
         auto vertDesc = NS::RetainPtr(MTL::VertexDescriptor::vertexDescriptor());
 
@@ -671,13 +673,6 @@ void Drawable::upload(gfx::UploadPass& uploadPass_) {
                     assert(layoutDesc->stepRate() == (binding->vertexBufferResource ? 1 : 0));
                 }
 
-                mln::util::hash_combine(hash,
-                                        mln::util::hash(index,
-                                                        binding->attribute.offset,
-                                                        binding->attribute.dataType,
-                                                        binding->vertexStride,
-                                                        static_cast<bool>(binding->vertexBufferResource)));
-
                 index += 1;
             }
         };
@@ -686,7 +681,7 @@ void Drawable::upload(gfx::UploadPass& uploadPass_) {
         applyBindings(impl->instanceBindings, MTL::VertexStepFunctionPerInstance);
 
         impl->vertexDesc = std::move(vertDesc);
-        impl->vertexDescHash = hash;
+        impl->vertexDescHash = layoutHash;
         impl->pipelineState.reset();
     }
 

@@ -537,6 +537,7 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/gfx/shader_registry.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/gfx/uniform.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/gfx/upload_pass.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/gfx/vertex_layout.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/gfx/vertex_vector.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/layermanager/background_layer_factory.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/layermanager/circle_layer_factory.cpp
