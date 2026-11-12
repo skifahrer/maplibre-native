@@ -537,3 +537,22 @@ TEST(TerrainMeshCover, DilatingAWideCoverIsFast) {
     EXPECT_GT(dilated.size(), cover.size());
     EXPECT_LT(elapsed, std::chrono::seconds(2)) << "dilating the cover took too long";
 }
+
+TEST(TerrainMeshCover, AStillViewOverSettledDEMKeepsItsCover) {
+    // 116: Riki Maps build 1122 hung 7 s on the main thread working the same cover out each frame.
+    Transform transform;
+    transform.resize({402, 874});
+    transform.setMaxPitch(85.0);
+    transform.jumpTo(CameraOptions().withCenter(LatLng{46.5, 7.9}).withZoom(14.0).withPitch(75.0));
+    const auto keyOf = [&](uint64_t generation) {
+        const util::TileCoverParameters view{.transformState = transform.getState()};
+        return RenderTerrain::MeshCoverKey::of(view, 0.0, nullptr, generation, 1.5, std::nullopt, 512, {0, 15});
+    };
+    const auto still = keyOf(7);
+    EXPECT_EQ(still, keyOf(7));
+    EXPECT_NE(still, keyOf(8)) << "DEM that arrives changes the cover";
+    transform.jumpTo(CameraOptions().withBearing(10.0));
+    EXPECT_NE(still, keyOf(7)) << "a turned camera sees other ground";
+    transform.jumpTo(CameraOptions().withBearing(0.0).withZoom(14.5));
+    EXPECT_NE(still, keyOf(7));
+}

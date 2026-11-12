@@ -12,6 +12,7 @@
 #include <mln/renderer/texture_pool.hpp>
 #include <mln/renderer/terrain_elevation_index.hpp>
 #include <mln/util/mat4.hpp>
+#include <mln/util/tile_cover.hpp>
 #include <mln/util/geo.hpp>
 #include <mln/util/geometry.hpp>
 
@@ -122,6 +123,34 @@ public:
     /// the first tile the cap dropped begins, eased over frames; infinity when it dropped none.
     /// The fog is full by then.
     double getCoverReachMetres() const { return coverReach.value(); }
+
+    /// Every input of the view's cover before its trims: a still camera over DEM that has
+    /// stopped arriving gets the same cover, so it is not worked out again on each frame.
+    struct MeshCoverKey {
+        const RenderSource* source = nullptr;
+        uint64_t elevationGeneration = 0;
+        double exaggeration = 0;
+        std::optional<float> plane;
+        uint16_t tileSize = 0;
+        uint8_t minZoom = 0;
+        uint8_t maxZoom = 0;
+        mat4 projection{};
+        std::array<double, 7> camera{};
+        std::array<double, 2> size{};
+        int viewportMode = 0;
+        std::array<double, 4> lod{};
+        int lodMode = 0;
+        bool operator==(const MeshCoverKey&) const = default;
+
+        static MeshCoverKey of(const util::TileCoverParameters& view,
+                               double zoomShift,
+                               const RenderSource* source,
+                               uint64_t elevationGeneration,
+                               double exaggeration,
+                               std::optional<float> plane,
+                               uint16_t tileSize,
+                               Range<uint8_t> zoomRange);
+    };
 
     /// The tile's longest edge on screen, in points, at the height of the ground at its middle:
     /// how many texels its drape can show. Corners behind the camera count as at the near plane.
@@ -436,6 +465,8 @@ private:
 
     /// computeMeshCover's last answer for getCoverReachMetres.
     mutable CoverReach coverReach;
+
+    mutable std::optional<std::pair<MeshCoverKey, std::set<UnwrappedTileID>>> meshCoverMemo;
     /// sightBlocked's last answer, which it holds until the ground is kCutReleaseM below the line.
     mutable bool cutting = false;
     static constexpr double kCutReleaseM = 30.0;

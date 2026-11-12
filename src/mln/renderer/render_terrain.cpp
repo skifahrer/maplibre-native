@@ -13,6 +13,7 @@
 #include <mln/renderer/render_orchestrator.hpp>
 #include <mln/renderer/render_target.hpp>
 #include <mln/renderer/dem_elevation_provider.hpp>
+#include <mln/renderer/sources/render_raster_dem_source.hpp>
 #include <mln/renderer/paint_parameters.hpp>
 #include <mln/renderer/change_request.hpp>
 #include <mln/renderer/layer_group.hpp>
@@ -240,10 +241,9 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
             demBounds = tileset->bounds;
         }
     }
-    const auto coverAt = [&](uint8_t coarsening) {
+    const auto viewCover = [&]() {
         std::set<UnwrappedTileID> cover;
-        const double zoom = util::clamp<double>(
-            state.getZoom() + zoomShift - coarsening, state.getMinZoom(), state.getMaxZoom());
+        const double zoom = util::clamp<double>(state.getZoom() + zoomShift, state.getMinZoom(), state.getMaxZoom());
         const int32_t overscaledZoom = util::coveringZoomLevel(zoom, style::SourceType::RasterDEM, terrainCoverTileSize);
         if (overscaledZoom < static_cast<int32_t>(zoomRange.min)) {
             return cover;
@@ -253,17 +253,29 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
                  coverParams, static_cast<uint8_t>(idealZoom), zoomRange, static_cast<uint8_t>(overscaledZoom))) {
             cover.insert(id.toUnwrapped());
         }
-        cover = dilatedCover(coverParams, std::move(cover));
-        // The map ends where the height model does: past its bounds, or where a tile came back
-        // empty, there is no DEM to stand on, and sea level under it stood as a cliff.
-        std::erase_if(cover, [&](const UnwrappedTileID& id) {
-            return (demBounds && !demBounds->intersects(LatLngBounds(id.canonical))) ||
-                   (demTiles && demTiles->tileHasNoData(id));
-        });
-        return cover;
+        return dilatedCover(coverParams, std::move(cover));
     };
-
-    out = coverAt(0);
+    const auto* demWithRanges = demSource->baseImpl->type == style::SourceType::RasterDEM
+                                    ? static_cast<const RenderRasterDEMSource*>(demSource)
+                                    : nullptr;
+    const auto key = MeshCoverKey::of(coverParams,
+                                      zoomShift,
+                                      demSource,
+                                      demWithRanges ? demWithRanges->getElevationGeneration() : 0,
+                                      getExaggeration(),
+                                      getPlane(),
+                                      terrainCoverTileSize,
+                                      zoomRange);
+    if (!meshCoverMemo || meshCoverMemo->first != key) {
+        meshCoverMemo.emplace(key, viewCover());
+    }
+    out = meshCoverMemo->second;
+    // The map ends where the height model does: past its bounds, or where a tile came back
+    // empty, there is no DEM to stand on, and sea level under it stood as a cliff.
+    std::erase_if(out, [&](const UnwrappedTileID& id) {
+        return (demBounds && !demBounds->intersects(LatLngBounds(id.canonical))) ||
+               (demTiles && demTiles->tileHasNoData(id));
+    });
     // Over the budget, the farthest tiles merge into their parents until it fits: the ground
     // reaches the horizon, coarser the farther it is, and the near ground keeps its detail. The
     // whole mesh one level coarser blurred the ground in front of the camera, and dropping the
@@ -313,6 +325,37 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
         out = std::move(kept);
     }
     return out;
+}
+
+RenderTerrain::MeshCoverKey RenderTerrain::MeshCoverKey::of(const util::TileCoverParameters& view,
+                                                            double zoomShift,
+                                                            const RenderSource* source,
+                                                            uint64_t elevationGeneration,
+                                                            double exaggeration,
+                                                            std::optional<float> plane,
+                                                            uint16_t tileSize,
+                                                            Range<uint8_t> zoomRange) {
+    const auto& state = view.transformState;
+    const LatLng centre = state.getLatLng();
+    return {.source = source,
+            .elevationGeneration = elevationGeneration,
+            .exaggeration = exaggeration,
+            .plane = plane,
+            .tileSize = tileSize,
+            .minZoom = zoomRange.min,
+            .maxZoom = zoomRange.max,
+            .projection = state.getProjectionMatrix(),
+            .camera = {{state.getZoom(),
+                        centre.latitude(),
+                        centre.longitude(),
+                        state.getCenterAltitude(),
+                        state.getPitch(),
+                        state.getMinZoom(),
+                        state.getMaxZoom()}},
+            .size = {{static_cast<double>(state.getSize().width), static_cast<double>(state.getSize().height)}},
+            .viewportMode = static_cast<int>(state.getViewportMode()),
+            .lod = {{view.tileLodMinRadius, view.tileLodScale, view.tileLodPitchThreshold, zoomShift}},
+            .lodMode = static_cast<int>(view.tileLodMode)};
 }
 
 std::array<float, 3> RenderTerrain::demTileMapping(const CanonicalTileID& tile, const CanonicalTileID& demTile) {
