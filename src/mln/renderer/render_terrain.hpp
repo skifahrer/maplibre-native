@@ -182,7 +182,7 @@ public:
     /// Tiles the mesh cover's walk splits at most, before the cap merges them down: past it the
     /// rest of the ground comes back coarser (TileCoverParameters::coarserPastTheLimit).
     static constexpr size_t meshCoverWalkLimit(TerrainLoadMode mode) {
-        return terrainLoadBudget(mode).maxMeshTiles * 16;
+        return terrainLoadBudget(mode).maxMeshTiles * util::coverWalkPerKeptTile;
     }
 
     /// Tiles a source may cover per tile of the mesh-tile cap (TileParameters::coverTileLimit).

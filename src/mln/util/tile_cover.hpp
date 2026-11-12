@@ -73,7 +73,7 @@ struct TileCoverParameters {
     /// Where `tileLimit` measures from (normalized web-mercator).
     std::array<double, 2> tileLimitOrigin{{0.0, 0.0}};
     /// With `tileLimit`, the ground past it still comes back, as the coarser tiles the walk had
-    /// not split yet: a cover as far as the unlimited one, of a few more tiles than the limit.
+    /// not split yet, none shallower than the cover's minimum zoom.
     bool coarserPastTheLimit = false;
     /// Adaptive only: levels finer than the view's zoom the ground near the camera may go
     /// (nearDetailLevels()). The DEM source and the terrain mesh keep 0: the mesh near the camera
@@ -88,6 +88,9 @@ struct TileCoverParameters {
     /// the map centre. Only read once the pitch passes `tileLodPitchThreshold`.
     std::optional<std::array<double, 2>> tileLodOrigin = std::nullopt;
 };
+
+/// Tiles a capped cover walks per tile it keeps, before merging the far ones down to the cap.
+constexpr size_t coverWalkPerKeptTile = 16;
 
 int32_t coveringZoomLevel(double z, style::SourceType type, uint16_t tileSize) noexcept;
 

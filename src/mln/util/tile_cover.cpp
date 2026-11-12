@@ -423,6 +423,8 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     const auto takeTheRestWhole = [&] {
         tookTheRestWhole = true;
         for (auto& item : queue) {
+            // A source cannot load a tile shallower than its own minzoom.
+            if (item.node.zoom < minZoom) continue;
             if (!item.tile && !item.node.fullyVisible) {
                 const AABB box = elevatedAABB(item.node);
                 const bool elevated = box.min[2] != 0.0 || box.max[2] != 0.0;
