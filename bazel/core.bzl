@@ -162,6 +162,7 @@ MLN_CORE_SOURCE = [
     "src/mln/gfx/shader_group.cpp",
     "src/mln/gfx/uniform.hpp",
     "src/mln/gfx/upload_pass.hpp",
+    "src/mln/gfx/vertex_layout.hpp",
     "src/mln/gfx/vertex_vector.hpp",
     "src/mln/layermanager/background_layer_factory.cpp",
     "src/mln/layermanager/circle_layer_factory.cpp",
