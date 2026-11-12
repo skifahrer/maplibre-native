@@ -652,6 +652,7 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/render_light.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/render_orchestrator.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/render_orchestrator.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/renderer/placement_pace.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/render_pass.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/render_source.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/render_source.hpp
