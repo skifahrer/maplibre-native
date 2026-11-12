@@ -327,9 +327,11 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
         // rendered on a subsequent frame. A never-rendered target falls through (rendering
         // it now avoids a blank tile), so bursts of *new* targets are not deferred.
         if (!canRerender && hasRenderedContent) {
+            ++framesHeld;
             return RenderResult::Deferred;
         }
 
+        framesHeld = 0;
         bakedCoverage = coverage;
         bakedSignature = targetSignature;
 
