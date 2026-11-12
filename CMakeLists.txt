@@ -229,6 +229,7 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/hillshade_layer_tweaker.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/hillshade_layer_tweaker.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/hillshade_prepare_layer_tweaker.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/hillshade_drawable_current.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/hillshade_prepare_layer_tweaker.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/line_layer_tweaker.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/line_layer_tweaker.hpp

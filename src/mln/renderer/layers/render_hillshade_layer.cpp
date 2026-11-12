@@ -13,6 +13,7 @@
 #include <mln/util/geo.hpp>
 
 #include <mln/renderer/layers/hillshade_layer_tweaker.hpp>
+#include <mln/renderer/layers/hillshade_drawable_current.hpp>
 #include <mln/renderer/layers/hillshade_prepare_layer_tweaker.hpp>
 #include <mln/renderer/layer_group.hpp>
 #include <mln/renderer/render_target.hpp>
@@ -379,6 +380,10 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
             // a previous style retain the attribute values for that style.
             if (drawable.getLayerTweaker() != layerTweaker) {
                 return false;
+            }
+            // Geometry changes only with the bucket's mask; until then nothing is rebuilt
+            if (hillshadeDrawableIsCurrent(drawable.getAttributeUpdateTime(), bucket.vertices)) {
+                return true;
             }
 
             drawable.updateVertexAttributes(buildVertexAttributes(),
