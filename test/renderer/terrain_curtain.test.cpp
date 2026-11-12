@@ -57,12 +57,12 @@ TEST(TerrainCurtain, TheEdgesRideInTheFraction) {
 }
 
 #if MLN_RENDER_BACKEND_METAL
-// 117 Both Metal terrain passes read the size whole and skip flagged edges.
+// 117, 121 Both Metal terrain passes read the size whole and skip flagged edges.
 TEST(TerrainCurtain, TheMetalShadersReadTheEdges) {
     EXPECT_NE(std::string::npos, std::string(shaders::prelude).find("inline bool curtain_hangs("));
     using Terrain = shaders::ShaderSource<shaders::BuiltIn::TerrainShader, gfx::Backend::Type::Metal>;
     using Depth = shaders::ShaderSource<shaders::BuiltIn::TerrainDepthShader, gfx::Backend::Type::Metal>;
-    for (const std::string source : {std::string(Terrain::source), std::string(Depth::source)}) {
+    for (const std::string& source : {std::string(Terrain::source), std::string(Depth::source)}) {
         EXPECT_NE(std::string::npos, source.find("floor(drawable.dem_coords.w)"));
         EXPECT_NE(std::string::npos, source.find("curtain_hangs(pos, drawable.dem_coords.w)"));
     }
