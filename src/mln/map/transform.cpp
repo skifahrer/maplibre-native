@@ -438,15 +438,33 @@ void Transform::moveBy(const ScreenCoordinate& offset, const AnimationOptions& a
         }
     }
 
-    ScreenCoordinate pointOnScreen = state.getEdgeInsets().getCenter(state.getSize().width, state.getSize().height) -
-                                     centerOffset;
+    const ScreenCoordinate screenCenter = state.getEdgeInsets().getCenter(state.getSize().width,
+                                                                          state.getSize().height);
     // Use unwrapped LatLng to carry information about moveBy direction. On the plane at the
     // centre's altitude, not sea level: over terrain the centre sits on the ground, and a
     // sea-level point under the screen centre lies altitude·tan(pitch) beyond it - every pan
     // step would jump the map that far (kilometres) along the view.
-    easeTo(CameraOptions().withCenter(
-               screenCoordinateToLatLng(pointOnScreen, state.getCenterAltitude(), LatLng::Unwrapped)),
-           animation);
+    const double altitude = state.getCenterAltitude();
+    const double centerOffsetLength = std::hypot(centerOffset.x, centerOffset.y);
+    if (pitch <= 0.0 || pitch >= util::deg2rad(89.0) || centerOffsetLength <= 1.0) {
+        easeTo(CameraOptions().withCenter(
+                   screenCoordinateToLatLng(screenCenter - centerOffset, altitude, LatLng::Unwrapped)),
+               animation);
+        return;
+    }
+    // A pixel's ground times the offset: a point far up a tilted screen lies nearer
+    // the horizon at every pixel, and a flick up there threw the map kilometres
+    const double step = 1.0 / centerOffsetLength;
+    const double scale = state.getScale();
+    const Point<double> from = Projection::project(screenCoordinateToLatLng(screenCenter, altitude, LatLng::Unwrapped),
+                                                   scale);
+    const Point<double> to = Projection::project(
+        screenCoordinateToLatLng({screenCenter.x - centerOffset.x * step, screenCenter.y - centerOffset.y * step},
+                                 altitude,
+                                 LatLng::Unwrapped),
+        scale);
+    const Point<double> center = Projection::project(state.getLatLng(LatLng::Unwrapped), scale) + (to - from) / step;
+    easeTo(CameraOptions().withCenter(Projection::unproject(center, scale, LatLng::Unwrapped)), animation);
 }
 
 LatLng Transform::getLatLng(LatLng::WrapMode wrap) const {

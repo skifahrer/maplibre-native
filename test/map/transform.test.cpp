@@ -525,6 +525,56 @@ TEST(Transform, MoveByPitchedDoesNotCrossHorizon) {
     EXPECT_LT(flingLat, util::LATITUDE_MAX); // but is bounded, not off near the horizon
 }
 
+// 118 Twice the drag moves a tilted map twice as far; a flick threw it far away
+TEST(Transform, MoveByPitchedIsProportionalToTheDrag) {
+    for (const double bearing : {0.0, 90.0, 217.0}) {
+        for (const double pitch : {45.0, 60.0, 75.0}) {
+            Transform transform;
+            transform.resize({1000, 1000});
+            const auto start =
+                CameraOptions().withCenter(LatLng{49.2, 20.1}).withZoom(13.0).withPitch(pitch).withBearing(bearing);
+            const auto movedBy = [&](const ScreenCoordinate& offset) {
+                transform.jumpTo(start);
+                transform.moveBy(offset);
+                return metersBetween(*start.center, transform.getLatLng());
+            };
+            const double up = movedBy({0, 100});
+            EXPECT_NEAR(movedBy({0, 200}), 2 * up, up * 0.02) << "pitch " << pitch << " bearing " << bearing;
+            EXPECT_NEAR(movedBy({0, -200}), 2 * up, up * 0.02) << "pitch " << pitch << " bearing " << bearing;
+            const double across = movedBy({100, 0});
+            EXPECT_NEAR(movedBy({200, 0}), 2 * across, across * 0.02) << "pitch " << pitch;
+            // 125 the other way across too
+            EXPECT_NEAR(movedBy({-200, 0}), 2 * across, across * 0.02) << "pitch " << pitch;
+        }
+    }
+}
+
+// 125 Past the horizon clamp a longer fling goes no further, and never back
+TEST(Transform, MoveByPitchedStopsGrowingAtTheHorizonClamp) {
+    Transform transform;
+    transform.resize({1000, 1000});
+    const auto start = CameraOptions().withCenter(LatLng{49.2, 20.1}).withZoom(13.0).withPitch(60.0);
+    const auto movedBy = [&](const ScreenCoordinate& offset) {
+        transform.jumpTo(start);
+        transform.moveBy(offset);
+        return metersBetween(*start.center, transform.getLatLng());
+    };
+    const double clamped = movedBy({0, 50000});
+    EXPECT_GT(clamped, movedBy({0, 200}));
+    EXPECT_NEAR(movedBy({0, 100000}), clamped, clamped * 1e-6);
+}
+
+// 118 A short drag still moves the ground at the centre with the finger
+TEST(Transform, MoveByPitchedShortDragFollowsTheFinger) {
+    Transform transform;
+    transform.resize({1000, 1000});
+    transform.jumpTo(CameraOptions().withCenter(LatLng{49.2, 20.1}).withZoom(13.0).withPitch(60.0).withBearing(30.0));
+    const LatLng underFinger = transform.screenCoordinateToLatLng({500, 497});
+    transform.moveBy({0, 3});
+    EXPECT_LT(metersBetween(underFinger, transform.getLatLng()),
+              0.1 * Projection::getMetersPerPixelAtLatitude(49.2, 13.0));
+}
+
 TEST(Transform, Antimeridian) {
     Transform transform;
     transform.resize({1000, 1000});

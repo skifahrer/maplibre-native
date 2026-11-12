@@ -1,6 +1,7 @@
 #include <mln/math/angles.hpp>
 #include <mln/renderer/layers/symbol_layer_tweaker.hpp>
 
+#include <mln/gfx/backend.hpp>
 #include <mln/gfx/context.hpp>
 #include <mln/gfx/drawable.hpp>
 #include <mln/gfx/renderable.hpp>
@@ -220,8 +221,10 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
         }
 
         // A symbol lying on the terrain would be culled by the very surface it labels.
-        drawable.setEnableDepth(!terrainEnabled || !pitchWithMap);
-        drawable.setDepthAbove3D(!pitchWithMap);
+        // Only Metal's shaders give a screen-aligned symbol its anchor's depth to test.
+        const bool depthAbove3D = !pitchWithMap && gfx::Backend::GetType() == gfx::Backend::Type::Metal;
+        drawable.setEnableDepth(!terrainEnabled || depthAbove3D);
+        drawable.setDepthAbove3D(depthAbove3D);
 
 #if MLN_UBO_CONSOLIDATION
         drawableUBOVector[i] = {

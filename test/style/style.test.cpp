@@ -653,7 +653,7 @@ TEST(StyleLayerLookup, FollowsAddsRemovesAndReloads) {
     EXPECT_EQ(style.getLayer("d")->getID(), "d");
 }
 
-// 115: Riki Maps build 1122 hung on taps that looked many layers up in a style of many layers.
+// 115, 124: an app hung on taps that looked many layers up in a style of many layers.
 TEST(StyleLayerLookup, ManyLookupsInAWideStyleAreFast) {
     util::RunLoop loop;
     auto fileSource = std::make_shared<StubFileSource>();

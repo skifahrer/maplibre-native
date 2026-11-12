@@ -109,6 +109,7 @@ bool redNear(const PremultipliedImage& image, const ScreenCoordinate& point, int
 } // namespace
 
 TEST(TerrainOcclusion, AnIconBehindARidgeIsHidden) {
+    // 120: off Metal the depth test against terrain culled the icon in front of the ridge too.
     util::RunLoop loop;
     auto fileSource = std::make_shared<StubFileSource>(ResourceOptions::Default(), ClientOptions());
     fileSource->tileResponse = [](const Resource& resource) {
