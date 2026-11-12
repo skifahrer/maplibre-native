@@ -333,10 +333,11 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     // Tipped level, the ground in view is the slope across the valley, which faces the camera;
     // on the centre's plane it counts as flat ground seen edge-on, and draws coarse. From 75 to
     // 85 degrees the tiles come to be judged by their own heights, so no tilt snaps.
-    const double tippedLevel = std::clamp((std::cos(util::deg2rad(75.0)) - std::abs(std::cos(transform.getPitch()))) /
-                                              (std::cos(util::deg2rad(75.0)) - std::cos(util::deg2rad(85.0))),
-                                          0.0,
-                                          1.0);
+    const double tippedLevel = std::clamp(
+        (std::cos(util::deg2rad(75.0)) - std::abs(std::cos(transform.getPitch()))) /
+            (std::cos(util::deg2rad(75.0)) - std::cos(util::deg2rad(85.0))),
+        0.0,
+        1.0);
     const double metresToMercator = 1.0 / (std::cos(util::deg2rad(transform.getLatLng().latitude())) * util::M2PI *
                                            util::EARTH_RADIUS_M);
     const auto zoomOnItsGround = [&](const Node& node, double distanceToTile2d) -> std::optional<double> {
@@ -358,8 +359,9 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
         }
         // As steep as it rises across its own width, or as it lies under the camera.
         const double rise = (high - low) * std::exp2(node.zoom);
-        const double facing = std::clamp(
-            std::max(rise, std::sqrt(1.0 - std::pow(distanceToTile2d / farthest, 2.0))), 1e-6, 1.0);
+        const double facing = std::clamp(std::max(rise, std::sqrt(1.0 - std::pow(distanceToTile2d / farthest, 2.0))),
+                                         1e-6,
+                                         1.0);
         return tileZoom.onItsGround(requestedCenterZoom, nearest, facing, distanceToCenter3d, distanceToCenterZ);
     };
 

@@ -104,7 +104,8 @@ TEST(TerrainMeshCover, OverTheBudgetTheFarTilesMergeIntoTheirParents) {
     auto tiles = overscaled(wholeZ2());
     util::mergeFarthestTiles(tiles, 7, {{0.1, 0.1}}, 0);
     const std::set<OverscaledTileID> merged(tiles.begin(), tiles.end());
-    const std::set<OverscaledTileID> expected{z2o(0, 0), z2o(1, 0), z2o(0, 1), z2o(1, 1), z1(1, 0), z1(0, 1), z1(1, 1)};
+    const std::set<OverscaledTileID> expected{
+        z2o(0, 0), z2o(1, 0), z2o(0, 1), z2o(1, 1), z1(1, 0), z1(0, 1), z1(1, 1)};
     EXPECT_EQ(expected, merged);
 }
 
@@ -500,8 +501,8 @@ void mixedCover(const CanonicalTileID& tile,
                 std::mt19937& random,
                 std::set<UnwrappedTileID>& out) {
     const double side = 1.0 / (1 << tile.z);
-    const double gap = std::max(0.0,
-                                std::hypot((tile.x + 0.5) * side - focus[0], (tile.y + 0.5) * side - focus[1]) - side);
+    const double gap = std::max(
+        0.0, std::hypot((tile.x + 0.5) * side - focus[0], (tile.y + 0.5) * side - focus[1]) - side);
     const int wanted = std::max(2, static_cast<int>(deepest - std::log2(1 + gap * 64)));
     if (tile.z >= wanted) {
         if (random() % 7 != 0) out.emplace(0, tile);
