@@ -543,8 +543,25 @@ TEST(Transform, MoveByPitchedIsProportionalToTheDrag) {
             EXPECT_NEAR(movedBy({0, -200}), 2 * up, up * 0.02) << "pitch " << pitch << " bearing " << bearing;
             const double across = movedBy({100, 0});
             EXPECT_NEAR(movedBy({200, 0}), 2 * across, across * 0.02) << "pitch " << pitch;
+            // 125 the other way across too
+            EXPECT_NEAR(movedBy({-200, 0}), 2 * across, across * 0.02) << "pitch " << pitch;
         }
     }
+}
+
+// 125 Past the horizon clamp a longer fling goes no further, and never back
+TEST(Transform, MoveByPitchedStopsGrowingAtTheHorizonClamp) {
+    Transform transform;
+    transform.resize({1000, 1000});
+    const auto start = CameraOptions().withCenter(LatLng{49.2, 20.1}).withZoom(13.0).withPitch(60.0);
+    const auto movedBy = [&](const ScreenCoordinate& offset) {
+        transform.jumpTo(start);
+        transform.moveBy(offset);
+        return metersBetween(*start.center, transform.getLatLng());
+    };
+    const double clamped = movedBy({0, 50000});
+    EXPECT_GT(clamped, movedBy({0, 200}));
+    EXPECT_NEAR(movedBy({0, 100000}), clamped, clamped * 1e-6);
 }
 
 // 118 A short drag still moves the ground at the centre with the finger

@@ -10,6 +10,8 @@
 
 EXPORT
 bool TestRunner::startTest(const std::string& basePath) {
+    // A crash loses a full buffer, and the test it died in with it
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
     std::vector<std::string> arguments = {"mbgl-test-runner", "--gtest_output=xml:" + basePath + "/test/results.xml"};
     std::vector<char*> argv;
     for (const auto& arg : arguments) {
@@ -23,8 +25,6 @@ bool TestRunner::startTest(const std::string& basePath) {
     }
 
     mln::Log::Info(mln::Event::General, "Start TestRunner");
-    // A crash loses a full buffer, and the test it died in with it
-    std::setvbuf(stdout, nullptr, _IOLBF, 0);
     int status = mln::runTests(static_cast<uint32_t>(argv.size()), argv.data());
     mln::Log::Info(mln::Event::General, "TestRunner finished with status: '" + std::to_string(status) + "'");
 

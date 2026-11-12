@@ -247,24 +247,28 @@ jobs:
             //platform/ios/test/core:CppUnitTests
 
       # A test app that crashes takes its unflushed output with it; its crash report names the test.
-      - name: Show why the core's tests stopped
+      - name: Show why the tests stopped
         if: failure()
         run: |
           shopt -s nullglob
-          for report in ~/Library/Logs/DiagnosticReports/CppUnitTests*; do
+          mkdir -p out/testlogs
+          for report in ~/Library/Logs/DiagnosticReports/*.ips; do
             echo "::group::$report"
             head -n 200 "$report"
             echo "::endgroup::"
+            cp "$report" out/testlogs/
           done
-          mkdir -p out/testlogs
-          cp -R "$(bazel info $BAZEL_FLAGS bazel-testlogs)/platform/ios/test/core" out/testlogs/ 2> /dev/null || true
-          cp ~/Library/Logs/DiagnosticReports/CppUnitTests* out/testlogs/ 2> /dev/null || true
+          # ours and upstream's run without the release flags, so their logs lie elsewhere
+          # shellcheck disable=SC2086
+          for logs in "$(bazel info bazel-testlogs)" "$(bazel info $BAZEL_FLAGS bazel-testlogs)"; do
+            cp -R "$logs/platform/ios" "out/testlogs/$(basename "$(dirname "$logs")")" 2> /dev/null || true
+          done
 
-      - name: Keep the core's test logs
+      - name: Keep the test logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: core-test-logs-${{ needs.check.outputs.sha }}
+          name: test-logs-${{ needs.check.outputs.sha }}
           path: out/testlogs
           retention-days: 7
           if-no-files-found: ignore

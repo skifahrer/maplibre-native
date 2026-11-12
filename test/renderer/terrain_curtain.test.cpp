@@ -58,7 +58,7 @@ TEST(TerrainCurtain, TheEdgesRideInTheFraction) {
 
 #if MLN_RENDER_BACKEND_METAL
 // 117 Both Metal terrain passes read the size whole and skip flagged edges.
-// 122 Built on iOS only, where copying each string in the loop broke -Werror.
+// 122, 125 Only Metal builds this, and under -Werror.
 TEST(TerrainCurtain, TheMetalShadersReadTheEdges) {
     EXPECT_NE(std::string::npos, std::string(shaders::prelude).find("inline bool curtain_hangs("));
     using Terrain = shaders::ShaderSource<shaders::BuiltIn::TerrainShader, gfx::Backend::Type::Metal>;
