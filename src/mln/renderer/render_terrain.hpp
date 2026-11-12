@@ -7,6 +7,7 @@
 #include <mln/util/constants.hpp>
 #include <mln/gfx/vertex_buffer.hpp>
 #include <mln/gfx/index_buffer.hpp>
+#include <mln/renderer/cover_reach.hpp>
 #include <mln/renderer/terrain_cache_policy.hpp>
 #include <mln/renderer/texture_pool.hpp>
 #include <mln/renderer/terrain_elevation_index.hpp>
@@ -120,7 +121,7 @@ public:
     /// How far from the ground under the camera, in metres, the capped mesh cover is whole: where
     /// the first tile the cap dropped begins, eased over frames; infinity when it dropped none.
     /// The fog is full by then.
-    double getCoverReachMetres() const { return coverReachMetres; }
+    double getCoverReachMetres() const { return coverReach.value(); }
 
     /// The tile's longest edge on screen, in points, at the height of the ground at its middle:
     /// how many texels its drape can show. Corners behind the camera count as at the near plane.
@@ -434,7 +435,7 @@ private:
     double elevationAt(const LatLng& latLng, int sampleZoom) const;
 
     /// computeMeshCover's last answer for getCoverReachMetres.
-    mutable double coverReachMetres = std::numeric_limits<double>::infinity();
+    mutable CoverReach coverReach;
     /// sightBlocked's last answer, which it holds until the ground is kCutReleaseM below the line.
     mutable bool cutting = false;
     static constexpr double kCutReleaseM = 30.0;

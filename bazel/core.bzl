@@ -274,6 +274,7 @@ MLN_CORE_SOURCE = [
     "src/mln/renderer/render_light.hpp",
     "src/mln/renderer/render_orchestrator.cpp",
     "src/mln/renderer/render_orchestrator.hpp",
+    "src/mln/renderer/cover_reach.hpp",
     "src/mln/renderer/placement_pace.hpp",
     "src/mln/renderer/render_pass.hpp",
     "src/mln/renderer/render_source.cpp",

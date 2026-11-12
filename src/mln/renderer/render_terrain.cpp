@@ -309,12 +309,7 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
                                          std::cos(util::deg2rad(state.getLatLng().latitude()));
             reach = std::sqrt(nearestDropped2) * metresPerUnit;
         }
-        // Eased, as the tile set changes in steps: in fast, so nothing past it shows, out slowly.
-        if (!std::isfinite(reach) || !std::isfinite(coverReachMetres)) {
-            coverReachMetres = reach;
-        } else {
-            coverReachMetres = reach < coverReachMetres ? reach : coverReachMetres + 0.1 * (reach - coverReachMetres);
-        }
+        coverReach.update(reach, util::MonotonicTimer::now().count(), state.getFogEnd());
         out = std::move(kept);
     }
     return out;

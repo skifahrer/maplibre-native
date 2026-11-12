@@ -31,6 +31,7 @@ add_library(
     ${PROJECT_SOURCE_DIR}/test/renderer/renderable.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/vertex_layout.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/color_relief.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/renderer/cover_reach.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/dem_elevation_provider.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_camera.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_elevation_index.test.cpp
