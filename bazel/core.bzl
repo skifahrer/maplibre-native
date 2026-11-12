@@ -994,6 +994,7 @@ MLN_DRAWABLES_SOURCE = [
     "src/mln/renderer/layers/heatmap_layer_tweaker.hpp",
     "src/mln/renderer/layers/heatmap_texture_layer_tweaker.cpp",
     "src/mln/renderer/layers/heatmap_texture_layer_tweaker.hpp",
+    "src/mln/renderer/layers/hillshade_drawable_current.hpp",
     "src/mln/renderer/layers/hillshade_layer_tweaker.cpp",
     "src/mln/renderer/layers/hillshade_layer_tweaker.hpp",
     "src/mln/renderer/layers/hillshade_prepare_layer_tweaker.cpp",
