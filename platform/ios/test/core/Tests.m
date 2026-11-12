@@ -1,3 +1,4 @@
+#import <UIKit/UIKit.h>
 #import <XCTest/XCTest.h>
 #import "iosTestRunner.h"
 @interface Tests : XCTestCase
@@ -32,6 +33,15 @@
 
     BOOL success = [runner getTestStatus];
     XCTAssert(success, @"IOSTestRunner reports error because some of the tests are not passed, please check the test report");
+}
+
+// 126 Without a scene delegate iOS 27 stopped the host app at launch, before any test ran
+- (void)testTheHostAppOwnsItsWindowThroughAScene {
+    XCTAssertNotNil([NSBundle.mainBundle objectForInfoDictionaryKey:@"UIApplicationSceneManifest"]);
+    UIScene* scene = UIApplication.sharedApplication.connectedScenes.anyObject;
+    XCTAssertNotNil(scene);
+    XCTAssertEqualObjects(NSStringFromClass([scene.delegate class]), @"SceneDelegate");
+    XCTAssertNotNil(((id<UIWindowSceneDelegate>)scene.delegate).window);
 }
 
 @end
