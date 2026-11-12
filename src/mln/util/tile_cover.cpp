@@ -333,11 +333,10 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     // Tipped level, the ground in view is the slope across the valley, which faces the camera;
     // on the centre's plane it counts as flat ground seen edge-on, and draws coarse. From 75 to
     // 85 degrees the tiles come to be judged by their own heights, so no tilt snaps.
-    const double tippedLevel = std::clamp(
-        (std::cos(util::deg2rad(75.0)) - std::abs(std::cos(transform.getPitch()))) /
-            (std::cos(util::deg2rad(75.0)) - std::cos(util::deg2rad(85.0))),
-        0.0,
-        1.0);
+    const double tippedLevel = std::clamp((std::cos(util::deg2rad(75.0)) - std::abs(std::cos(transform.getPitch()))) /
+                                              (std::cos(util::deg2rad(75.0)) - std::cos(util::deg2rad(85.0))),
+                                          0.0,
+                                          1.0);
     const double metresToMercator = 1.0 / (std::cos(util::deg2rad(transform.getLatLng().latitude())) * util::M2PI *
                                            util::EARTH_RADIUS_M);
     const auto zoomOnItsGround = [&](const Node& node, double distanceToTile2d) -> std::optional<double> {
@@ -359,9 +358,8 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
         }
         // As steep as it rises across its own width, or as it lies under the camera.
         const double rise = (high - low) * std::exp2(node.zoom);
-        const double facing = std::clamp(std::max(rise, std::sqrt(1.0 - std::pow(distanceToTile2d / farthest, 2.0))),
-                                         1e-6,
-                                         1.0);
+        const double facing = std::clamp(
+            std::max(rise, std::sqrt(1.0 - std::pow(distanceToTile2d / farthest, 2.0))), 1e-6, 1.0);
         return tileZoom.onItsGround(requestedCenterZoom, nearest, facing, distanceToCenter3d, distanceToCenterZ);
     };
 
@@ -419,6 +417,23 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
         }
     };
 
+    bool tookTheRestWhole = false;
+    const auto takeTheRestWhole = [&] {
+        tookTheRestWhole = true;
+        for (auto& item : queue) {
+            if (!item.tile && !item.node.fullyVisible) {
+                const AABB box = elevatedAABB(item.node);
+                const bool elevated = box.min[2] != 0.0 || box.max[2] != 0.0;
+                if ((elevated ? frustum.intersectsElevated(box) : frustum.intersects(box)) ==
+                    IntersectionResult::Separate) {
+                    continue;
+                }
+            }
+            result.push_back({.id = tileIdOf(item.node), .sqrDist = tileKey(item.node)});
+        }
+        queue.clear();
+    };
+
     // World copies shall be rendered three times on both sides from closest to farthest
     for (int i = 1; i <= 3; i++) {
         pushNode(newRootTile(-i));
@@ -435,7 +450,10 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
             queue.pop_back();
             if (item.tile) {
                 result.push_back({.id = tileIdOf(item.node), .sqrDist = item.key});
-                if (result.size() >= state.tileLimit) break;
+                if (result.size() >= state.tileLimit) {
+                    if (state.coarserPastTheLimit) takeTheRestWhole();
+                    break;
+                }
                 continue;
             }
             node = std::move(item.node);
@@ -579,7 +597,7 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     }
 
     // Sort results by distance (a limited walk already found them in order)
-    if (!limited || centreAdded) {
+    if (!limited || centreAdded || tookTheRestWhole) {
         std::sort(result.begin(), result.end(), [](const ResultTile& a, const ResultTile& b) {
             return a.sqrDist < b.sqrDist;
         });
@@ -650,6 +668,7 @@ std::vector<OverscaledTileID> TileCoverCache::cover(const TileCoverParameters& s
                   state.nearDetail,
                   state.tileLimit,
                   state.tileLimitOrigin,
+                  state.coarserPastTheLimit,
                   state.elevationProvider,
                   state.tileLodOrigin};
     auto found = covers.find(key);

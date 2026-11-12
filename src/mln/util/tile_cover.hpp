@@ -72,6 +72,9 @@ struct TileCoverParameters {
     size_t tileLimit = 0;
     /// Where `tileLimit` measures from (normalized web-mercator).
     std::array<double, 2> tileLimitOrigin{{0.0, 0.0}};
+    /// With `tileLimit`, the ground past it still comes back, as the coarser tiles the walk had
+    /// not split yet: a cover as far as the unlimited one, of a few more tiles than the limit.
+    bool coarserPastTheLimit = false;
     /// Adaptive only: levels finer than the view's zoom the ground near the camera may go
     /// (nearDetailLevels()). The DEM source and the terrain mesh keep 0: the mesh near the camera
     /// is already finer than the view, and it is the draped sources that were stretched over it.
@@ -120,6 +123,7 @@ private:
                            uint8_t,
                            size_t,
                            std::array<double, 2>,
+                           bool,
                            const TileElevationProvider*,
                            std::optional<std::array<double, 2>>>;
     std::map<Key, std::vector<OverscaledTileID>> covers;

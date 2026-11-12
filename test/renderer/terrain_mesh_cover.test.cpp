@@ -104,8 +104,7 @@ TEST(TerrainMeshCover, OverTheBudgetTheFarTilesMergeIntoTheirParents) {
     auto tiles = overscaled(wholeZ2());
     util::mergeFarthestTiles(tiles, 7, {{0.1, 0.1}}, 0);
     const std::set<OverscaledTileID> merged(tiles.begin(), tiles.end());
-    const std::set<OverscaledTileID> expected{
-        z2o(0, 0), z2o(1, 0), z2o(0, 1), z2o(1, 1), z1(1, 0), z1(0, 1), z1(1, 1)};
+    const std::set<OverscaledTileID> expected{z2o(0, 0), z2o(1, 0), z2o(0, 1), z2o(1, 1), z1(1, 0), z1(0, 1), z1(1, 1)};
     EXPECT_EQ(expected, merged);
 }
 
@@ -501,8 +500,8 @@ void mixedCover(const CanonicalTileID& tile,
                 std::mt19937& random,
                 std::set<UnwrappedTileID>& out) {
     const double side = 1.0 / (1 << tile.z);
-    const double gap = std::max(
-        0.0, std::hypot((tile.x + 0.5) * side - focus[0], (tile.y + 0.5) * side - focus[1]) - side);
+    const double gap = std::max(0.0,
+                                std::hypot((tile.x + 0.5) * side - focus[0], (tile.y + 0.5) * side - focus[1]) - side);
     const int wanted = std::max(2, static_cast<int>(deepest - std::log2(1 + gap * 64)));
     if (tile.z >= wanted) {
         if (random() % 7 != 0) out.emplace(0, tile);
@@ -555,4 +554,65 @@ TEST(TerrainMeshCover, AStillViewOverSettledDEMKeepsItsCover) {
     EXPECT_NE(still, keyOf(7)) << "a turned camera sees other ground";
     transform.jumpTo(CameraOptions().withBearing(0.0).withZoom(14.5));
     EXPECT_NE(still, keyOf(7));
+}
+
+namespace {
+// 116: every tile as tall as the mountains around it, as the DEM's fallback range reports it.
+struct Mountains final : util::TileElevationProvider {
+    std::optional<Range<double>> getTileElevationRange(const CanonicalTileID&) const override {
+        return Range<double>{600.0, 4000.0};
+    }
+};
+
+std::vector<OverscaledTileID> tippedCover(double pitch, double zoom, size_t limit) {
+    Transform transform;
+    transform.resize({402, 874});
+    transform.setMaxPitch(85.0);
+    transform.jumpTo(
+        CameraOptions().withCenter(LatLng{46.5, 7.9}).withZoom(zoom).withPitch(pitch).withCenterAltitude(3500.0));
+    static const Mountains mountains;
+    util::TileCoverParameters view{.transformState = transform.getState(), .elevationProvider = &mountains};
+    view.tileLodMode = TileLodMode::Adaptive;
+    view.tileLodOrigin = RenderTerrain::meshTileCapOrigin(transform.getState());
+    view.tileLimit = limit;
+    view.tileLimitOrigin = *view.tileLodOrigin;
+    view.coarserPastTheLimit = true;
+    const auto z = static_cast<uint8_t>(util::coveringZoomLevel(zoom, style::SourceType::RasterDEM, 512));
+    return util::tileCover(view, z, Range<uint8_t>{0, 22}, z);
+}
+
+bool within(const OverscaledTileID& tile, const OverscaledTileID& outer) {
+    return tile.wrap == outer.wrap && tile.canonical.z >= outer.canonical.z &&
+           tile.canonical.scaledTo(outer.canonical.z) == outer.canonical;
+}
+} // namespace
+
+TEST(TerrainMeshCover, ATippedViewOverMountainsWalksNoFurtherThanItsLimit) {
+    // 116: Riki Maps build 1122 hung 7 s on the main thread walking tens of thousands of tiles to
+    // the horizon that the mesh-tile cap then merged back into a few dozen.
+    const auto whole = tippedCover(85.0, 17.0, 0);
+    ASSERT_GT(whole.size(), 10000u);
+    const auto start = std::chrono::steady_clock::now();
+    const auto limited = tippedCover(85.0, 17.0, 1024);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    EXPECT_LT(limited.size(), 2048u);
+    EXPECT_LT(elapsed, std::chrono::milliseconds(50));
+    for (const auto& a : limited) {
+        for (const auto& b : limited) {
+            ASSERT_FALSE(a != b && within(a, b)) << "the coarser ground overlaps a tile already taken";
+        }
+    }
+    for (const auto& tile : whole) {
+        ASSERT_TRUE(std::any_of(limited.begin(), limited.end(), [&](const auto& outer) { return within(tile, outer); }))
+            << "the limit left out ground the whole cover has";
+    }
+}
+
+TEST(TerrainMeshCover, AViewWithinTheWalksLimitKeepsItsWholeCover) {
+    // 116: a cover under the limit is the cover it always was.
+    auto whole = tippedCover(60.0, 15.0, 0);
+    auto limited = tippedCover(60.0, 15.0, 1024);
+    std::sort(whole.begin(), whole.end());
+    std::sort(limited.begin(), limited.end());
+    EXPECT_EQ(whole, limited);
 }

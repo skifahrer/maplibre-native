@@ -140,6 +140,7 @@ public:
         int viewportMode = 0;
         std::array<double, 4> lod{};
         int lodMode = 0;
+        size_t walkLimit = 0;
         bool operator==(const MeshCoverKey&) const = default;
 
         static MeshCoverKey of(const util::TileCoverParameters& view,
@@ -177,6 +178,12 @@ public:
                                                          size_t maxTiles,
                                                          uint8_t minZoom,
                                                          const std::array<double, 2>& origin);
+
+    /// Tiles the mesh cover's walk splits at most, before the cap merges them down: past it the
+    /// rest of the ground comes back coarser (TileCoverParameters::coarserPastTheLimit).
+    static constexpr size_t meshCoverWalkLimit(TerrainLoadMode mode) {
+        return terrainLoadBudget(mode).maxMeshTiles * 16;
+    }
 
     /// Tiles a source may cover per tile of the mesh-tile cap (TileParameters::coverTileLimit).
     static constexpr size_t sourceTilesPerMeshTile = 4;
