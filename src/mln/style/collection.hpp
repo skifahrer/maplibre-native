@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace mln {
@@ -24,6 +25,7 @@ namespace style {
       * An `Impl` inner class type
       * An `Immutable<Impl> baseImpl` member
       * A `std::string getID() const` method
+      * An `id` member of their `Impl`, which never changes
 */
 template <class T>
 class CollectionBase {
@@ -57,6 +59,10 @@ protected:
 
     WrapperVector wrappers;
     ImmutableVector impls;
+
+private:
+    // Riki Maps looks layers up by id on every tap and camera frame.
+    std::unordered_map<std::string, T*> byID;
 };
 
 template <class T, bool persistentImplsOrder = false>
@@ -116,14 +122,16 @@ std::size_t CollectionBase<T>::size() const {
 
 template <class T>
 std::size_t CollectionBase<T>::index(const std::string& id) const {
-    return std::find_if(wrappers.begin(), wrappers.end(), [&](const auto& e) { return e->getID() == id; }) -
+    const T* wrapper = get(id);
+    if (!wrapper) return size();
+    return std::find_if(wrappers.begin(), wrappers.end(), [&](const auto& e) { return e.get() == wrapper; }) -
            wrappers.begin();
 }
 
 template <class T>
 T* CollectionBase<T>::get(const std::string& id) const {
-    std::size_t i = index(id);
-    return i < size() ? wrappers[i].get() : nullptr;
+    const auto found = byID.find(id);
+    return found == byID.end() ? nullptr : found->second;
 }
 
 template <class T>
@@ -143,6 +151,7 @@ void CollectionBase<T>::clear() {
     mutate(impls, [&](auto& impls_) { impls_.clear(); });
 
     wrappers.clear();
+    byID.clear();
 }
 
 template <class T>
@@ -150,6 +159,7 @@ T* CollectionBase<T>::add(std::size_t wrapperIndex, std::size_t implIndex, std::
     assert(wrapperIndex <= size());
     assert(implIndex <= size());
     mutate(impls, [&](auto& impls_) { impls_.emplace(impls_.begin() + implIndex, wrapper->baseImpl); });
+    byID.try_emplace(wrapper->baseImpl->id, wrapper.get());
 
     return wrappers.emplace(wrappers.begin() + wrapperIndex, std::move(wrapper))->get();
 }
@@ -163,7 +173,9 @@ void CollectionBase<T>::append(std::vector<std::unique_ptr<T>> added) {
         }
     });
     wrappers.reserve(wrappers.size() + added.size());
+    byID.reserve(byID.size() + added.size());
     for (auto& wrapper : added) {
+        byID.try_emplace(wrapper->baseImpl->id, wrapper.get());
         wrappers.push_back(std::move(wrapper));
     }
 }
@@ -180,6 +192,7 @@ std::unique_ptr<T> CollectionBase<T>::remove(std::size_t wrapperIndex, std::size
     mutate(impls, [&](auto& impls_) { impls_.erase(impls_.begin() + implIndex); });
 
     wrappers.erase(wrappers.begin() + wrapperIndex);
+    byID.erase(source->baseImpl->id);
 
     return source;
 }
