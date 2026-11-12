@@ -397,7 +397,7 @@ EdgeInsets Map::getFrustumOffset() {
 
 void Map::setDrawDistance(double metres) {
     impl->transform.setDrawDistance(metres);
-    impl->onUpdate();
+    impl->onLookChanged();
 }
 
 double Map::getDrawDistance() const {
@@ -406,7 +406,7 @@ double Map::getDrawDistance() const {
 
 void Map::setFog(const Color& color, double startMetres, double endMetres) {
     impl->transform.setFog(color, startMetres, endMetres);
-    impl->onUpdate();
+    impl->onLookChanged();
 }
 
 Color Map::getFogColor() const {
@@ -423,7 +423,7 @@ double Map::getFogEnd() const {
 
 void Map::setClayColor(const Color& color) {
     impl->transform.setClayColor(color);
-    impl->onUpdate();
+    impl->onLookChanged();
 }
 
 Color Map::getClayColor() const {
@@ -432,7 +432,7 @@ Color Map::getClayColor() const {
 
 void Map::setSkyColor(const Color& color) {
     impl->transform.setSkyColor(color);
-    impl->onUpdate();
+    impl->onLookChanged();
 }
 
 Color Map::getSkyColor() const {
