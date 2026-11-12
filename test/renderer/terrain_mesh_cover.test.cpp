@@ -526,7 +526,7 @@ TEST(TerrainMeshCover, DilationAddsWhatThePlainDilationAdds) {
 }
 
 TEST(TerrainMeshCover, DilatingAWideCoverIsFast) {
-    // 85: Riki Maps build 1100 spent 0.4 s of one frame on the main thread dilating a wide cover.
+    // 85, 124: an app spent 0.4 s of one frame on the main thread dilating a wide cover.
     std::mt19937 random(85);
     std::set<UnwrappedTileID> cover;
     mixedCover(CanonicalTileID(0, 0, 0), {{0.53, 0.35}}, 13, random, cover);
@@ -539,7 +539,7 @@ TEST(TerrainMeshCover, DilatingAWideCoverIsFast) {
 }
 
 TEST(TerrainMeshCover, AStillViewOverSettledDEMKeepsItsCover) {
-    // 116: Riki Maps build 1122 hung 7 s on the main thread working the same cover out each frame.
+    // 116, 124: an app hung 7 s on the main thread redoing the same cover each frame.
     Transform transform;
     transform.resize({402, 874});
     transform.setMaxPitch(85.0);
@@ -589,7 +589,7 @@ bool within(const OverscaledTileID& tile, const OverscaledTileID& outer) {
 } // namespace
 
 TEST(TerrainMeshCover, ATippedViewOverMountainsWalksNoFurtherThanItsLimit) {
-    // 116: Riki Maps build 1122 hung 7 s on the main thread walking tens of thousands of tiles to
+    // 116, 124: an app hung 7 s on the main thread walking tens of thousands of tiles to
     // the horizon that the mesh-tile cap then merged back into a few dozen.
     const auto whole = tippedCover(85.0, 17.0, 0);
     ASSERT_GT(whole.size(), 10000u);

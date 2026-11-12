@@ -1,5 +1,6 @@
 #include <unistd.h>
 
+#include <cstdio>
 #include <ios_test_runner.hpp>
 #include <mln/test.hpp>
 #include <mln/util/logging.hpp>
@@ -9,6 +10,8 @@
 
 EXPORT
 bool TestRunner::startTest(const std::string& basePath) {
+    // A crash loses a full buffer, and the test it died in with it
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
     std::vector<std::string> arguments = {"mbgl-test-runner", "--gtest_output=xml:" + basePath + "/test/results.xml"};
     std::vector<char*> argv;
     for (const auto& arg : arguments) {

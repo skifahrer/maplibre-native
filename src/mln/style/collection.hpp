@@ -61,7 +61,7 @@ protected:
     ImmutableVector impls;
 
 private:
-    // Riki Maps looks layers up by id on every tap and camera frame.
+    // An app may look layers up by id on every tap and camera frame.
     std::unordered_map<std::string, T*> byID;
 };
 
