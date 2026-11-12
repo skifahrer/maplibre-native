@@ -121,6 +121,12 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
         .nearDetail = type == SourceType::RasterDEM ? uint8_t{0} : util::nearDetailLevels(),
         .elevationProvider = parameters.elevationProvider,
         .tileLodOrigin = parameters.tileLodOrigin};
+    // 116: tipped level a walk to the horizon split hundreds of thousands of tiles to keep a few.
+    if (parameters.coverTileLimit > 0) {
+        tileCoverParameters.tileLimit = parameters.coverTileLimit * util::coverWalkPerKeptTile;
+        tileCoverParameters.tileLimitOrigin = parameters.coverTileLimitOrigin;
+        tileCoverParameters.coarserPastTheLimit = true;
+    }
 
     const auto cover = [&](int32_t z, const std::optional<uint8_t>& overscaledZ) {
         const auto coverZ = static_cast<uint8_t>(z);
@@ -153,7 +159,10 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
             }
         }
 
-        idealTiles = cover(idealZoom, tileZoom);
+        // The DEM loads the mesh's own tiles instead (below).
+        if (parameters.terrainMeshCover.empty()) {
+            idealTiles = cover(idealZoom, tileZoom);
+        }
         if (parameters.mode == MapMode::Tile && type != SourceType::Raster && type != SourceType::RasterDEM &&
             idealTiles.size() > 1) {
             mln::Log::Warning(mln::Event::General,
