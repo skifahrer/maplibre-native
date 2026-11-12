@@ -246,6 +246,29 @@ jobs:
           bazel test $BAZEL_CACHE $BAZEL_TEST $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
             //platform/ios/test/core:CppUnitTests
 
+      # A test app that crashes takes its unflushed output with it; its crash report names the test.
+      - name: Show why the core's tests stopped
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for report in ~/Library/Logs/DiagnosticReports/CppUnitTests*; do
+            echo "::group::$report"
+            head -n 200 "$report"
+            echo "::endgroup::"
+          done
+          mkdir -p out/testlogs
+          cp -R "$(bazel info $BAZEL_FLAGS bazel-testlogs)/platform/ios/test/core" out/testlogs/ 2> /dev/null || true
+          cp ~/Library/Logs/DiagnosticReports/CppUnitTests* out/testlogs/ 2> /dev/null || true
+
+      - name: Keep the core's test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-test-logs-${{ needs.check.outputs.sha }}
+          path: out/testlogs
+          retention-days: 7
+          if-no-files-found: ignore
+
       # Kept under 6 GB by Bazel, inside the repository's 10 GB of Actions cache.
       - name: Save the Bazel cache
         if: always()
