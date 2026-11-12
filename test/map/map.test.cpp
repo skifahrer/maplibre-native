@@ -196,6 +196,10 @@ TEST(Map, FogSetDuringACameraMoveLeavesTheMoveAlone) {
     EXPECT_EQ(0, changes);
     EXPECT_EQ(1000.0, test.map.getFogStart());
     EXPECT_EQ(3000.0, test.map.getDrawDistance());
+    // 114 A move still running past the test broke the terrain occlusion tests after it
+    test.observer.cameraIsChangingCallback = nullptr;
+    test.map.cancelTransitions();
+    test.runLoop.runOnce();
 }
 
 TEST(Map, LatLngBehavior) {
