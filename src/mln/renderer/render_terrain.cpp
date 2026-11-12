@@ -335,6 +335,58 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     return out;
 }
 
+void RenderTerrain::updateCurtainlessEdges(const std::set<UnwrappedTileID>& meshTiles) {
+    const auto loaded = loadedDEMTiles(demSource);
+    std::size_t inputs = std::hash<std::size_t>{}(meshTiles.size() * 31 + loaded.size());
+    for (const auto& id : meshTiles) {
+        inputs = inputs * 1099511628211u ^ std::hash<UnwrappedTileID>{}(id);
+    }
+    for (const auto& tile : loaded) {
+        inputs = inputs * 1099511628211u ^ std::hash<UnwrappedTileID>{}(tile.id);
+    }
+    if (inputs == curtainInputs) {
+        return;
+    }
+    curtainInputs = inputs;
+
+    std::unordered_map<UnwrappedTileID, const DEMData*> dems;
+    uint8_t deepest = 0;
+    for (const auto& tile : loaded) {
+        dems.emplace(tile.id, tile.data);
+        deepest = std::max(deepest, tile.id.canonical.z);
+    }
+    const auto plane = getPlane();
+    // A neighbour's DEM lies within a few zooms of the tile's own
+    int from = deepest;
+    // Ground in the deepest DEM tile holding the point; nothing known where none is loaded
+    const auto groundAt = [&](double x, double y) -> std::optional<bool> {
+        if (x < 0.0 || y < 0.0 || x >= 1.0 || y >= 1.0) {
+            return std::nullopt;
+        }
+        for (int z = from; z >= 0; --z) {
+            const double scale = static_cast<double>(1u << z);
+            const auto tx = static_cast<uint32_t>(x * scale);
+            const auto ty = static_cast<uint32_t>(y * scale);
+            const auto found = dems.find(UnwrappedTileID(static_cast<uint8_t>(z), tx, ty));
+            if (found == dems.end()) {
+                continue;
+            }
+            const DEMData& dem = *found->second;
+            const auto px = std::clamp(static_cast<int32_t>((x * scale - tx) * dem.dim), 0, dem.dim - 1);
+            const auto py = std::clamp(static_cast<int32_t>((y * scale - ty) * dem.dim), 0, dem.dim - 1);
+            return !plane || dem.get(px, py) != static_cast<int32_t>(std::trunc(*plane));
+        }
+        return std::nullopt;
+    };
+    curtainlessByTile.clear();
+    for (const auto& id : meshTiles) {
+        from = std::min<int>(deepest, id.canonical.z + 3);
+        if (const auto edges = terrain::curtainlessEdges(id.canonical, groundAt)) {
+            curtainlessByTile.emplace(OverscaledTileID(id.canonical.z, id.wrap, id.canonical), edges);
+        }
+    }
+}
+
 RenderTerrain::MeshCoverKey RenderTerrain::MeshCoverKey::of(const util::TileCoverParameters& view,
                                                             double zoomShift,
                                                             const RenderSource* source,
@@ -948,6 +1000,8 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
 #endif
         }
     }
+
+    updateCurtainlessEdges(meshTiles);
 
     // Debug-only, off by default: gate the whole above-ground check (per-frame free-camera +
     // elevation sampling) on the flag so it costs nothing unless explicitly enabled.

@@ -47,16 +47,19 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     // rendering only depth for the symbol occlusion pass
     const float2 pos = float2(vertx.pos.xy);
 
+    const float dem_size = floor(drawable.dem_coords.w);
     float ground = 1.0;
     const float elevation = get_ground_elevation(pos, demTexture, drawable.dem_coords, props.unpack,
-                                                 drawable.dem_coords.w, props.exaggeration, props.no_ground, ground);
-    if (vertx.pos.z == 1 && !ground_throughout(demTexture, drawable.dem_coords, drawable.dem_coords.w,
+                                                 dem_size, props.exaggeration, props.no_ground, ground);
+    if (vertx.pos.z == 1 && !ground_throughout(demTexture, drawable.dem_coords, dem_size,
                                                 props.unpack, props.no_ground)) {
         ground = 0.0;
     }
 
     // Skirt vertices drop below the surface by elevation_offset (gl-js u_ele_delta)
-    const float ele_delta = (float(vertx.pos.z) == 1.0) ? props.elevation_offset : 0.0;
+    const float ele_delta = (float(vertx.pos.z) == 1.0 && curtain_hangs(pos, drawable.dem_coords.w))
+                                ? props.elevation_offset
+                                : 0.0;
     const float4 position = drawable.matrix * float4(pos.x, pos.y, elevation - ele_delta, 1.0);
     return {
         .position = position,

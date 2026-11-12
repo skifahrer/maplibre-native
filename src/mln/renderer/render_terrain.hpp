@@ -8,6 +8,7 @@
 #include <mln/gfx/vertex_buffer.hpp>
 #include <mln/gfx/index_buffer.hpp>
 #include <mln/renderer/cover_reach.hpp>
+#include <mln/renderer/terrain_curtain.hpp>
 #include <mln/renderer/terrain_cache_policy.hpp>
 #include <mln/renderer/texture_pool.hpp>
 #include <mln/renderer/terrain_elevation_index.hpp>
@@ -370,9 +371,16 @@ public:
      */
     std::array<float, 4> getDrawableDemCoords(const OverscaledTileID& tileID) const {
         const auto it = drawableDemCoords.find(tileID);
-        return it != drawableDemCoords.end()
-                   ? it->second
-                   : std::array<float, 4>{{1.0f / util::EXTENT, 0.0f, 0.0f, static_cast<float>(demDim)}};
+        auto coords = it != drawableDemCoords.end()
+                          ? it->second
+                          : std::array<float, 4>{{1.0f / util::EXTENT, 0.0f, 0.0f, static_cast<float>(demDim)}};
+#if MLN_RENDER_BACKEND_METAL
+        // Only the Metal shaders know ground from none, so only they read the edges
+        if (const auto edges = curtainlessByTile.find(tileID); edges != curtainlessByTile.end()) {
+            coords[3] = terrain::withCurtainlessEdges(coords[3], edges->second);
+        }
+#endif
+        return coords;
     }
 
     /**
@@ -529,6 +537,11 @@ private:
     // Per-drawable scale/offset into the bound DEM texture ({1,0,0,0} unless
     // an ancestor tile's DEM is bound); read by the terrain layer tweaker
     std::map<OverscaledTileID, std::array<float, 4>> drawableDemCoords;
+    /// Each mesh tile's edges with no ground past them (terrain::curtainlessEdges).
+    std::unordered_map<OverscaledTileID, uint8_t> curtainlessByTile;
+    /// The mesh tiles and loaded DEM tiles curtainlessByTile was worked out for.
+    std::size_t curtainInputs = 0;
+    void updateCurtainlessEdges(const std::set<UnwrappedTileID>& meshTiles);
 #if MLN_RENDER_BACKEND_OPENGL
     // Per-tile demTextureArray layer (own or ancestor DEM), -1 when the tile has no packed DEM;
     // feeds the instanced depth pass (see rebuildInstancedDepthDrawable / depthInstances).
