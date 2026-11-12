@@ -110,7 +110,7 @@ public:
         double zoom = 13.0;
         Size size{1200, 800};
         // DEM tiles whose west edge lies east of this longitude come back empty.
-        std::optional<double> demEndsAt;
+        std::optional<double> demEndsAt{};
     };
 
     explicit TerrainSourceCoverTest(const Options& options)

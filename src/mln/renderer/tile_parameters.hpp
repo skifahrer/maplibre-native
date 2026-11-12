@@ -76,7 +76,7 @@ public:
     /// camera, RenderTerrain::meshTileCapOrigin, the same point the mesh-tile cap uses.
     std::array<double, 2> coverTileLimitOrigin{{0.0, 0.0}};
     /// For the terrain's DEM source: the mesh's last cover, loaded instead of the DEM's own.
-    std::vector<UnwrappedTileID> terrainMeshCover;
+    std::vector<UnwrappedTileID> terrainMeshCover{};
 };
 
 } // namespace mln
