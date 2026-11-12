@@ -26,7 +26,7 @@ TEST(TerrainCurtain, GroundAllRoundHangsEveryCurtain) {
     EXPECT_EQ(0, curtainlessEdges(tile, [](double, double) { return std::optional<bool>(true); }));
 }
 
-// 117 Along the Tatras border a curtain hung into the void past the edge, a spike to the sky.
+// 117 At the Tatras border a curtain hung into the void past its edge, a spike.
 TEST(TerrainCurtain, NoGroundPastAnEdgeHangsNoCurtainThere) {
     const auto polandEast = [](double x, double) {
         return std::optional<bool>(x < east);
@@ -57,7 +57,7 @@ TEST(TerrainCurtain, TheEdgesRideInTheFraction) {
 }
 
 #if MLN_RENDER_BACKEND_METAL
-// 117 Both Metal terrain passes read the size whole and drop no curtain on a flagged edge.
+// 117 Both Metal terrain passes read the size whole and skip flagged edges.
 TEST(TerrainCurtain, TheMetalShadersReadTheEdges) {
     EXPECT_NE(std::string::npos, std::string(shaders::prelude).find("inline bool curtain_hangs("));
     using Terrain = shaders::ShaderSource<shaders::BuiltIn::TerrainShader, gfx::Backend::Type::Metal>;

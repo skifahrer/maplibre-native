@@ -17,7 +17,7 @@ enum CurtainlessEdge : uint8_t {
     BottomEdge = 8
 };
 
-/// The edges of `tile` with no ground just past them, by `groundAt` in world units (0 to 1).
+/// The edges of `tile` with no ground just past them, by `groundAt` in world units.
 template <typename GroundAt>
 uint8_t curtainlessEdges(const CanonicalTileID& tile, const GroundAt& groundAt) {
     // Every mesh column's step, ends too: a short gap between samples kept its curtain
@@ -42,7 +42,7 @@ uint8_t curtainlessEdges(const CanonicalTileID& tile, const GroundAt& groundAt) 
     return edges;
 }
 
-/// The DEM size with the curtainless edges in its fraction, as the Metal terrain shaders read it.
+/// The DEM size with the curtainless edges in its fraction, for the Metal shaders.
 inline float withCurtainlessEdges(float demDim, uint8_t edges) {
     return std::floor(demDim) + static_cast<float>(edges & 15) / 16.0f;
 }
