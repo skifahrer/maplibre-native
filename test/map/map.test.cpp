@@ -178,6 +178,30 @@ TEST(Map, RendererState) {
     EXPECT_TRUE(test.frontend.hasLayer("SymbolLayer"));
 }
 
+// 114 Each fog setting during a fly stepped it and set off the app's camera handler again.
+TEST(Map, FogSetDuringACameraMoveLeavesTheMoveAlone) {
+    MapTest<> test{1, MapMode::Continuous};
+    test.map.getStyle().loadJSON(R"STYLE({"version": 8, "sources": {}, "layers": []})STYLE");
+    test.map.easeTo(CameraOptions().withZoom(8.0), AnimationOptions(Milliseconds(10000)));
+
+    int changes = 0;
+    test.observer.cameraIsChangingCallback = [&] {
+        ++changes;
+    };
+    test.map.setFog(Color::white(), 1000.0, 2000.0);
+    test.map.setDrawDistance(3000.0);
+    test.map.setClayColor(Color::red());
+    test.map.setSkyColor(Color::blue());
+
+    EXPECT_EQ(0, changes);
+    EXPECT_EQ(1000.0, test.map.getFogStart());
+    EXPECT_EQ(3000.0, test.map.getDrawDistance());
+    // 114 A move still running past the test broke the terrain occlusion tests after it
+    test.observer.cameraIsChangingCallback = nullptr;
+    test.map.cancelTransitions();
+    test.runLoop.runOnce();
+}
+
 TEST(Map, LatLngBehavior) {
     MapTest<> test;
 

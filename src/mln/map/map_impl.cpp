@@ -109,6 +109,15 @@ void Map::Impl::onSourceChanged(style::Source& source) {
     }
 }
 
+void Map::Impl::onLookChanged() {
+    // A move renders every frame; an update here stepped it, and the app, told the camera had
+    // changed, set the fog again
+    if (mode == MapMode::Continuous && transform.inTransition()) {
+        return;
+    }
+    onUpdate();
+}
+
 void Map::Impl::onUpdate() {
     // Ahead of the still-mode return below: a camera the app sets before the next still render
     // has to know that the terrain went (see settleCenterAwaitingSeaLevel).
@@ -509,8 +518,7 @@ bool Map::Impl::setPitchKeepingEye(double pitchDegrees) {
     trial.jumpTo(tilted);
     const LatLng reached = trial.getLatLng();
     if (std::abs(util::rad2deg(trial.getState().getPitch()) - pitchDegrees) > 1e-6 ||
-        std::abs(trial.getZoom() - *camera.zoom) > 1e-9 ||
-        std::abs(reached.latitude() - moved.latitude()) > 1e-9 ||
+        std::abs(trial.getZoom() - *camera.zoom) > 1e-9 || std::abs(reached.latitude() - moved.latitude()) > 1e-9 ||
         std::abs(util::wrap(reached.longitude() - moved.longitude(), -180.0, 180.0)) > 1e-9) {
         return false;
     }

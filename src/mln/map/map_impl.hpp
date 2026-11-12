@@ -51,6 +51,8 @@ public:
     // StyleObserver
     void onSourceChanged(style::Source&) final;
     void onUpdate() final;
+    /// Takes a change to how the map looks, not where the camera is, to the next frame.
+    void onLookChanged();
     void onStyleLoading() final;
     void onStyleLoaded() final;
     void onStyleError(std::exception_ptr) final;

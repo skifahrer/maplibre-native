@@ -32,6 +32,12 @@ public:
         }
     }
 
+    void onCameraIsChanging() final {
+        if (cameraIsChangingCallback) {
+            cameraIsChangingCallback();
+        }
+    }
+
     void onDidFinishRenderingFrame(const RenderFrameStatus& status) final {
         if (didFinishRenderingFrameCallback) {
             didFinishRenderingFrameCallback(status);
@@ -98,6 +104,7 @@ public:
     std::function<void()> didFinishLoadingMapCallback;
     std::function<void()> didFailLoadingMapCallback;
     std::function<void()> didFinishLoadingStyleCallback;
+    std::function<void()> cameraIsChangingCallback;
     std::function<void(RenderFrameStatus)> didFinishRenderingFrameCallback;
     std::function<void()> didBecomeIdleCallback;
     std::function<void(gfx::ShaderRegistry&)> onRegisterShadersCallback;
