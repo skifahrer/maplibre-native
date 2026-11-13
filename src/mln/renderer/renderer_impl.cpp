@@ -32,6 +32,7 @@
 #include <mln/renderer/layer_group.hpp> // drape signature: TileLayerGroup::visitDrawables
 #include <mln/renderer/bucket.hpp>      // drape signature: Bucket::getID content revision
 #include <mln/util/hash.hpp>            // drape signature: hash_combine
+#include <mln/renderer/drape_turns.hpp>
 #include <map>
 #include <mln/renderer/render_terrain.hpp>
 #include <mln/renderer/dem_elevation_provider.hpp>
@@ -589,17 +590,23 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // map's TerrainLoadMode; Quality (default) is unlimited.
         const int drapeCap = terrainLoadBudget(updateParameters->terrainLoadMode).drapeRerendersPerFrame;
         int drapeBudget = drapeCap > 0 ? drapeCap : (1 << 30);
+        std::vector<RenderTarget*> drapes;
+        std::vector<uint32_t> framesHeld;
         orchestrator.visitRenderTargets([&](RenderTarget& renderTarget) {
             if (renderTarget.getDrapeTileID()) {
-                const auto res = renderTarget.render(
-                    orchestrator, renderTree, parameters, /*canRerender=*/drapeBudget > 0);
-                if (res == RenderTarget::RenderResult::Rendered) {
-                    --drapeBudget;
-                } else if (res == RenderTarget::RenderResult::Deferred) {
-                    drapeWorkDeferred = true;
-                }
+                drapes.push_back(&renderTarget);
+                framesHeld.push_back(renderTarget.getFramesHeld());
             }
         });
+        for (const std::size_t turn : drapeTurns(framesHeld)) {
+            const auto res = drapes[turn]->render(
+                orchestrator, renderTree, parameters, /*canRerender=*/drapeBudget > 0);
+            if (res == RenderTarget::RenderResult::Rendered) {
+                --drapeBudget;
+            } else if (res == RenderTarget::RenderResult::Deferred) {
+                drapeWorkDeferred = true;
+            }
+        }
     };
 
     const auto commonClearPass = [&] {

@@ -119,6 +119,9 @@ public:
     /// so a burst of dirty drape targets is spread across frames rather than stalling one.
     RenderResult render(RenderOrchestrator&, const RenderTree&, PaintParameters&, bool canRerender = true);
 
+    /// Frames in a row this target was deferred by the drape budget.
+    uint32_t getFramesHeld() const { return framesHeld; }
+
 protected:
     void renderDrapedLayerGroups(RenderOrchestrator&, PaintParameters&);
 
@@ -190,6 +193,7 @@ protected:
     // holds valid (if stale) content. Only such targets may be deferred by the drape budget;
     // a never-rendered target is always rendered to avoid showing a blank tile.
     bool hasRenderedContent = false;
+    uint32_t framesHeld = 0;
 
 public:
     void setRenderOnce(bool value) { renderOnce = value; }
