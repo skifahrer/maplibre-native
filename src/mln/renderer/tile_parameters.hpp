@@ -6,6 +6,7 @@
 #include <mln/tile/tile_id.hpp>
 
 #include <array>
+#include <limits>
 #include <memory>
 #include <numbers>
 #include <optional>
@@ -75,6 +76,9 @@ public:
     /// Where coverTileLimit measures from (normalized web-mercator): the ground under the
     /// camera, RenderTerrain::meshTileCapOrigin, the same point the mesh-tile cap uses.
     std::array<double, 2> coverTileLimitOrigin{{0.0, 0.0}};
+    /// With terrain on: how far from coverTileLimitOrigin (normalized web-mercator) the mesh
+    /// reaches; a tile past it would stand in the sky. Infinite: no limit.
+    double coverReach = std::numeric_limits<double>::infinity();
     /// For the terrain's DEM source: the mesh's last cover, loaded instead of the DEM's own.
     std::vector<UnwrappedTileID> terrainMeshCover{};
 };
