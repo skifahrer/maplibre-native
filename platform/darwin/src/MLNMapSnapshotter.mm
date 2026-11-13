@@ -487,8 +487,9 @@ private:
 
 MLNImage *MLNAttributedSnapshot(mln::MapSnapshotter::Attributions attributions, MLNImage *mglImage,
                                 MLNMapSnapshotOptions *options, void (^overlayHandler)()) {
+  // Parsing attribution HTML takes WebKit on the main thread; a snapshot without it needs none.
   NSArray<MLNAttributionInfo *> *attributionInfo =
-      MLNAttributionInfosFromAttributions(attributions);
+      options.showsAttribution ? MLNAttributionInfosFromAttributions(attributions) : @[];
 
 #if TARGET_OS_IPHONE
   MLNAttributionInfoStyle attributionInfoStyle = MLNAttributionInfoStyleLong;
