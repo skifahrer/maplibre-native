@@ -31,6 +31,8 @@
 #include <mln/tile/tile.hpp>
 #include <mln/util/instrumentation.hpp>
 #include <mln/util/math.hpp>
+#include <mln/util/constants.hpp>
+#include <mln/math/angles.hpp>
 #include <mln/util/string.hpp>
 #include <mln/util/logging.hpp>
 
@@ -320,6 +322,13 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
                                                        RenderTerrain::sourceTilesPerMeshTile
                                                  : 0;
     tileParameters.coverTileLimitOrigin = RenderTerrain::meshTileCapOrigin(updateParameters->transformState);
+    // Past where the capped mesh ends there is no ground: buildings and labels there stood in the sky.
+    tileParameters.coverReach = std::numeric_limits<double>::infinity();
+    if (terrainEnabled) {
+        const double metresPerUnit = util::M2PI * util::EARTH_RADIUS_M *
+                                     std::cos(util::deg2rad(updateParameters->transformState.getLatLng().latitude()));
+        tileParameters.coverReach = renderTerrain->getCoverReachMetres() / metresPerUnit;
+    }
 
     const ImageDifference imageDiff = diffImages(imageImpls, updateParameters->images);
     imageImpls = updateParameters->images;

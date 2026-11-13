@@ -176,6 +176,8 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
         util::mergeFarthestTiles(
             idealTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin, zoomRange.min);
         util::keepNearestTiles(panTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin);
+        util::keepTilesWithin(idealTiles, parameters.coverReach, parameters.coverTileLimitOrigin);
+        util::keepTilesWithin(panTiles, parameters.coverReach, parameters.coverTileLimitOrigin);
     }
     // The terrain's DEM loads the tiles its mesh is drawn on, far ones merged to fit the budget.
     if (!parameters.terrainMeshCover.empty()) {

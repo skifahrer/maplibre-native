@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cmath>
+#include <limits>
 #include <set>
 
 #include <algorithm>
@@ -1087,4 +1088,25 @@ TEST(TileCover, CacheKeysOnTheLimitTheGroundAndTheDetailOrigin) {
     expectFresh("a detail origin");
     params.tileLodOrigin = std::array<double, 2>{{0.5559, 0.3539}};
     expectFresh("another detail origin");
+}
+
+// 128 Buildings past where the 3D ground ended stood in the sky to the horizon.
+TEST(TileCover, KeepTilesWithinDropsTilesPastTheGround) {
+    // Origin at the corner of z2 tile (1,1): its four neighbours touch it, the rest are farther.
+    std::vector<OverscaledTileID> tiles;
+    for (uint32_t x = 0; x < 4; ++x) {
+        for (uint32_t y = 0; y < 4; ++y) {
+            tiles.emplace_back(2, 0, 2, x, y);
+        }
+    }
+    util::keepTilesWithin(tiles, 0.1, {{0.5, 0.5}});
+    const std::vector<OverscaledTileID> near{{2, 0, 2, 1, 1}, {2, 0, 2, 1, 2}, {2, 0, 2, 2, 1}, {2, 0, 2, 2, 2}};
+    EXPECT_EQ(near, tiles);
+}
+
+// 128 With no tile dropped from the ground every source keeps its whole cover.
+TEST(TileCover, KeepTilesWithinAnInfiniteReachKeepsAll) {
+    std::vector<OverscaledTileID> tiles{{2, 0, 2, 0, 0}, {2, 0, 2, 3, 3}};
+    util::keepTilesWithin(tiles, std::numeric_limits<double>::infinity(), {{0.5, 0.5}});
+    EXPECT_EQ(2u, tiles.size());
 }

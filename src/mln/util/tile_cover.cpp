@@ -11,6 +11,7 @@
 #include <mln/util/tile_lod.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
 #include <functional>
 #include <list>
@@ -785,6 +786,15 @@ void keepNearestTiles(std::vector<OverscaledTileID>& tiles, size_t maxTiles, con
         return da < db || (da == db && a < b);
     });
     tiles.erase(keep, tiles.end());
+}
+
+void keepTilesWithin(std::vector<OverscaledTileID>& tiles, double reach, const std::array<double, 2>& origin) {
+    if (!std::isfinite(reach)) {
+        return;
+    }
+    std::erase_if(tiles, [&](const OverscaledTileID& id) {
+        return nearestPointDistance2(id.canonical, id.wrap, origin) > reach * reach;
+    });
 }
 
 double nearestPointDistance2(const CanonicalTileID& id, int16_t wrap, const std::array<double, 2>& origin) {

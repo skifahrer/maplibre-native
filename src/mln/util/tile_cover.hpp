@@ -147,6 +147,9 @@ std::set<UnwrappedTileID> frustumCull(const TileCoverParameters& state, const st
 /// tiles from one call to the next.
 void keepNearestTiles(std::vector<OverscaledTileID>& tiles, size_t maxTiles, const std::array<double, 2>& origin);
 
+/// Drop the tiles that begin farther than `reach` from `origin` (both normalized web-mercator).
+void keepTilesWithin(std::vector<OverscaledTileID>& tiles, double reach, const std::array<double, 2>& origin);
+
 /// Squared distance from `origin` (normalized web-mercator) to the nearest point of the tile.
 double nearestPointDistance2(const CanonicalTileID& id, int16_t wrap, const std::array<double, 2>& origin);
 
