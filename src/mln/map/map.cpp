@@ -771,6 +771,17 @@ bool Map::setPitchKeepingEye(double pitchDegrees) {
     return moved;
 }
 
+bool Map::setBearingKeepingEye(double bearingDegrees) {
+    impl->settleCenterAwaitingSeaLevel();
+    const bool moved = impl->setBearingKeepingEye(bearingDegrees);
+    if (moved) {
+        impl->noteCameraSet();
+        impl->cameraMutated = true;
+    }
+    impl->onUpdate();
+    return moved;
+}
+
 double Map::getSightGroundDistance() const {
     return impl->getSightGroundDistance();
 }

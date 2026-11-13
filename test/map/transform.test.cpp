@@ -575,6 +575,33 @@ TEST(Transform, MoveByPitchedShortDragFollowsTheFinger) {
               0.1 * Projection::getMetersPerPixelAtLatitude(49.2, 13.0));
 }
 
+// 131 A map tilted to the horizon flung far at a touch: it pans as one tilted to 60 degrees
+TEST(Transform, MoveBySteepPansAsAtSixtyDegrees) {
+    for (const double bearing : {0.0, 217.0}) {
+        const auto movedBy = [&](double pitch, const ScreenCoordinate& offset) {
+            Transform transform;
+            transform.resize({1000, 1000});
+            transform.setMaxPitch(120.0);
+            transform.jumpTo(
+                CameraOptions().withCenter(LatLng{49.2, 20.1}).withZoom(15.0).withPitch(pitch).withBearing(bearing));
+            transform.moveBy(offset);
+            return transform.getLatLng();
+        };
+        const LatLng start{49.2, 20.1};
+        for (const ScreenCoordinate offset : {ScreenCoordinate{0, 120}, ScreenCoordinate{0, -120},
+                                              ScreenCoordinate{90, 0}, ScreenCoordinate{-60, 80}}) {
+            const LatLng atSixty = movedBy(60.0, offset);
+            const double far = metersBetween(start, atSixty);
+            ASSERT_GT(far, 1.0);
+            for (const double pitch : {75.0, 85.0, 89.5, 90.0, 105.0}) {
+                const LatLng steep = movedBy(pitch, offset);
+                EXPECT_LT(metersBetween(atSixty, steep), far * 0.01)
+                    << "pitch " << pitch << " bearing " << bearing << " offset " << offset.x << "," << offset.y;
+            }
+        }
+    }
+}
+
 TEST(Transform, Antimeridian) {
     Transform transform;
     transform.resize({1000, 1000});

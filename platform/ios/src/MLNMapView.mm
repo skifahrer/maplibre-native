@@ -327,6 +327,9 @@ enum { MLNAnnotationTagNotFound = UINT32_MAX };
 const CLLocationDegrees MLNHorizontalTiltToleranceDegrees = 45.0;
 /// Past this the tilt gesture keeps the eye: the line of sight barely meets the ground.
 const CGFloat MLNEyePivotPitch = 84.0;
+// Steeper, the ground under the fingers can lie kilometres off: a turn or pinch round it
+// throws the view there, so they keep to the centre.
+const CGFloat MLNFingerAnchorPitch = 60.0;
 
 /// Mapping from an annotation tag to metadata about that annotation, including
 /// the annotation itself.
@@ -2274,7 +2277,7 @@ public:
   [self cancelTransitions];
 
   CGPoint centerPoint = [self anchorPointForGesture:pinch];
-  if (self.anchorRotateOrZoomGesturesToCenterCoordinate) {
+  if (self.anchorRotateOrZoomGesturesToCenterCoordinate || [self isTooSteepForFingerAnchors]) {
     if (pinch.numberOfTouches != 1 || pinch.state == UIGestureRecognizerStateEnded) {
       centerPoint = [self contentCenter];
     }
@@ -2372,7 +2375,7 @@ public:
   [self cancelTransitions];
 
   CGPoint centerPoint = [self anchorPointForGesture:rotate];
-  if (self.anchorRotateOrZoomGesturesToCenterCoordinate) {
+  if (self.anchorRotateOrZoomGesturesToCenterCoordinate || [self isTooSteepForFingerAnchors]) {
     centerPoint = [self contentCenter];
   }
   MLNMapCamera *oldCamera = self.camera;
@@ -2424,9 +2427,12 @@ public:
                                              aroundAnchorPoint:centerPoint];
 
     if ([self _shouldChangeFromCamera:oldCamera toCamera:toCamera]) {
-      self.mbglMap.jumpTo(mln::CameraOptions()
-                              .withBearing(newDegrees)
-                              .withAnchor(mln::ScreenCoordinate{centerPoint.x, centerPoint.y}));
+      // Near and past the horizon the head turns: the eye stays where it stands.
+      if (oldCamera.pitch <= MLNEyePivotPitch || !self.mbglMap.setBearingKeepingEye(newDegrees)) {
+        self.mbglMap.jumpTo(mln::CameraOptions()
+                                .withBearing(newDegrees)
+                                .withAnchor(mln::ScreenCoordinate{centerPoint.x, centerPoint.y}));
+      }
     }
 
     [self cameraIsChanging];
@@ -2799,6 +2805,11 @@ public:
   camera = [self cameraForCameraOptions:currentCameraOptions];
 
   return camera;
+}
+
+- (BOOL)isTooSteepForFingerAnchors {
+  return self.userTrackingMode == MLNUserTrackingModeNone &&
+         self.mbglMap.getCameraOptions().pitch.value_or(0) > MLNFingerAnchorPitch;
 }
 
 - (CGPoint)anchorPointForGesture:(UIGestureRecognizer *)gesture {

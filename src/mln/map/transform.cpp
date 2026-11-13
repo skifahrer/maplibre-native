@@ -421,6 +421,16 @@ void Transform::flyTo(const CameraOptions& inputCamera,
 // MARK: - Position
 
 void Transform::moveBy(const ScreenCoordinate& offset, const AnimationOptions& animation) {
+    // Along the view a pixel covers 1/cos(pitch) of ground: 11 times more at 85 degrees than
+    // flat, without end past the horizon. A steeper map pans as far as one at the cap does.
+    constexpr double steepestPanPitch = util::deg2rad(60.0);
+    if (state.getPitch() > steepestPanPitch) {
+        Transform capped(state);
+        capped.jumpTo(CameraOptions().withPitch(util::rad2deg(steepestPanPitch)));
+        capped.moveBy(offset);
+        easeTo(CameraOptions().withCenter(capped.getLatLng(LatLng::Unwrapped)), animation);
+        return;
+    }
     ScreenCoordinate centerOffset = {offset.x, offset.y};
 
     // Reduce the offset so that it never goes past the horizon. If it goes past

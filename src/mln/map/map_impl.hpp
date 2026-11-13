@@ -190,6 +190,7 @@ public:
     /// the zoom limits, the bounds or the constrain mode would cut the move short.
     bool setCenterAltitudeKeepingView(double altitudeMeters);
     bool setPitchKeepingEye(double pitchDegrees);
+    bool setBearingKeepingEye(double bearingDegrees);
     /// Past this pitch the line of sight runs along or above the ground: the centre no longer
     /// sits on it, and only the eye's clearance moves it.
     bool looksPastTheGround() const;
