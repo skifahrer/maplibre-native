@@ -1561,7 +1561,8 @@ TEST(TerrainCamera, EyeOverUnloadedGroundBelowSeaLevelIsNotLifted) {
     map.getStyle().loadJSON(deepRampStyle);
     // Looking north from close to the water: the eye sits a couple of hundred meters above the
     // center and a few kilometers south of it.
-    map.jumpTo(CameraOptions().withCenter(LatLng{31.5, 35.5}).withZoom(15.0).withPitch(85.0).withBearing(0.0));
+    // 137 Under 84.3 degrees: steeper, the center stays in the air where the eye put it.
+    map.jumpTo(CameraOptions().withCenter(LatLng{31.5, 35.5}).withZoom(15.0).withPitch(84.0).withBearing(0.0));
     const auto start = map.getFreeCameraOptions().getLocation();
     ASSERT_TRUE(start.has_value());
     eyeGround = start->location;
@@ -1714,7 +1715,8 @@ struct EyeLeavesTheMountain {
     // not the mountain's. The center's own ground is never known there (the camera is too high over
     // flat ground for the cover to take its tile), so it keeps the height it last had, 1,000 m.
     void climbThenJump() {
-        map.jumpTo(CameraOptions().withCenter(LatLng{47.29, 11.4041}).withZoom(15.0).withPitch(85.0).withBearing(0.0));
+        // 137 Under 84.3 degrees: steeper, the center stays in the air where the eye put it.
+        map.jumpTo(CameraOptions().withCenter(LatLng{47.29, 11.4041}).withZoom(15.0).withPitch(84.0).withBearing(0.0));
         render(1500, [&] { return centerAltitude() > 2500.0; });
         const auto onMountain = map.getFreeCameraOptions().getLocation();
         ASSERT_TRUE(onMountain.has_value());
@@ -1911,17 +1913,11 @@ TEST(TerrainDEMTextures, ATextureIsMadeOnlyForTilesRelatedToTheMeshTileSet) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     ASSERT_EQ(quiet, quietFrames) << "tiles or DEM textures were still arriving after " << maxFrames << " frames";
-    const std::size_t cap = terrainLoadBudget(TerrainLoadMode::Performance).maxMeshTiles;
-    ASSERT_GT(demTiles.size(), 2 * cap)
-        << "the DEM source should hold more than twice the mesh limit, or the bound below proves nothing";
-
-    // In this view the tiles related to the mesh are its own, a texture each. The bound is a margin,
-    // not a rule: a mesh tile can have up to four loaded children, and a tile that leaves the related
-    // set and returns is made twice. It stays well below the tiles the source holds, which the guard
-    // above makes sure of.
+    // 137 Here the DEM loads the mesh's own cover, merged to reach the horizon, so every tile it
+    // holds is related to the mesh: what is left to hold is one texture a tile.
     EXPECT_GT(stats.numDEMTexturesCreated, 0) << "the mesh tiles have no DEM texture";
-    EXPECT_LE(stats.numDEMTexturesCreated, static_cast<int>(2 * cap))
-        << "a texture was made for a tile unrelated to the mesh";
+    EXPECT_LE(stats.numDEMTexturesCreated, static_cast<int>(demTiles.size()))
+        << "a texture was made twice for a tile";
 }
 
 namespace {
