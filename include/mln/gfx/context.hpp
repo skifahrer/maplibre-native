@@ -112,11 +112,13 @@ public:
     // records the tile, so every layer of that tile builds together (no half-built tiles);
     // once the budget is spent, further new tiles are deferred and retried next frame. The
     // key is a hash of the tile id (avoids a gfx->tile dependency); a rare collision only
-    // lets an extra tile through, which is harmless.
+    // lets an extra tile through, which is harmless. Every layer of a deferred tile is
+    // refused, so the deferred tiles are recorded too, to count each one once.
     void resetNewTileBuildBudget(int maxNewTiles) {
         newTileBudget = maxNewTiles;
         newTileBuildDeferred = false;
         newTilesAllowed.clear();
+        newTilesDeferred.clear();
     }
     bool allowNewTileBuild(std::size_t tileKey) {
         if (newTilesAllowed.contains(tileKey)) {
@@ -124,6 +126,9 @@ public:
         }
         if (newTileBudget <= 0) {
             newTileBuildDeferred = true;
+            if (newTilesDeferred.insert(tileKey).second) {
+                ++stats.numNewTileBuildsDeferred;
+            }
             return false;
         }
         --newTileBudget;
@@ -242,6 +247,7 @@ protected:
     bool newTileBuildDeferred = false;
     bool drawWaitedOnCompile = false;
     std::unordered_set<std::size_t> newTilesAllowed;
+    std::unordered_set<std::size_t> newTilesDeferred;
 };
 
 } // namespace gfx

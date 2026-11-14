@@ -64,6 +64,14 @@ RendererObserver& nullObserver() {
     return observer;
 }
 
+// Whether the position lies inside the tile.
+bool tileHolds(const UnwrappedTileID& tile, const LatLng& position) {
+    const auto at = Projection::project(position, tile.canonical.z);
+    return UnwrappedTileID(tile.canonical.z,
+                           static_cast<int64_t>(std::floor(at.x)),
+                           static_cast<int64_t>(std::floor(at.y))) == tile;
+}
+
 } // namespace
 
 Renderer::Impl::Impl(gfx::RendererBackend& backend_,
@@ -605,6 +613,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                 --drapeBudget;
             } else if (res == RenderTarget::RenderResult::Deferred) {
                 drapeWorkDeferred = true;
+                ++context.renderingStats().numDrapeTargetsDeferred;
             }
         }
     };
@@ -754,6 +763,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         if (terrainCoverRetryFrames > 0) {
             --terrainCoverRetryFrames;
             terrainCoverPending = true;
+            ++context.renderingStats().numTerrainCoverPendingFrames;
         }
     } else {
         terrainCoverRetryFrames = 4;
@@ -766,24 +776,36 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     // A reloaded style drops the centre to sea level: report as the first terrain did.
     if (terrain != reportedTerrain) {
         reportedTerrain = terrain;
-        lastReportedCenterElevation = 0.0;
+        lastReportedCenterElevation = std::numeric_limits<double>::quiet_NaN();
     }
+    // Only once a DEM tile covers the spot: ground not loaded yet is not sea level.
     if (terrain) {
-        const double centerElevation =
-            terrain->getElevationForLatLng(updateParameters->transformState.getLatLng()).value_or(0.0);
-        if (std::abs(centerElevation - lastReportedCenterElevation) > 0.25) {
-            lastReportedCenterElevation = centerElevation;
-            observer->onTerrainCenterElevationChanged(centerElevation);
+        if (const auto centerElevation = terrain->getElevationForLatLng(updateParameters->transformState.getLatLng())) {
+            if (std::isnan(lastReportedCenterElevation) ||
+                std::abs(*centerElevation - lastReportedCenterElevation) > 0.25) {
+                lastReportedCenterElevation = *centerElevation;
+                observer->onTerrainCenterElevationChanged(*centerElevation);
+            }
         }
         // And under the eye: a camera dragged towards a slope rising in front of it ends up under
         // the ground (the steeper the pitch, the less it sits above the center), and the map
         // lifts it out when it knows the height there.
         if (const auto eye = updateParameters->transformState.getFreeCameraOptions().getLocation()) {
-            const double eyeElevation = terrain->getElevationForLatLng(eye->location).value_or(0.0);
-            if (!std::isnan(eyeElevation) &&
-                (std::isnan(lastReportedEyeElevation) || std::abs(eyeElevation - lastReportedEyeElevation) > 0.25)) {
-                lastReportedEyeElevation = eyeElevation;
-                observer->onTerrainEyeElevationChanged(eyeElevation);
+            UnwrappedTileID readFrom(0, 0, 0);
+            if (const auto eyeElevation = terrain->getElevationForLatLng(eye->location, &readFrom)) {
+                eyeElevationTile = readFrom;
+                if (std::isnan(lastReportedEyeElevation) || std::abs(*eyeElevation - lastReportedEyeElevation) > 0.25) {
+                    lastReportedEyeElevation = *eyeElevation;
+                    observer->onTerrainEyeElevationChanged(*eyeElevation);
+                }
+            } else if (eyeElevationTile && !tileHolds(*eyeElevationTile, eye->location)) {
+                // The eye left the tile its height came from and no loaded tile is under it yet (or
+                // ever): the old height is another place's, so the map is told it does not know.
+                eyeElevationTile.reset();
+                if (!std::isnan(lastReportedEyeElevation)) {
+                    lastReportedEyeElevation = std::numeric_limits<double>::quiet_NaN();
+                    observer->onTerrainEyeElevationChanged(lastReportedEyeElevation);
+                }
             }
         }
         // And where a camera animation is headed, while it runs: the map eases the center's height

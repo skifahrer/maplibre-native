@@ -38,7 +38,9 @@ add_library(
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_camera.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_elevation_index.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_fill_pattern_drape.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/renderer/terrain_pattern_crossfade.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_drape_resolution.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/renderer/terrain_drape_zoom_out.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_occlusion.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_elevation.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_line_drape.test.cpp
@@ -46,6 +48,7 @@ add_library(
     ${PROJECT_SOURCE_DIR}/test/renderer/layer_min_zoom_tiles.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_cache_policy.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_mesh_cover.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/renderer/terrain_line_edges.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_source_cover.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_view_settings.test.cpp
     $<$<BOOL:${MLN_WITH_WEBGPU}>:${PROJECT_SOURCE_DIR}/test/renderer/wgsl_preprocessor.test.cpp>

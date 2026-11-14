@@ -273,10 +273,20 @@ TEST(TerrainSourceCover, TheDEMSourceLoadsTheMeshCover) {
     test.map.jumpTo(CameraOptions().withBearing(40.0));
     test.settleDEM();
     const auto turned = util::terrainMeshCover();
+    // 137 The ground under the eye is loaded as well: it is often behind the view the mesh covers.
+    const auto eye = test.cameraGround();
+    const auto underTheEye = [&](const CanonicalTileID& id) {
+        const double tiles = std::pow(2.0, id.z);
+        return id.x == static_cast<uint32_t>(eye[0] * tiles) && id.y == static_cast<uint32_t>(eye[1] * tiles);
+    };
     for (const auto& id : test.demTiles) {
-        EXPECT_TRUE(std::any_of(turned.begin(), turned.end(), [&](const UnwrappedTileID& tile) {
-            return tile.canonical.scaledTo(std::min<uint8_t>(tile.canonical.z, 13)) == id;
-        })) << int(id.z) << "/" << id.x << "/" << id.y;
+        EXPECT_TRUE(underTheEye(id) ||
+                    std::any_of(turned.begin(),
+                                turned.end(),
+                                [&](const UnwrappedTileID& tile) {
+                                    return tile.canonical.scaledTo(std::min<uint8_t>(tile.canonical.z, 13)) == id;
+                                }))
+            << int(id.z) << "/" << id.x << "/" << id.y;
     }
 }
 
@@ -324,8 +334,7 @@ MeshDetail meshDetail(const std::array<double, 2>& ground) {
 // camera, on the same tile cap: the far tiles go coarser to pay for it.
 TEST(TerrainSourceCover, CloseUpIsFinerUnderTheCameraOnTheSameCap) {
     const auto detailIn = [](TerrainLoadMode mode) {
-        TerrainSourceCoverTest test(
-            {.demMinZoom = 0, .demMaxZoom = 12, .mode = mode, .pitch = 75.0, .zoom = 18.0});
+        TerrainSourceCoverTest test({.demMinZoom = 0, .demMaxZoom = 12, .mode = mode, .pitch = 75.0, .zoom = 18.0});
         test.settleDEM();
         EXPECT_LE(util::terrainMeshCover().size(), terrainLoadBudget(mode).maxMeshTiles);
         return meshDetail(test.cameraGround());
@@ -365,7 +374,8 @@ TEST(TerrainSourceCover, ASmallPanKeepsTheGroundNearestTheCameraFineInEveryFrame
             CameraOptions().withCenter(LatLng{centre.latitude() + step * 0.0004, centre.longitude() - step * 0.0002}));
         test.render(1);
         const MeshDetail now = meshDetail(test.cameraGround());
-        EXPECT_EQ(now.nearestTheCamera, before.finest) << "step " << step << ": the ground nearest the camera went coarse";
+        EXPECT_EQ(now.nearestTheCamera, before.finest)
+            << "step " << step << ": the ground nearest the camera went coarse";
     }
     test.settleDEM();
     EXPECT_EQ(meshDetail(test.cameraGround()).nearestTheCamera, before.finest);

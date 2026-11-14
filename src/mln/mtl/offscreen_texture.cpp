@@ -108,18 +108,17 @@ public:
     void swap() override {
         assert(commandBuffer);
         commandBuffer->commit();
-        // A queue runs buffers in commit order; only a CPU read has to wait for this one.
-        committed = std::move(commandBuffer);
         commandBuffer.reset();
         renderPassDescriptor.reset();
     }
 
     PremultipliedImage readStillImage() {
         assert(static_cast<Texture2D*>(colorTexture.get())->getMetalTexture());
-        if (committed) {
-            committed->waitUntilCompleted();
-            committed.reset();
-        }
+
+        // The queue runs command buffers in order, so an empty one completes after every pass committed so far.
+        const auto fence = NS::RetainPtr(context.getBackend().getCommandQueue()->commandBuffer());
+        fence->commit();
+        fence->waitUntilCompleted();
 
         auto data = std::make_unique<uint8_t[]>(colorTexture->getDataSize());
         MTL::Region region = MTL::Region::Make2D(0, 0, size.width, size.height);
@@ -156,7 +155,6 @@ private:
     gfx::Texture2DPtr depthTexture;
     gfx::Texture2DPtr stencilTexture;
     MTLCommandBufferPtr commandBuffer;
-    MTLCommandBufferPtr committed;
     MTLRenderPassDescriptorPtr renderPassDescriptor;
 };
 
