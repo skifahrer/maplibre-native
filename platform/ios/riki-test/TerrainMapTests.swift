@@ -37,6 +37,35 @@ final class TerrainMapTests: TerrainMapTestCase {
         XCTAssertTrue(mapView.sightGroundDistance.isNaN)
     }
 
+    // 132: an app grows the relief in while the map tilts, without loading another style
+    func testTerrainIsAddedRaisedAndRemovedOnALoadedStyle() throws {
+        try loadMap(terrain: false)
+        let style = try XCTUnwrap(mapView.style)
+        XCTAssertNil(style.terrainSourceIdentifier)
+        XCTAssertEqual(style.terrainExaggeration, 0)
+        style.terrainExaggeration = 2
+        XCTAssertEqual(style.terrainExaggeration, 0)
+
+        style.setTerrain(sourceIdentifier: "dem", exaggeration: 0.5, plane: nil)
+        tilt(0)
+        waitUntilFullyRendered()
+        waitUntilFullyRendered()
+        XCTAssertEqual(style.terrainSourceIdentifier, "dem")
+        XCTAssertEqual(style.terrainExaggeration, 0.5)
+        XCTAssertTrue(mapView.sightGroundDistance.isFinite)
+        let low = mapView.sightGroundDistance
+
+        style.terrainExaggeration = 1
+        waitUntilFullyRendered()
+        XCTAssertEqual(style.terrainExaggeration, 1)
+        XCTAssertLessThan(mapView.sightGroundDistance, low)
+
+        style.removeTerrain()
+        waitUntilFullyRendered()
+        XCTAssertNil(style.terrainSourceIdentifier)
+        XCTAssertTrue(mapView.sightGroundDistance.isNaN)
+    }
+
     func testAnchoringTheCentreOnTerrainMovesNothingOnScreen() throws {
         try loadMap()
         tilt(55)

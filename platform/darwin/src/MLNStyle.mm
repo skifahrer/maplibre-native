@@ -38,6 +38,7 @@
 #include <mln/style/sources/raster_source.hpp>
 #include <mln/style/sources/vector_source.hpp>
 #include <mln/style/style.hpp>
+#include <mln/style/terrain.hpp>
 
 #import "NSDate+MLNAdditions.h"
 
@@ -589,6 +590,39 @@ const MLNExceptionName MLNRedundantSourceIdentifierException =
   auto mbglLight = self.rawStyle->getLight();
   MLNLight *light = [[MLNLight alloc] initWithMBGLLight:mbglLight];
   return light;
+}
+
+// MARK: Style terrain
+
+- (NSString *)terrainSourceIdentifier {
+  const auto *terrain = self.rawStyle->getTerrain();
+  return terrain ? @(terrain->getSource().c_str()) : nil;
+}
+
+- (double)terrainExaggeration {
+  const auto *terrain = self.rawStyle->getTerrain();
+  return terrain ? terrain->getExaggeration() : 0;
+}
+
+- (void)setTerrainExaggeration:(double)terrainExaggeration {
+  if (auto *terrain = self.rawStyle->getTerrain()) {
+    terrain->setExaggeration(static_cast<float>(terrainExaggeration));
+  }
+}
+
+- (void)setTerrainWithSourceIdentifier:(NSString *)identifier
+                          exaggeration:(double)exaggeration
+                                 plane:(NSNumber *)plane {
+  auto terrain = std::make_unique<mln::style::Terrain>(identifier.UTF8String,
+                                                       static_cast<float>(exaggeration));
+  if (plane) {
+    terrain->setPlane(plane.floatValue);
+  }
+  self.rawStyle->setTerrain(std::move(terrain));
+}
+
+- (void)removeTerrain {
+  self.rawStyle->setTerrain(nullptr);
 }
 
 - (NSString *)description {

@@ -308,6 +308,47 @@ MLN_EXPORT
  */
 @property (nonatomic, strong) MLNLight *light;
 
+// MARK: Managing the Style's Terrain
+
+/**
+ The identifier of the raster DEM source the 3D terrain is raised from, or `nil`
+ when the style draws no terrain.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic, readonly, nullable) NSString *terrainSourceIdentifier;
+
+/**
+ How much the 3D terrain's heights are multiplied by, or 0 when the style draws
+ no terrain. Setting it without terrain does nothing.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic) double terrainExaggeration;
+
+/**
+ Raises 3D terrain from a raster DEM source already in the style, without
+ loading the style again.
+
+ @param identifier The identifier of a raster DEM source in the style.
+ @param exaggeration How much the heights are multiplied by.
+ @param plane The height in metres the DEM writes where it has no ground, or
+    `nil` when every texel is ground.
+
+ This method is experimental and subject to change.
+ */
+- (void)setTerrainWithSourceIdentifier:(NSString *)identifier
+                          exaggeration:(double)exaggeration
+                                 plane:(nullable NSNumber *)plane
+    NS_SWIFT_NAME(setTerrain(sourceIdentifier:exaggeration:plane:));
+
+/**
+ Lays the 3D terrain flat again, without loading the style again.
+
+ This method is experimental and subject to change.
+ */
+- (void)removeTerrain;
+
 // MARK: Localizing Map Content
 
 /**
