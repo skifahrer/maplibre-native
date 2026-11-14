@@ -17,9 +17,10 @@ final class NamesOverTerrainTests: XCTestCase, MLNMapSnapshotterDelegate {
 
     // 135 the slopes beside a saddle cut its name's ends off on a tilted 3D map
     func testANameHangingOverANearerRidgeDrawsWhole() throws {
-        let blue = try blueArea(in: snapshot(terrain: true))
-        let whole = try blueArea(in: snapshot(terrain: false))
+        let whole = try blueArea(in: snapshot(terrain: false, hanging: 50))
         XCTAssertGreaterThan(whole, 0)
+        XCTAssertGreaterThan(try blueArea(in: snapshot(terrain: true, hanging: 0)), 0, "the anchor is hidden")
+        let blue = try blueArea(in: snapshot(terrain: true, hanging: 50))
         XCTAssertGreaterThanOrEqual(Double(blue), Double(whole) * 0.9, "the ridge cut the icon")
     }
 
@@ -37,7 +38,7 @@ final class NamesOverTerrainTests: XCTestCase, MLNMapSnapshotterDelegate {
         return atan(sinh(.pi * (1 - 2 * y))) * 180 / .pi
     }
 
-    private func snapshot(terrain: Bool) throws -> MLNMapSnapshot {
+    private func snapshot(terrain: Bool, hanging: Double) throws -> MLNMapSnapshot {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -45,7 +46,7 @@ final class NamesOverTerrainTests: XCTestCase, MLNMapSnapshotterDelegate {
         let dem = folder.appendingPathComponent("dem.png")
         try Self.writeRidgedHeightModel(to: dem)
         let url = folder.appendingPathComponent("style.json")
-        try Self.style(dem: dem, terrain: terrain).write(to: url)
+        try Self.style(dem: dem, terrain: terrain, hanging: hanging).write(to: url)
 
         let camera = MLNMapCamera(lookingAtCenter: Self.anchor, acrossDistance: 3000, pitch: 60, heading: 0)
         let options = MLNMapSnapshotOptions(styleURL: url, camera: camera, size: CGSize(width: 400, height: 400))
@@ -73,7 +74,7 @@ final class NamesOverTerrainTests: XCTestCase, MLNMapSnapshotterDelegate {
         return stride(from: 0, to: rgba.count, by: 4).filter { rgba[$0 + 2] > 200 && rgba[$0] < 60 }.count
     }
 
-    private static func style(dem: URL, terrain: Bool) throws -> Data {
+    private static func style(dem: URL, terrain: Bool, hanging: Double) throws -> Data {
         let icons: [String: Any] = ["type": "Point", "coordinates": [anchor.longitude, anchor.latitude]]
         var style: [String: Any] = [
             "version": 8,
@@ -85,7 +86,7 @@ final class NamesOverTerrainTests: XCTestCase, MLNMapSnapshotterDelegate {
                 ["id": "background", "type": "background", "paint": ["background-color": "#d8e4c8"]],
                 ["id": "hillshade", "type": "hillshade", "source": "dem"],
                 ["id": "icons", "type": "symbol", "source": "icons",
-                 "layout": ["icon-image": "icon", "icon-anchor": "top", "icon-offset": [0, 50],
+                 "layout": ["icon-image": "icon", "icon-anchor": "top", "icon-offset": [0, hanging],
                             "icon-allow-overlap": true, "icon-ignore-placement": true]]
             ]
         ]
