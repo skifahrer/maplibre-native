@@ -13,19 +13,20 @@ What is ours besides those commits:
 
 ## Upstream comes in by pull request
 
-`upstream` runs every night. For each of upstream's `main` and `feature/terrain-3d` it keeps a
-branch of ours, `upstream-main` and `upstream-feature-terrain-3d`: upstream's branch with `master`
-merged into it, merged again whenever either moves. It keeps one pull request open from each into
-`master` and mentions @skifahrer when it opens one. Nothing is merged on its own.
+`upstream` runs every night. It keeps one branch of ours, `upstream`: upstream's `main` and
+`feature/terrain-3d` with `master` merged in, merged again whenever one of them moves. It keeps one
+pull request open from it into `master` and mentions @skifahrer when it opens one. Nothing is
+merged on its own. Once that pull request is merged, the next one starts from `master`.
 
 That pull request's `terrain-ios` run builds the framework from its head, so from upstream's
 changes on top of ours, and runs upstream's iOS tests (`//platform/ios/test:ios_test`), ours
 (`//platform/ios/riki-test:riki_test`) and the core's terrain tests on an iOS simulator, one at a
 time. Merge only when its `terrain-ios` status is green on the head.
 
-When upstream conflicts with our changes, `upstream` pushes upstream's side alone and marks the
-head red. Check out the branch, `git merge master`, resolve, build and push; later nightly runs
-merge on top of what you resolved.
+When a branch conflicts, `upstream` leaves the conflicting merge out, marks the head red with the
+branch's name and, when nothing has merged yet, opens the pull request on an empty booking commit.
+Check out `upstream`, merge the named branch, resolve, build and push; later nightly runs merge on
+top of what you resolved.
 
 Pushing upstream's workflow changes, and having that push start the pipeline, takes an
 `UPSTREAM_TOKEN` secret: a token with the `repo` and `workflow` scopes. Without it `upstream`
