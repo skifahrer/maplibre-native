@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <random>
 #include <set>
 
@@ -660,4 +661,106 @@ TEST(TerrainMeshCover, ASourcePastItsLimitGetsNothingShallowerThanItsMinzoom) {
     EXPECT_GT(cover.size(), 4096u);
     EXPECT_LT(cover.size(), 8192u);
     for (const auto& id : cover) ASSERT_GE(id.canonical.z, 13);
+}
+
+namespace {
+// z14 tiles around the one the eye stands in, on the equator: a tile is 2446 m across.
+UnwrappedTileID z14(int32_t dx, int32_t dy) {
+    return UnwrappedTileID(0, CanonicalTileID(14, static_cast<uint32_t>(8192 + dx), static_cast<uint32_t>(8192 + dy)));
+}
+
+constexpr std::array<double, 2> standingAt{{(8192.5) / 16384.0, (8192.5) / 16384.0}};
+const double metresPerUnit = util::M2PI * util::EARTH_RADIUS_M;
+
+std::set<UnwrappedTileID> hidden(const std::set<UnwrappedTileID>& cover,
+                                 double eyeAltitude,
+                                 const std::map<UnwrappedTileID, Range<double>>& heights) {
+    return RenderTerrain::hiddenBehindNearer(
+        cover, standingAt, eyeAltitude, metresPerUnit, [&](const CanonicalTileID& id) -> std::optional<Range<double>> {
+            const auto found = heights.find(UnwrappedTileID(0, id));
+            return found == heights.end() ? std::nullopt : std::optional<Range<double>>(found->second);
+        });
+}
+} // namespace
+
+namespace {
+// The z16 quarters of a z14 tile: its north row at `ridge`, the rest at `valley`.
+std::map<UnwrappedTileID, Range<double>> ridgeAlongTheNorth(const UnwrappedTileID& tile,
+                                                            Range<double> ridge,
+                                                            Range<double> valley) {
+    std::map<UnwrappedTileID, Range<double>> cells;
+    for (uint32_t y = 0; y < 4; ++y) {
+        for (uint32_t x = 0; x < 4; ++x) {
+            const CanonicalTileID cell(16, (tile.canonical.x << 2) + x, (tile.canonical.y << 2) + y);
+            cells.emplace(UnwrappedTileID(0, cell), y == 0 ? ridge : valley);
+        }
+    }
+    return cells;
+}
+} // namespace
+
+// 136 standing in a valley, the ground behind the ridge in front needs no mesh or drape
+TEST(TerrainMeshCover, ARidgeHidesTheLowerGroundBehindIt) {
+    const std::set<UnwrappedTileID> cover{z14(0, -1), z14(0, -3)};
+    const auto out = hidden(cover, 1600, {{z14(0, -1), {2000, 2200}}, {z14(0, -3), {1000, 1500}}});
+    EXPECT_EQ(out, std::set<UnwrappedTileID>{z14(0, -3)});
+}
+
+// 136 the ridge's nearest quarters, 1.2 km off, stand over a 2600 m peak 6 km beyond
+TEST(TerrainMeshCover, APeakTallerThanTheRidgeShowsOverIt) {
+    const std::set<UnwrappedTileID> cover{z14(0, -1), z14(0, -3)};
+    EXPECT_TRUE(hidden(cover, 1600, {{z14(0, -1), {2000, 2200}}, {z14(0, -3), {1000, 3200}}}).empty());
+}
+
+// 136 a ridge hides only what lies wholly beyond its farthest point
+TEST(TerrainMeshCover, GroundNoFartherThanTheRidgeShows) {
+    const std::set<UnwrappedTileID> cover{z14(0, -1), z14(0, -2)};
+    auto heights = ridgeAlongTheNorth(z14(0, -1), {2000, 2200}, {1000, 1100});
+    heights.emplace(z14(0, -1), Range<double>{1000, 2200});
+    heights.emplace(z14(0, -2), Range<double>{1000, 1100});
+    EXPECT_TRUE(hidden(cover, 1600, heights).empty());
+}
+
+// 136 the nearby guess for ground not loaded may stand higher than it does
+TEST(TerrainMeshCover, GroundWithoutHeightsIsNeverHiddenAndHidesNothing) {
+    const std::set<UnwrappedTileID> cover{z14(0, -1), z14(0, -3), z14(0, -5)};
+    const auto out = hidden(cover, 1600, {{z14(0, -1), {2000, 2200}}, {z14(0, -5), {1000, 1500}}});
+    EXPECT_EQ(out, std::set<UnwrappedTileID>{z14(0, -5)});
+    EXPECT_TRUE(hidden(cover, 1600, {{z14(0, -3), {1000, 1500}}}).empty());
+}
+
+// 136
+TEST(TerrainMeshCover, SeenFromAboveNothingIsHidden) {
+    const std::set<UnwrappedTileID> cover{z14(0, -1), z14(0, -3)};
+    EXPECT_TRUE(hidden(cover, 12000, {{z14(0, -1), {2000, 2200}}, {z14(0, -3), {1000, 1500}}}).empty());
+}
+
+// 136 a ridge to the east hides nothing to the north
+TEST(TerrainMeshCover, ARidgeHidesOnlyTheWayItLies) {
+    const std::set<UnwrappedTileID> cover{z14(1, 0), z14(0, -3)};
+    EXPECT_TRUE(hidden(cover, 1600, {{z14(1, 0), {2000, 2200}}, {z14(0, -3), {1000, 1500}}}).empty());
+}
+
+
+// 136 a tile spanning a valley and a ridge hides by its ridge, not by its valley floor
+TEST(TerrainMeshCover, ARidgeAcrossATilesFarSideHidesTheGroundBehindIt) {
+    const std::set<UnwrappedTileID> cover{z14(0, -1), z14(0, -3)};
+    auto heights = ridgeAlongTheNorth(z14(0, -1), {2000, 2200}, {1000, 1100});
+    heights.emplace(z14(0, -1), Range<double>{1000, 2200});
+    heights.emplace(z14(0, -3), Range<double>{1000, 1500});
+    EXPECT_EQ(hidden(cover, 1600, heights), std::set<UnwrappedTileID>{z14(0, -3)});
+
+    heights = ridgeAlongTheNorth(z14(0, -1), {1000, 1100}, {1000, 1100});
+    heights.emplace(z14(0, -1), Range<double>{1000, 2200});
+    heights.emplace(z14(0, -3), Range<double>{1000, 1500});
+    EXPECT_TRUE(hidden(cover, 1600, heights).empty());
+}
+
+// 136 the ridge just past the camera, in the tile it stands in, hides the ground behind it
+TEST(TerrainMeshCover, TheGroundTheEyeStandsOnHidesToo) {
+    const std::set<UnwrappedTileID> cover{z14(0, 0), z14(0, -2)};
+    auto heights = ridgeAlongTheNorth(z14(0, 0), {2000, 2200}, {1500, 1550});
+    heights.emplace(z14(0, 0), Range<double>{1500, 2200});
+    heights.emplace(z14(0, -2), Range<double>{1000, 1500});
+    EXPECT_EQ(hidden(cover, 1600, heights), std::set<UnwrappedTileID>{z14(0, -2)});
 }

@@ -7,6 +7,7 @@
 #include <mln/renderer/tile_parameters.hpp>
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace mln {
@@ -18,6 +19,30 @@ namespace {
 Range<int32_t> elevationRangeOf(const HillshadeBucket& bucket) {
     const auto& demData = bucket.getDEMData();
     return {demData.getMinElevation(), demData.getMaxElevation()};
+}
+
+// Each cell takes in its neighbours' first pixels too: the mesh interpolates across the line.
+template <int32_t Side>
+std::vector<Range<int32_t>> cellRangesOf(const DEMData& dem) {
+    std::vector<Range<int32_t>> cells;
+    cells.reserve(Side * Side);
+    for (int32_t cy = 0; cy < Side; ++cy) {
+        const int32_t y0 = std::max(0, cy * dem.dim / Side - 1);
+        const int32_t y1 = std::min(dem.dim - 1, (cy + 1) * dem.dim / Side);
+        for (int32_t cx = 0; cx < Side; ++cx) {
+            const int32_t x0 = std::max(0, cx * dem.dim / Side - 1);
+            const int32_t x1 = std::min(dem.dim - 1, (cx + 1) * dem.dim / Side);
+            Range<int32_t> range{std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min()};
+            for (int32_t y = y0; y <= y1; ++y) {
+                for (int32_t x = x0; x <= x1; ++x) {
+                    const int32_t height = dem.get(x, y);
+                    range = {std::min(range.min, height), std::max(range.max, height)};
+                }
+            }
+            cells.push_back(range);
+        }
+    }
+    return cells;
 }
 
 bool contains(const Range<int32_t>& outer, const Range<int32_t>& inner) {
@@ -66,6 +91,7 @@ void RenderRasterDEMSource::onTilesetChanged() {
     ++elevationGeneration;
     elevationRanges.clear();
     descendantElevationRanges.clear();
+    cellElevationRanges.clear();
 }
 
 std::optional<Range<int32_t>> RenderRasterDEMSource::getElevationRange(const CanonicalTileID& id) const {
@@ -80,6 +106,38 @@ std::optional<Range<int32_t>> RenderRasterDEMSource::getElevationRange(const Can
         if (it != elevationRanges.end()) {
             return it->second;
         }
+    }
+    return std::nullopt;
+}
+
+std::optional<Range<int32_t>> RenderRasterDEMSource::getCellElevationRange(const CanonicalTileID& id) const {
+    if (elevationRanges.empty()) {
+        return std::nullopt;
+    }
+    const auto& zoomRange = getCachedTileset()->zoomRange;
+    for (int z = std::min(id.z, zoomRange.max); std::cmp_greater_equal(z, zoomRange.min); --z) {
+        const int dz = id.z - z;
+        const CanonicalTileID tile(static_cast<uint8_t>(z), id.x >> dz, id.y >> dz);
+        const auto it = elevationRanges.find(tile);
+        if (it == elevationRanges.end()) {
+            continue;
+        }
+        const auto cells = cellElevationRanges.find(tile);
+        if (dz == 0 || cells == cellElevationRanges.end()) {
+            return it->second;
+        }
+        const int level = std::min(dz, 3);
+        const int32_t span = cellsPerSide >> level;
+        const auto x0 = static_cast<int32_t>((id.x >> (dz - level)) - (tile.x << level)) * span;
+        const auto y0 = static_cast<int32_t>((id.y >> (dz - level)) - (tile.y << level)) * span;
+        Range<int32_t> range{std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min()};
+        for (int32_t y = y0; y < y0 + span; ++y) {
+            for (int32_t x = x0; x < x0 + span; ++x) {
+                const auto& cell = cells->second[y * cellsPerSide + x];
+                range = {std::min(range.min, cell.min), std::max(range.max, cell.max)};
+            }
+        }
+        return range;
     }
     return std::nullopt;
 }
@@ -140,6 +198,17 @@ void RenderRasterDEMSource::keepElevationRangesOfHeldTiles() {
     };
     addHeld(tilePyramid.getTiles());
     addHeld(tilePyramid.getCache().getTiles());
+}
+
+void RenderRasterDEMSource::keepCellRangesOfHeldTiles() {
+    std::erase_if(cellElevationRanges, [&](const auto& entry) {
+        const auto held = [&](const std::map<OverscaledTileID, std::unique_ptr<Tile>>& tiles) {
+            return std::any_of(tiles.begin(), tiles.end(), [&](const auto& tile) {
+                return tile.first.canonical == entry.first;
+            });
+        };
+        return !held(tilePyramid.getTiles()) && !held(tilePyramid.getCache().getTiles());
+    });
 }
 
 void RenderRasterDEMSource::onTileChanged(Tile& tile) {
@@ -213,6 +282,10 @@ void RenderRasterDEMSource::onTileChanged(Tile& tile) {
             keepElevationRangesOfHeldTiles();
         }
         addElevationRange(tile.id.canonical, elevationRangeOf(*bucket));
+        if (cellElevationRanges.size() >= maxCellRangeEntries) {
+            keepCellRangesOfHeldTiles();
+        }
+        cellElevationRanges.insert_or_assign(tile.id.canonical, cellRangesOf<cellsPerSide>(bucket->getDEMData()));
     }
     RenderTileSource::onTileChanged(tile);
 }
