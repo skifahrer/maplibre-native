@@ -18,9 +18,13 @@ final class NamesOverTerrainTests: XCTestCase, MLNMapSnapshotterDelegate {
     // 135 the slopes beside a saddle cut its name's ends off on a tilted 3D map
     func testANameHangingOverANearerRidgeDrawsWhole() throws {
         let whole = try blueArea(in: snapshot(terrain: false, hanging: 50))
-        XCTAssertGreaterThan(whole, 0)
-        XCTAssertGreaterThan(try blueArea(in: snapshot(terrain: true, hanging: 0)), 0, "the anchor is hidden")
+        let flat = try blueArea(in: snapshot(terrain: true, hanging: 0, ridge: 0))
+        let anchored = try blueArea(in: snapshot(terrain: true, hanging: 0))
         let blue = try blueArea(in: snapshot(terrain: true, hanging: 50))
+        print("NAMES whole=\(whole) flat=\(flat) anchored=\(anchored) hanging=\(blue)")
+        XCTAssertGreaterThan(whole, 0)
+        XCTAssertGreaterThan(flat, 0, "no icon draws over flat terrain")
+        XCTAssertGreaterThan(anchored, 0, "the anchor is hidden")
         XCTAssertGreaterThanOrEqual(Double(blue), Double(whole) * 0.9, "the ridge cut the icon")
     }
 
@@ -38,13 +42,13 @@ final class NamesOverTerrainTests: XCTestCase, MLNMapSnapshotterDelegate {
         return atan(sinh(.pi * (1 - 2 * y))) * 180 / .pi
     }
 
-    private func snapshot(terrain: Bool, hanging: Double) throws -> MLNMapSnapshot {
+    private func snapshot(terrain: Bool, hanging: Double, ridge: Double = ridgeHeight) throws -> MLNMapSnapshot {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let dem = folder.appendingPathComponent("dem.png")
-        try Self.writeRidgedHeightModel(to: dem)
+        try Self.writeRidgedHeightModel(to: dem, ridge: ridge)
         let url = folder.appendingPathComponent("style.json")
         try Self.style(dem: dem, terrain: terrain, hanging: hanging).write(to: url)
 
@@ -95,11 +99,11 @@ final class NamesOverTerrainTests: XCTestCase, MLNMapSnapshotterDelegate {
     }
 
     // mapbox terrain-rgb: height = -10000 + (r * 65536 + g * 256 + b) / 10
-    private static func writeRidgedHeightModel(to url: URL) throws {
+    private static func writeRidgedHeightModel(to url: URL, ridge: Double) throws {
         let side = 256
         var bytes = [UInt8]()
         for row in 0 ..< side {
-            let rise = max(0, ridgeHeight - abs(Double(row) - ridgeRow) * metresPerRow)
+            let rise = max(0, ridge - abs(Double(row) - ridgeRow) * metresPerRow)
             let value = Int((1000 + rise + 10000) * 10)
             let pixel: [UInt8] = [UInt8(value >> 16), UInt8((value >> 8) & 255), UInt8(value & 255), 255]
             for _ in 0 ..< side { bytes += pixel }
