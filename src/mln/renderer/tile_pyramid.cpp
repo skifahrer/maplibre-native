@@ -6,6 +6,7 @@
 #include <mln/map/transform.hpp>
 #include <mln/math/clamp.hpp>
 #include <mln/actor/scheduler.hpp>
+#include <mln/util/projection.hpp>
 #include <mln/util/tile_cover.hpp>
 #include <mln/util/tile_range.hpp>
 #include <mln/util/enum.hpp>
@@ -135,6 +136,16 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
                    : util::tileCover(tileCoverParameters, coverZ, zoomRange, overscaledZ);
     };
 
+    std::optional<OverscaledTileID> alsoCovered;
+    const auto addUnlessCovered = [&](const OverscaledTileID& extra) {
+        if (std::none_of(idealTiles.begin(), idealTiles.end(), [&](const OverscaledTileID& tile) {
+                return tile.wrap == extra.wrap &&
+                       (tile.canonical == extra.canonical || extra.canonical.isChildOf(tile.canonical));
+            })) {
+            idealTiles.push_back(extra);
+        }
+    };
+
     if (std::cmp_greater_equal(overscaledZoom, zoomRange.min)) {
         int32_t idealZoom = std::min<int32_t>(zoomRange.max, overscaledZoom);
 
@@ -170,6 +181,16 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
                                   " tiles, only " + util::toString(idealTiles[0]) + " is taken in Tile mode.");
             idealTiles = {idealTiles[0]};
         }
+
+        // The tile over a position the cover leaves out, at the cover's finest zoom.
+        if (parameters.alsoCover) {
+            const auto at = Projection::project(*parameters.alsoCover, idealZoom);
+            const UnwrappedTileID unwrapped(static_cast<uint8_t>(idealZoom),
+                                            static_cast<int64_t>(std::floor(at.x)),
+                                            static_cast<int64_t>(std::floor(at.y)));
+            alsoCovered.emplace(static_cast<uint8_t>(tileZoom), unwrapped.wrap, unwrapped.canonical);
+            addUnlessCovered(*alsoCovered);
+        }
     }
 
     if (parameters.coverTileLimit > 0) {
@@ -188,6 +209,10 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
             demTiles.emplace(z, id.wrap, id.canonical.scaledTo(z));
         }
         idealTiles.assign(demTiles.begin(), demTiles.end());
+        // The mesh is cut to the view; the ground under the eye is often behind it.
+        if (alsoCovered) {
+            addUnlessCovered(*alsoCovered);
+        }
     }
 
     // Stores a list of all the tiles that we're definitely going to retain.
