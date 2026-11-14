@@ -132,6 +132,8 @@ struct DataInstance {
 
 struct FragmentStage {
     float4 position [[position, invariant]];
+    float4 lift;
+    float2 lift_terms;
     half2 tex;
 
 #if defined(HAS_UNIFORM_u_opacity)
@@ -255,8 +257,12 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     // Fade out symbols hidden behind the terrain (see calculate_visibility)
     const half vis = half(calculate_visibility(projectedPoint, depthTexture, depthSampler, drawable.depth_enabled, paintParams.units_to_pixels.y));
 
+    const float2 lift_uv = position.xy / position.w * 0.5 + 0.5;
+    const bool lifts = !drawable.pitch_with_map && drawable.depth_enabled != 0.0;
     return {
         .position     = position,
+        .lift         = float4(lift_uv.x, 1.0 - lift_uv.y, position.z / position.w, lifts ? 1.0 : 0.0),
+        .lift_terms   = float2(drawable.depth_a, drawable.depth_b),
         .tex          = half2(a_tex / drawable.texsize),
 #if defined(HAS_UNIFORM_u_opacity)
         .fade_opacity = fo * vis,
@@ -266,14 +272,16 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     };
 }
 
-half4 fragment fragmentMain(FragmentStage in [[stage_in]],
+SymbolFragmentOut fragment fragmentMain(FragmentStage in [[stage_in]],
                             device const uint32_t& uboIndex [[buffer(idGlobalUBOIndex)]],
                             device const SymbolTilePropsUBO* tilePropsVector [[buffer(idSymbolTilePropsUBO)]],
                             device const SymbolEvaluatedPropsUBO& props [[buffer(idSymbolEvaluatedPropsUBO)]],
                             texture2d<float, access::sample> image [[texture(0)]],
-                            sampler image_sampler [[sampler(0)]]) {
+                            sampler image_sampler [[sampler(0)]],
+                            texture2d<float, access::sample> depthTexture [[texture(2)]],
+                            sampler depthSampler [[sampler(2)]]) {
 #if defined(OVERDRAW_INSPECTOR)
-    return half4(1.0);
+    return {half4(1.0), in.position.z};
 #endif
 
 #if defined(HAS_UNIFORM_u_opacity)
@@ -283,7 +291,7 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     const float opacity = in.opacity; // fade_opacity is baked in for this case
 #endif
 
-    return half4(image.sample(image_sampler, float2(in.tex)) * opacity);
+    return {half4(image.sample(image_sampler, float2(in.tex)) * opacity), lifted_depth(in.position, in.lift, in.lift_terms, depthTexture, depthSampler)};
 }
 )";
 };
@@ -346,6 +354,8 @@ struct DataInstance {
 
 struct FragmentStage {
     float4 position [[position, invariant]];
+    float4 lift;
+    float2 lift_terms;
 
 #if !defined(HAS_UNIFORM_u_fill_color)
     half4 fill_color;
@@ -481,8 +491,12 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     // Fade out symbols hidden behind the terrain (see calculate_visibility)
     const half vis = half(calculate_visibility(projectedPoint, depthTexture, depthSampler, drawable.depth_enabled, paintParams.units_to_pixels.y));
 
+    const float2 lift_uv = position.xy / position.w * 0.5 + 0.5;
+    const bool lifts = !drawable.pitch_with_map && drawable.depth_enabled != 0.0;
     return {
         .position     = position,
+        .lift         = float4(lift_uv.x, 1.0 - lift_uv.y, position.z / position.w, lifts ? 1.0 : 0.0),
+        .lift_terms   = float2(drawable.depth_a, drawable.depth_b),
 #if !defined(HAS_UNIFORM_u_fill_color)
         .fill_color   = half4(unpack_mix_color(data.fill_color, drawable.fill_color_t)),
 #endif
@@ -505,14 +519,16 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     };
 }
 
-half4 fragment fragmentMain(FragmentStage in [[stage_in]],
+SymbolFragmentOut fragment fragmentMain(FragmentStage in [[stage_in]],
                             device const uint32_t& uboIndex [[buffer(idGlobalUBOIndex)]],
                             device const SymbolTilePropsUBO* tilePropsVector [[buffer(idSymbolTilePropsUBO)]],
                             device const SymbolEvaluatedPropsUBO& props [[buffer(idSymbolEvaluatedPropsUBO)]],
                             texture2d<float, access::sample> image [[texture(0)]],
-                            sampler image_sampler [[sampler(0)]]) {
+                            sampler image_sampler [[sampler(0)]],
+                            texture2d<float, access::sample> depthTexture [[texture(2)]],
+                            sampler depthSampler [[sampler(2)]]) {
 #if defined(OVERDRAW_INSPECTOR)
-    return half4(1.0);
+    return {half4(1.0), in.position.z};
 #endif
 
     device const SymbolTilePropsUBO& tileProps = tilePropsVector[uboIndex];
@@ -562,7 +578,7 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
         alpha = min(smoothstep(haloEdge - gammaScaled, haloEdge + gammaScaled, dist), 1.0 - alpha);
     }
 
-    return half4(color * (alpha * opacity * in.fade_opacity));
+    return {half4(color * (alpha * opacity * in.fade_opacity)), lifted_depth(in.position, in.lift, in.lift_terms, depthTexture, depthSampler)};
 }
 )";
 };
@@ -628,6 +644,8 @@ struct DataInstance {
 
 struct FragmentStage {
     float4 position [[position, invariant]];
+    float4 lift;
+    float2 lift_terms;
 
 #if !defined(HAS_UNIFORM_u_fill_color)
     half4 fill_color;
@@ -663,10 +681,10 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
                                 device const DynamicInstance* dynamicInstances [[buffer(symbolUBOCount + 3)]],
                                 device const OpacityInstance* opacityInstances [[buffer(symbolUBOCount + 4)]],
                                 device const DataInstance* dataInstances [[buffer(symbolUBOCount + 5)]],
-                                texture2d<float, access::sample> demTexture [[texture(1)]],
-                                sampler demSampler [[sampler(1)]],
-                                texture2d<float, access::sample> depthTexture [[texture(2)]],
-                                sampler depthSampler [[sampler(2)]]) {
+                                texture2d<float, access::sample> demTexture [[texture(2)]],
+                                sampler demSampler [[sampler(2)]],
+                                texture2d<float, access::sample> depthTexture [[texture(3)]],
+                                sampler depthSampler [[sampler(3)]]) {
 
 #if defined(HAS_UNIFORM_u_sorted_instance)
     const uint instance = instanceID;
@@ -768,42 +786,47 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     // Fade out symbols hidden behind the terrain (see calculate_visibility)
     const half vis = half(calculate_visibility(projectedPoint, depthTexture, depthSampler, drawable.depth_enabled, paintParams.units_to_pixels.y));
 
+    const float2 lift_uv = position.xy / position.w * 0.5 + 0.5;
+    const bool lifts = !drawable.pitch_with_map && drawable.depth_enabled != 0.0;
     return {
         .position     = position,
+        .lift         = float4(lift_uv.x, 1.0 - lift_uv.y, position.z / position.w, lifts ? 1.0 : 0.0),
+        .lift_terms   = float2(drawable.depth_a, drawable.depth_b),
+#if !defined(HAS_UNIFORM_u_fill_color)
+        .fill_color   = half4(unpack_mix_color(data.fill_color, drawable.fill_color_t)),
+#endif
+#if !defined(HAS_UNIFORM_u_halo_color)
+        .halo_color   = half4(unpack_mix_color(data.halo_color, drawable.halo_color_t)),
+#endif
         .tex          = half2(a_tex / (is_icon ? drawable.texsize_icon : drawable.texsize)),
+#if !defined(HAS_UNIFORM_u_opacity)
+        .opacity      = half(unpack_mix_float(data.opacity, drawable.opacity_t)),
+#endif
+#if !defined(HAS_UNIFORM_u_halo_width)
+        .halo_width   = half(unpack_mix_float(data.halo_width, drawable.halo_width_t)),
+#endif
+#if !defined(HAS_UNIFORM_u_halo_blur)
+        .halo_blur    = half(unpack_mix_float(data.halo_blur, drawable.halo_blur_t)),
+#endif
         .gamma_scale  = half(gamma_scale),
         .fontScale    = half(fontScale),
         .fade_opacity = fo * vis,
         .is_icon      = is_icon,
-
-#if !defined(HAS_UNIFORM_u_fill_color)
-        .fill_color = half(unpack_mix_color(data.fill_color, drawable.fill_color_t));
-#endif
-#if !defined(HAS_UNIFORM_u_halo_color)
-        .halo_color = half(unpack_mix_color(data.halo_color, drawable.halo_color_t));
-#endif
-#if !defined(HAS_UNIFORM_u_opacity)
-        .opacity    = half(unpack_mix_float(data.opacity, drawable.opacity_t));
-#endif
-#if !defined(HAS_UNIFORM_u_halo_width)
-        .halo_width = half(unpack_mix_float(data.halo_width, drawable.halo_width_t));
-#endif
-#if !defined(HAS_UNIFORM_u_halo_blur)
-        .halo_blur  = half(unpack_mix_float(data.halo_blur, drawable.halo_blur_t));
-#endif
     };
 }
 
-half4 fragment fragmentMain(FragmentStage in [[stage_in]],
+SymbolFragmentOut fragment fragmentMain(FragmentStage in [[stage_in]],
                             device const uint32_t& uboIndex [[buffer(idGlobalUBOIndex)]],
                             device const SymbolTilePropsUBO* tilePropsVector [[buffer(idSymbolTilePropsUBO)]],
                             device const SymbolEvaluatedPropsUBO& props [[buffer(idSymbolEvaluatedPropsUBO)]],
                             texture2d<float, access::sample> glyph_image [[texture(0)]],
                             texture2d<float, access::sample> icon_image [[texture(1)]],
                             sampler glyph_sampler [[sampler(0)]],
-                            sampler icon_sampler [[sampler(1)]]) {
+                            sampler icon_sampler [[sampler(1)]],
+                            texture2d<float, access::sample> depthTexture [[texture(3)]],
+                            sampler depthSampler [[sampler(3)]]) {
 #if defined(OVERDRAW_INSPECTOR)
-    return half4(1.0);
+    return {half4(1.0), in.position.z};
 #endif
 
     device const SymbolTilePropsUBO& tileProps = tilePropsVector[uboIndex];
@@ -836,7 +859,7 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
 
     if (in.is_icon) {
         const float alpha = opacity * in.fade_opacity;
-        return half4(icon_image.sample(icon_sampler, float2(in.tex)) * alpha);
+        return {half4(icon_image.sample(icon_sampler, float2(in.tex)) * alpha), lifted_depth(in.position, in.lift, in.lift_terms, depthTexture, depthSampler)};
     }
 
     const float EDGE_GAMMA = 0.105 / DEVICE_PIXEL_RATIO;
@@ -858,7 +881,7 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
         alpha = min(smoothstep(haloEdge - gammaScaled, haloEdge + gammaScaled, dist), 1.0 - alpha);
     }
 
-    return half4(color * (alpha * opacity * in.fade_opacity));
+    return {half4(color * (alpha * opacity * in.fade_opacity)), lifted_depth(in.position, in.lift, in.lift_terms, depthTexture, depthSampler)};
 }
 )";
 };
