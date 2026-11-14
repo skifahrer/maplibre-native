@@ -53,6 +53,6 @@ TEST(MetalRenderable, SwapLeavesTheWaitToTheRead) {
     swapped.get();
     EXPECT_TRUE(returned);
 
-    EXPECT_EQ(backend->readStillImage().size, Size(256, 256));
+    EXPECT_EQ(backend->readStillImage().size, mln::Size(256, 256));
 }
 #endif
