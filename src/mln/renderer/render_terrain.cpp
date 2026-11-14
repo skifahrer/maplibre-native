@@ -56,6 +56,7 @@
 #include <mln/gfx/vertex_attribute.hpp> // VertexAttributeArray for the a_instance attribute
 
 #include <algorithm>
+#include <queue>
 #include <iterator>
 #include <array>
 #include <limits>
@@ -284,6 +285,30 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
         return (demBounds && !demBounds->intersects(LatLngBounds(id.canonical))) ||
                (demTiles && demTiles->tileHasNoData(id));
     });
+    // Standing low, a nearer ridge hides the ground behind it: that ground gets no mesh or drape.
+    // Only a loaded DEM's range counts, its own or an ancestor's: the nearby guess may stand higher.
+    if (demWithRanges) {
+        if (const auto eye = state.getFreeCameraOptions().getLocation()) {
+            const double latRad = util::deg2rad(eye->location.latitude());
+            const std::array<double, 2> at{
+                eye->location.longitude() / 360.0 + 0.5,
+                0.5 - std::log(std::tan(M_PI / 4.0 + latRad / 2.0)) / (2.0 * M_PI)};
+            const double metresPerUnit = util::M2PI * util::EARTH_RADIUS_M * std::cos(latRad);
+            const double exaggeration = getExaggeration();
+            const auto plane = getPlane();
+            const auto heights = [&](const CanonicalTileID& id) -> std::optional<Range<double>> {
+                const auto range = demWithRanges->getElevationRange(id);
+                if (!range) {
+                    return std::nullopt;
+                }
+                const double low = plane && range->min <= *plane + 1 ? std::min(range->min, 0) : range->min;
+                return Range<double>{low * exaggeration, range->max * exaggeration};
+            };
+            for (const auto& id : hiddenBehindNearer(out, at, eye->altitude, metresPerUnit, heights)) {
+                out.erase(id);
+            }
+        }
+    }
     // Over the budget, the farthest tiles merge into their parents until it fits: the ground
     // reaches the horizon, coarser the farther it is, and the near ground keeps its detail. The
     // whole mesh one level coarser blurred the ground in front of the camera, and dropping the
@@ -554,6 +579,104 @@ std::array<double, 2> RenderTerrain::meshTileCapOrigin(const TransformState& sta
     const double compass = -state.getBearing(); // radians, clockwise from north
     return {center.longitude() / 360.0 + 0.5 - back * std::sin(compass),
             0.5 - std::log(std::tan(M_PI / 4.0 + latRad / 2.0)) / (2.0 * M_PI) + back * std::cos(compass)};
+}
+
+std::set<UnwrappedTileID> RenderTerrain::hiddenBehindNearer(
+    const std::set<UnwrappedTileID>& cover,
+    const std::array<double, 2>& eye,
+    double eyeAltitude,
+    double metresPerUnit,
+    const std::function<std::optional<Range<double>>(const CanonicalTileID&)>& heights) {
+    // The horizon by quarter degrees of compass: the steepest slope, rise over run, under which
+    // the tiles already passed hide everything farther.
+    constexpr int kBuckets = 1440;
+    constexpr double kStep = 2.0 * M_PI / kBuckets;
+    // A tile has to be this much under the horizon, so one grazing it never flickers.
+    constexpr double kSlack = 0.002;
+    struct Tile {
+        UnwrappedTileID id;
+        double nearest;
+        double farthest;
+        int from;
+        int to;
+        Range<double> height;
+    };
+    std::vector<Tile> tiles;
+    for (const auto& id : cover) {
+        const auto height = heights(id.canonical);
+        if (!height) {
+            continue;
+        }
+        const double scale = static_cast<double>(1u << id.canonical.z);
+        const double x0 = static_cast<double>(id.canonical.x) / scale + id.wrap;
+        const double y0 = static_cast<double>(id.canonical.y) / scale;
+        const double x1 = x0 + 1.0 / scale;
+        const double y1 = y0 + 1.0 / scale;
+        if (eye[0] >= x0 && eye[0] <= x1 && eye[1] >= y0 && eye[1] <= y1) {
+            continue;
+        }
+        const double nx = std::clamp(eye[0], x0, x1) - eye[0];
+        const double ny = std::clamp(eye[1], y0, y1) - eye[1];
+        double farthest = 0.0;
+        double first = 0.0;
+        double low = 0.0;
+        double high = 0.0;
+        const std::array<std::array<double, 2>, 4> corners{{{x0, y0}, {x1, y0}, {x0, y1}, {x1, y1}}};
+        for (size_t i = 0; i < corners.size(); ++i) {
+            const double dx = corners[i][0] - eye[0];
+            const double dy = corners[i][1] - eye[1];
+            farthest = std::max(farthest, std::hypot(dx, dy));
+            const double angle = std::atan2(dx, -dy);
+            if (i == 0) {
+                first = angle;
+                continue;
+            }
+            const double turn = std::remainder(angle - first, 2.0 * M_PI);
+            low = std::min(low, turn);
+            high = std::max(high, turn);
+        }
+        const double start = first + low + 2.0 * M_PI;
+        const int from = static_cast<int>(std::floor(start / kStep));
+        const int to = static_cast<int>(std::floor((start + high - low) / kStep)) + 1;
+        tiles.push_back({id, std::hypot(nx, ny) * metresPerUnit, farthest * metresPerUnit, from, to, *height});
+    }
+    std::sort(tiles.begin(), tiles.end(), [](const Tile& a, const Tile& b) {
+        return a.nearest < b.nearest || (a.nearest == b.nearest && a.id < b.id);
+    });
+
+    std::vector<double> horizon(kBuckets, -std::numeric_limits<double>::infinity());
+    // Shown tiles, farthest last, waiting until a tile wholly beyond them is asked about.
+    const auto later = [](const Tile* a, const Tile* b) {
+        return a->farthest > b->farthest;
+    };
+    std::priority_queue<const Tile*, std::vector<const Tile*>, decltype(later)> waiting(later);
+    std::set<UnwrappedTileID> hidden;
+    for (const auto& tile : tiles) {
+        while (!waiting.empty() && waiting.top()->farthest <= tile.nearest) {
+            const Tile& near = *waiting.top();
+            waiting.pop();
+            // A sight line past it crosses it somewhere between its nearest and farthest point.
+            const double rise = near.height.min - eyeAltitude;
+            const double slope = rise / (rise >= 0.0 ? near.farthest : std::max(near.nearest, 1.0));
+            // The edge buckets it only partly spans prove nothing.
+            for (int b = near.from + 1; b < near.to - 1; ++b) {
+                auto& line = horizon[b % kBuckets];
+                line = std::max(line, slope);
+            }
+        }
+        const double rise = tile.height.max - eyeAltitude;
+        const double top = rise / (rise >= 0.0 ? std::max(tile.nearest, 1.0) : tile.farthest);
+        bool shown = false;
+        for (int b = tile.from; b < tile.to && !shown; ++b) {
+            shown = top >= horizon[b % kBuckets] - kSlack;
+        }
+        if (shown) {
+            waiting.push(&tile);
+        } else {
+            hidden.insert(tile.id);
+        }
+    }
+    return hidden;
 }
 
 double RenderTerrain::nearestPointDist2(const UnwrappedTileID& id, const std::array<double, 2>& origin) {

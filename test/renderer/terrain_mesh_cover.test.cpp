@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <random>
 #include <set>
 
@@ -660,4 +661,63 @@ TEST(TerrainMeshCover, ASourcePastItsLimitGetsNothingShallowerThanItsMinzoom) {
     EXPECT_GT(cover.size(), 4096u);
     EXPECT_LT(cover.size(), 8192u);
     for (const auto& id : cover) ASSERT_GE(id.canonical.z, 13);
+}
+
+namespace {
+// z14 tiles around the one the eye stands in, on the equator: a tile is 2446 m across.
+UnwrappedTileID z14(int32_t dx, int32_t dy) {
+    return UnwrappedTileID(0, CanonicalTileID(14, static_cast<uint32_t>(8192 + dx), static_cast<uint32_t>(8192 + dy)));
+}
+
+constexpr std::array<double, 2> standingAt{{(8192.5) / 16384.0, (8192.5) / 16384.0}};
+const double metresPerUnit = util::M2PI * util::EARTH_RADIUS_M;
+
+std::set<UnwrappedTileID> hidden(const std::set<UnwrappedTileID>& cover,
+                                 double eyeAltitude,
+                                 const std::map<UnwrappedTileID, Range<double>>& heights) {
+    return RenderTerrain::hiddenBehindNearer(
+        cover, standingAt, eyeAltitude, metresPerUnit, [&](const CanonicalTileID& id) -> std::optional<Range<double>> {
+            const auto found = heights.find(UnwrappedTileID(0, id));
+            return found == heights.end() ? std::nullopt : std::optional<Range<double>>(found->second);
+        });
+}
+} // namespace
+
+// 136 standing in a valley, the ground behind the ridge in front needs no mesh or drape
+TEST(TerrainMeshCover, ARidgeHidesTheLowerGroundBehindIt) {
+    const std::set<UnwrappedTileID> cover{z14(0, -1), z14(0, -3)};
+    const auto out = hidden(cover, 1600, {{z14(0, -1), {2000, 2200}}, {z14(0, -3), {1000, 1500}}});
+    EXPECT_EQ(out, std::set<UnwrappedTileID>{z14(0, -3)});
+}
+
+// 136
+TEST(TerrainMeshCover, APeakTallerThanTheRidgeShowsOverIt) {
+    const std::set<UnwrappedTileID> cover{z14(0, -1), z14(0, -3)};
+    EXPECT_TRUE(hidden(cover, 1600, {{z14(0, -1), {2000, 2200}}, {z14(0, -3), {1000, 2600}}}).empty());
+}
+
+// 136 a ridge hides only what lies wholly beyond its farthest point
+TEST(TerrainMeshCover, GroundNoFartherThanTheRidgeShows) {
+    const std::set<UnwrappedTileID> cover{z14(0, -1), z14(0, -2)};
+    EXPECT_TRUE(hidden(cover, 1600, {{z14(0, -1), {2000, 2200}}, {z14(0, -2), {1000, 1100}}}).empty());
+}
+
+// 136 the nearby guess for ground not loaded may stand higher than it does
+TEST(TerrainMeshCover, GroundWithoutHeightsIsNeverHiddenAndHidesNothing) {
+    const std::set<UnwrappedTileID> cover{z14(0, -1), z14(0, -3), z14(0, -5)};
+    const auto out = hidden(cover, 1600, {{z14(0, -1), {2000, 2200}}, {z14(0, -5), {1000, 1500}}});
+    EXPECT_EQ(out, std::set<UnwrappedTileID>{z14(0, -5)});
+    EXPECT_TRUE(hidden(cover, 1600, {{z14(0, -3), {1000, 1500}}}).empty());
+}
+
+// 136
+TEST(TerrainMeshCover, SeenFromAboveNothingIsHidden) {
+    const std::set<UnwrappedTileID> cover{z14(0, -1), z14(0, -3)};
+    EXPECT_TRUE(hidden(cover, 12000, {{z14(0, -1), {2000, 2200}}, {z14(0, -3), {1000, 1500}}}).empty());
+}
+
+// 136 a ridge to the east hides nothing to the north
+TEST(TerrainMeshCover, ARidgeHidesOnlyTheWayItLies) {
+    const std::set<UnwrappedTileID> cover{z14(1, 0), z14(0, -3)};
+    EXPECT_TRUE(hidden(cover, 1600, {{z14(1, 0), {2000, 2200}}, {z14(0, -3), {1000, 1500}}}).empty());
 }
