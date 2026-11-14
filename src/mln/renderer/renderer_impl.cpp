@@ -814,6 +814,11 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             lastReportedSightGround = ground;
             observer->onTerrainSightGroundChanged(ground[0], ground[1], ground[2]);
         }
+    } else if (!std::isnan(lastReportedSightGround[2])) {
+        // Terrain taken off a loaded style: the sight meets no ground any more.
+        lastReportedSightGround = {{std::numeric_limits<double>::quiet_NaN(), 0.0,
+                                    std::numeric_limits<double>::quiet_NaN()}};
+        observer->onTerrainSightGroundChanged(0.0, 0.0, std::numeric_limits<double>::quiet_NaN());
     }
 
     // Hand the map side a fresh copy of the terrain heights whenever the loaded DEM tiles change
