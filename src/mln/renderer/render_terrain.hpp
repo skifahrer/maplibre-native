@@ -169,6 +169,17 @@ public:
                                                       size_t maxTiles,
                                                       const std::array<double, 2>& origin);
 
+    /// The tiles of `cover` that nearer ones hide from an eye `eyeAltitude` metres up over `eye`
+    /// (normalized web-mercator), `metresPerUnit` to the unit. Only a tile wholly nearer than
+    /// another can hide it, by the lowest ground `heights` promises; a tile without heights is
+    /// never hidden and hides nothing.
+    static std::set<UnwrappedTileID> hiddenBehindNearer(
+        const std::set<UnwrappedTileID>& cover,
+        const std::array<double, 2>& eye,
+        double eyeAltitude,
+        double metresPerUnit,
+        const std::function<std::optional<Range<double>>(const CanonicalTileID&)>& heights);
+
     /// While there are more than `maxTiles` tiles (0: no limit), the group of sibling tiles
     /// farthest from `origin` gives way to its parent, never shallower than `minZoom`. Only
     /// siblings with nothing deeper inside merge, so detail goes first in the distance, where a
