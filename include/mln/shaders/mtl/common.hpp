@@ -223,6 +223,28 @@ inline float depth_opacity(float4 pos,
     return depth_opacity(pos, depth_texture, depth_sampler, 0.0);
 }
 
+// A screen-aligned name's fragment, set just in front of the terrain under it: the terrain
+// decides only by the anchor (calculate_visibility), so a slope beside it never cuts it,
+// while a building, which the terrain depth leaves out, still does.
+struct SymbolFragmentOut {
+    half4 color [[color(0)]];
+    float depth [[depth(less)]];
+};
+
+// `lift` is the depth texture's uv, the vertex's clip z, and 1 to lift at all.
+inline float lifted_depth(float4 frag_pos, float4 lift, float2 terms,
+                          texture2d<float, access::sample> depth_texture, sampler depth_sampler) {
+    if (lift.w == 0.0 || lift.z <= 0.0) {
+        return frag_pos.z;
+    }
+    const float terrain = unpack_distance(depth_texture.sample(depth_sampler, lift.xy));
+    if (terrain > kSkyDistance) {
+        return frag_pos.z;
+    }
+    const float front = saturate(terms.x + terms.y / (terrain * 0.97));
+    return min(frag_pos.z, front * frag_pos.z / lift.z);
+}
+
 // A screen-aligned symbol's depth: its anchor's, at 1 / (1 + pull) of its distance.
 inline float anchor_depth(float distance, float depth_a, float depth_b, float pull) {
     return saturate(depth_a + depth_b * (1.0 + pull) / distance);
