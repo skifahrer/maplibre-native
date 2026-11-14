@@ -69,7 +69,12 @@ jobs:
             exit 0
           fi
           old=$(git rev-parse -q --verify "origin/$sync" || true)
-          git checkout -q -B "$sync" "${old:-origin/master}"
+          # 134: a branch already merged holds nothing to keep and predates what master settled
+          if [ -z "$old" ] || git merge-base --is-ancestor "$old" origin/master; then
+            git checkout -q -B "$sync" origin/master
+          else
+            git checkout -q -B "$sync" "$old"
+          fi
 
           # 90: kept on the branch, so a conflict resolved there by hand stays resolved
           conflict=""
@@ -83,6 +88,10 @@ jobs:
           if [ -z "$conflict" ] && ! git merge -q --no-edit -m "Merge master into $sync" origin/master; then
             git merge --abort
             conflict="master conflicts with $sync"
+          fi
+          # 134: a pull request needs a commit, and a conflict needs the pull request to show on
+          if [ -n "$conflict" ] && [ "$(git rev-list --count origin/master..HEAD)" = 0 ]; then
+            git commit -q --allow-empty -m "chore: book ticket"
           fi
           head=$(git rev-parse HEAD)
 
