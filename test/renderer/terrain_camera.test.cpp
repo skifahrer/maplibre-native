@@ -483,6 +483,28 @@ TEST(TerrainCamera, PitchKeepingTheEyeAcrossLatitudes) {
     }
 }
 
+// 131 Turning with two fingers on a level look swung the eye round the centre, far away
+TEST(TerrainCamera, BearingKeepingTheEyeTurnsWhereItStands) {
+    for (const double pitch : {86.0, 90.0, 110.0}) {
+        TerrainCameraTest test;
+        test.map.setCenterClampedToGround(false);
+        test.map.setBounds(BoundOptions().withMaxPitch(120.0));
+        test.map.jumpTo(CameraOptions().withZoom(12.0).withPitch(80.0).withBearing(30.0));
+        ASSERT_TRUE(test.map.setPitchKeepingEye(pitch));
+        const vec3 before = test.eye();
+        const double zoom = *test.map.getCameraOptions({}).zoom;
+
+        for (const double bearing : {75.0, 170.0, -100.0, 30.0}) {
+            EXPECT_TRUE(test.map.setBearingKeepingEye(bearing)) << pitch;
+            const auto camera = test.map.getCameraOptions({});
+            EXPECT_NEAR(util::wrap(*camera.bearing - bearing, -180.0, 180.0), 0.0, 1e-6) << pitch;
+            EXPECT_NEAR(*camera.pitch, pitch, 1e-6);
+            EXPECT_NEAR(*camera.zoom, zoom, 1e-9);
+            test.expectEyeAt(before);
+        }
+    }
+}
+
 // Anchoring raises the zoom. Past the maximum zoom, jumpTo would clamp it and the view would step
 // back, so the anchor leaves the camera alone there.
 TEST(TerrainCamera, AnchoringPastMaxZoomLeavesTheCameraAlone) {

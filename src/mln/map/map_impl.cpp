@@ -527,6 +527,41 @@ bool Map::Impl::setPitchKeepingEye(double pitchDegrees) {
     return true;
 }
 
+bool Map::Impl::setBearingKeepingEye(double bearingDegrees) {
+    const TransformState& state = transform.getState();
+    const CameraOptions camera = transform.getCameraOptions(std::nullopt);
+    if (!camera.center || !camera.zoom) {
+        return false;
+    }
+    const double pitch = util::deg2rad(camera.pitch.value_or(0.0));
+    const double from = util::deg2rad(camera.bearing.value_or(0.0));
+    const double to = util::deg2rad(bearingDegrees);
+    // The centre lies sin(pitch) of the distance ahead of the eye on the ground; turning,
+    // it swings round the eye at that radius.
+    const double ahead = state.getCameraToCenterDistance() * std::sin(pitch);
+    const double scale = state.getScale();
+    const Point<double> center = Projection::project(*camera.center, scale);
+    const LatLng turned = Projection::unproject({center.x + ahead * (std::sin(to) - std::sin(from)),
+                                                 center.y - ahead * (std::cos(to) - std::cos(from))},
+                                                scale);
+    // Heights are metres at the centre's latitude, so the turned centre measures them anew.
+    const double before = Projection::getMetersPerPixelAtLatitude(camera.center->latitude(), *camera.zoom);
+    const double after = Projection::getMetersPerPixelAtLatitude(turned.latitude(), *camera.zoom);
+    const auto aimed = CameraOptions().withCenter(turned).withBearing(bearingDegrees).withCenterAltitude(
+        state.getCenterAltitude() / before * after);
+
+    Transform trial(state);
+    trial.jumpTo(aimed);
+    const LatLng reached = trial.getLatLng();
+    if (std::abs(trial.getZoom() - *camera.zoom) > 1e-9 || std::abs(reached.latitude() - turned.latitude()) > 1e-9 ||
+        std::abs(util::wrap(reached.longitude() - turned.longitude(), -180.0, 180.0)) > 1e-9) {
+        return false;
+    }
+    transform.jumpTo(aimed);
+    gesturePivotsOnEye = transform.isGestureInProgress();
+    return true;
+}
+
 void Map::Impl::returnCenterToSeaLevel() {
     centerAwaitingSeaLevel = false;
     // Where the limits refuse the move that keeps the view, keep the centre and zoom instead, as
