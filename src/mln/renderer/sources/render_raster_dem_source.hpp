@@ -5,7 +5,7 @@
 #include <mln/util/range.hpp>
 
 #include <optional>
-#include <array>
+#include <vector>
 #include <unordered_map>
 
 namespace mln {
@@ -79,7 +79,7 @@ private:
     /// still camera cannot cause a second drop.
     static constexpr std::size_t maxElevationRangeEntries = 8192;
     static constexpr int32_t cellsPerSide = 8;
-    using CellRanges = std::array<Range<int32_t>, cellsPerSide * cellsPerSide>;
+    using CellRanges = std::vector<Range<int32_t>>;
     /// The range of each cell of a tile whose data has arrived, rows first.
     std::unordered_map<CanonicalTileID, CellRanges> cellElevationRanges;
     /// Some 520 bytes each; past this many, those of tiles the pyramid no longer holds go.

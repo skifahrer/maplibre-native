@@ -23,8 +23,9 @@ Range<int32_t> elevationRangeOf(const HillshadeBucket& bucket) {
 
 // Each cell takes in its neighbours' first pixels too: the mesh interpolates across the line.
 template <int32_t Side>
-std::array<Range<int32_t>, Side * Side> cellRangesOf(const DEMData& dem) {
-    std::array<Range<int32_t>, Side * Side> cells{};
+std::vector<Range<int32_t>> cellRangesOf(const DEMData& dem) {
+    std::vector<Range<int32_t>> cells;
+    cells.reserve(Side * Side);
     for (int32_t cy = 0; cy < Side; ++cy) {
         const int32_t y0 = std::max(0, cy * dem.dim / Side - 1);
         const int32_t y1 = std::min(dem.dim - 1, (cy + 1) * dem.dim / Side);
@@ -38,7 +39,7 @@ std::array<Range<int32_t>, Side * Side> cellRangesOf(const DEMData& dem) {
                     range = {std::min(range.min, height), std::max(range.max, height)};
                 }
             }
-            cells[cy * Side + cx] = range;
+            cells.push_back(range);
         }
     }
     return cells;
