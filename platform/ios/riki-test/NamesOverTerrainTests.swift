@@ -42,7 +42,7 @@ final class NamesOverTerrainTests: XCTestCase, MLNMapSnapshotterDelegate {
         return atan(sinh(.pi * (1 - 2 * y))) * 180 / .pi
     }
 
-    private func snapshot(terrain: Bool, hanging: Double, ridge: Double = ridgeHeight) throws -> MLNMapSnapshot {
+    private func snapshot(terrain: Bool, hanging: Double, ridge: Double = NamesOverTerrainTests.ridgeHeight) throws -> MLNMapSnapshot {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
