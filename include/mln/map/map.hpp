@@ -330,6 +330,11 @@ public:
     /// would cut the move short.
     bool setPitchKeepingEye(double pitchDegrees);
 
+    /// Turns to `bearingDegrees` around the camera rather than around the centre, as a head
+    /// turns: the centre swings round the eye at its distance on the ground. Returns false,
+    /// changing nothing, when the zoom limits, the bounds or the constrain mode would cut it short.
+    bool setBearingKeepingEye(double bearingDegrees);
+
     /// Metres from the camera to where the line of sight through the centre meets the terrain,
     /// as the renderer last measured it (a frame behind a moving camera). NaN without terrain or
     /// where the line meets no ground. A gesture holds the centre at the height it started on, so
