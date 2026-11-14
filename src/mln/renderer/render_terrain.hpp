@@ -435,6 +435,12 @@ public:
      * @brief Get the terrain implementation
      */
     const Immutable<style::Terrain::Impl>& getImpl() const { return impl; }
+    void setImpl(Immutable<style::Terrain::Impl> impl_) {
+        impl = std::move(impl_);
+        depthDirty = true;
+    }
+    /// Whether anything is held that was built from DEM tiles
+    bool holdsDEMData() const { return !demTextures.empty() || !elevationGrids.empty(); }
 
     /// 141 Takes a terrain that differs only in its exaggeration, which every cache here
     /// rereads; false for another DEM source or plane, which need a new RenderTerrain.
