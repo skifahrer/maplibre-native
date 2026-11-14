@@ -721,3 +721,42 @@ TEST(TerrainMeshCover, ARidgeHidesOnlyTheWayItLies) {
     const std::set<UnwrappedTileID> cover{z14(1, 0), z14(0, -3)};
     EXPECT_TRUE(hidden(cover, 1600, {{z14(1, 0), {2000, 2200}}, {z14(0, -3), {1000, 1500}}}).empty());
 }
+
+namespace {
+// The z16 quarters of a z14 tile: its north row at `ridge`, the rest at `valley`.
+std::map<UnwrappedTileID, Range<double>> ridgeAlongTheNorth(const UnwrappedTileID& tile,
+                                                            Range<double> ridge,
+                                                            Range<double> valley) {
+    std::map<UnwrappedTileID, Range<double>> cells;
+    for (uint32_t y = 0; y < 4; ++y) {
+        for (uint32_t x = 0; x < 4; ++x) {
+            const CanonicalTileID cell(16, (tile.canonical.x << 2) + x, (tile.canonical.y << 2) + y);
+            cells.emplace(UnwrappedTileID(0, cell), y == 0 ? ridge : valley);
+        }
+    }
+    return cells;
+}
+} // namespace
+
+// 136 a tile spanning a valley and a ridge hides by its ridge, not by its valley floor
+TEST(TerrainMeshCover, ARidgeAcrossATilesFarSideHidesTheGroundBehindIt) {
+    const std::set<UnwrappedTileID> cover{z14(0, -1), z14(0, -3)};
+    auto heights = ridgeAlongTheNorth(z14(0, -1), {2000, 2200}, {1000, 1100});
+    heights.emplace(z14(0, -1), Range<double>{1000, 2200});
+    heights.emplace(z14(0, -3), Range<double>{1000, 1500});
+    EXPECT_EQ(hidden(cover, 1600, heights), std::set<UnwrappedTileID>{z14(0, -3)});
+
+    heights = ridgeAlongTheNorth(z14(0, -1), {1000, 1100}, {1000, 1100});
+    heights.emplace(z14(0, -1), Range<double>{1000, 2200});
+    heights.emplace(z14(0, -3), Range<double>{1000, 1500});
+    EXPECT_TRUE(hidden(cover, 1600, heights).empty());
+}
+
+// 136 the ridge just past the camera, in the tile it stands in, hides the ground behind it
+TEST(TerrainMeshCover, TheGroundTheEyeStandsOnHidesToo) {
+    const std::set<UnwrappedTileID> cover{z14(0, 0), z14(0, -2)};
+    auto heights = ridgeAlongTheNorth(z14(0, 0), {2000, 2200}, {1500, 1550});
+    heights.emplace(z14(0, 0), Range<double>{1500, 2200});
+    heights.emplace(z14(0, -2), Range<double>{1000, 1500});
+    EXPECT_EQ(hidden(cover, 1600, heights), std::set<UnwrappedTileID>{z14(0, -2)});
+}
