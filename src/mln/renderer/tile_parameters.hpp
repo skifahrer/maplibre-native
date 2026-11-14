@@ -4,6 +4,7 @@
 #include <mln/actor/scheduler.hpp>
 #include <mln/util/feature.hpp>
 #include <mln/tile/tile_id.hpp>
+#include <mln/util/geo.hpp>
 
 #include <array>
 #include <limits>
@@ -81,6 +82,10 @@ public:
     double coverReach = std::numeric_limits<double>::infinity();
     /// For the terrain's DEM source: the mesh's last cover, loaded instead of the DEM's own.
     std::vector<UnwrappedTileID> terrainMeshCover{};
+    /// A position the source asks a tile for as well, wherever the view is: the ground under the
+    /// camera's eye, which is often behind or below the view and so outside the frustum the cover
+    /// is taken from. Nothing is asked for where the cover already holds a tile over it.
+    std::optional<LatLng> alsoCover = std::nullopt;
 };
 
 } // namespace mln
