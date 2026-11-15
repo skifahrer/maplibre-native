@@ -1083,6 +1083,15 @@ of north, the map will automatically snap to exact north.
 @property (nonatomic) BOOL anchorRotateOrZoomGesturesToCenterCoordinate;
 
 /**
+ The pitch, in degrees, above which a rotation gesture turns the camera where it stands
+ instead of round a point on the ground ahead of it.
+
+ Tilted, that point can lie kilometres away, and turning round it swings the camera along a
+ circle as wide. The default value is 84, near the horizon.
+ */
+@property (nonatomic) CGFloat rotationKeepsEyeAbovePitch;
+
+/**
  A Boolean value that determines whether the user will receive haptic feedback
  for certain interactions with the map.
 
