@@ -81,6 +81,7 @@
 #import "MLNStyleLayerManager.h"
 #import "MLNStyleLayer_Private.h"
 #import "MLNStyle_Private.h"
+#import "MLNTerrain_Private.h"
 #import "MLNUserLocationAnnotationView.h"
 #import "MLNUserLocationAnnotationView_Private.h"
 #import "MLNUserLocation_Private.h"
@@ -3288,6 +3289,14 @@ static void *windowScreenContext = &windowScreenContext;
     default:
       return MLNTileLodModeDefault;
   }
+}
+
+- (void)setTerrainSkirtLength:(MLNTerrainSkirtLength)terrainSkirtLength {
+  _mbglMap->setTerrainSkirtLength(MLNTerrainSkirtLengthToMBGL(terrainSkirtLength));
+}
+
+- (MLNTerrainSkirtLength)terrainSkirtLength {
+  return MLNTerrainSkirtLengthFromMBGL(_mbglMap->getTerrainSkirtLength());
 }
 
 - (void)setFrustumOffset:(UIEdgeInsets)frustumOffset {
