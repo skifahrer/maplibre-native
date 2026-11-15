@@ -277,7 +277,10 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
     };
 
     if (updateParameters->terrain) {
-        if (renderTerrain && renderTerrain->getImpl() != *updateParameters->terrain) {
+        // 141 A new exaggeration alone keeps the mesh, the drapes and the DEM: rebuilding them
+        // cost a slow frame for each step of a relief growing with the tilt.
+        if (renderTerrain && renderTerrain->getImpl() != *updateParameters->terrain &&
+            !renderTerrain->takeExaggeration(*updateParameters->terrain)) {
             dropRenderTerrain();
         }
         if (!renderTerrain) {
