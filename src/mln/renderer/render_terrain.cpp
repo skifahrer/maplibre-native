@@ -61,6 +61,7 @@
 #include <iterator>
 #include <array>
 #include <limits>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -157,6 +158,9 @@ std::vector<LoadedDEMTile> loadedDEMTiles(const RenderSource* demSource) {
     return out;
 }
 
+// Set by tests only (RenderTerrain::setMaxDEMTexturesForTesting); 0 keeps the default cap
+std::atomic<size_t> demTextureCapOverride{0};
+
 } // namespace
 
 RenderTerrain::RenderTerrain(Immutable<style::Terrain::Impl> impl_)
@@ -198,6 +202,10 @@ std::set<UnwrappedTileID> dilatedCover(const util::TileCoverParameters& coverPar
     return out;
 }
 } // namespace
+
+void RenderTerrain::setMaxDEMTexturesForTesting(size_t cap) {
+    demTextureCapOverride = cap;
+}
 
 std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     const TransformState& state, const std::shared_ptr<UpdateParameters>& updateParameters) const {
@@ -1006,11 +1014,15 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
     // Cap the cache: ancestor/descendant relations accumulate while browsing
     // (zooming makes whole chains "related"), which previously grew past 2GB
     // of DEM textures and overflowed/OOMed. Evict least-recently-used entries
-    // that were not used this frame until the cache is back under budget.
+    // that were not used this frame until the cache is back under budget. A texture an
+    // elevated layer bound in the previous frame's draw (getTerrainData) is in use as well: an
+    // ancestor DEM that only symbols still sample has no loaded DEM tile to remake it from.
+    const size_t capOverride = demTextureCapOverride.load();
+    const size_t maxDEMTextures = capOverride ? capOverride : defaultMaxDEMTextures;
     if (demTextures.size() > maxDEMTextures) {
         std::vector<std::pair<uint64_t, UnwrappedTileID>> evictable;
         for (const auto& [id, entry] : demTextures) {
-            if (entry.lastUsed != demUpdateCounter) {
+            if (entry.lastUsed != demUpdateCounter && entry.sampledAt + 1 < demUpdateCounter) {
                 evictable.emplace_back(entry.lastUsed, id);
             }
         }
@@ -1578,6 +1590,8 @@ std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const Un
     if (!entry || !entry->texture) {
         return std::nullopt;
     }
+    // The layer is about to draw with this texture: keep it out of the next update()'s eviction
+    entry->sampledAt = demUpdateCounter;
 
     // Map tile-local coordinates (0..EXTENT) of the requested tile into
     // normalized coordinates (0..1) of the (possibly ancestor) DEM tile
