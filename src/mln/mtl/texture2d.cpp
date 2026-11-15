@@ -7,6 +7,8 @@
 #include <Metal/MTLRenderCommandEncoder.hpp>
 #include <Metal/MTLSampler.hpp>
 
+#include <algorithm>
+
 namespace mln {
 namespace mtl {
 
@@ -19,10 +21,16 @@ Texture2D::~Texture2D() {
 
 gfx::Texture2D& Texture2D::setSamplerConfiguration(const SamplerState& samplerState_) noexcept {
     if (samplerState.filter == samplerState_.filter && samplerState.wrapU == samplerState_.wrapU &&
-        samplerState.wrapV == samplerState_.wrapV) {
+        samplerState.wrapV == samplerState_.wrapV && samplerState.mipmapped == samplerState_.mipmapped &&
+        samplerState.maxAnisotropy == samplerState_.maxAnisotropy) {
         return *this;
     }
 
+    if (samplerState.mipmapped != samplerState_.mipmapped) {
+        // The mip chain is part of the texture itself
+        destroyMetalTexture();
+        textureDirty = true;
+    }
     samplerState = samplerState_;
     samplerStateDirty = true;
     return *this;
@@ -61,6 +69,19 @@ gfx::Texture2D& Texture2D::setImage(std::shared_ptr<PremultipliedImage> image_) 
 
 size_t Texture2D::getDataSize() const noexcept {
     return size.width * size.height * getPixelStride(); // NOLINT(clang-analyzer-optin.cplusplus.VirtualCall)
+}
+
+size_t Texture2D::getStorageSize() const noexcept {
+    size_t bytes = getDataSize(); // NOLINT(clang-analyzer-optin.cplusplus.VirtualCall)
+    if (!samplerState.mipmapped) {
+        return bytes;
+    }
+    // Every level of the chain, down to 1 x 1: a third more than the base level
+    for (auto level = size; level.width > 1 || level.height > 1;) {
+        level = {std::max(level.width / 2, 1u), std::max(level.height / 2, 1u)};
+        bytes += level.width * level.height * getPixelStride(); // NOLINT(clang-analyzer-optin.cplusplus.VirtualCall)
+    }
+    return bytes;
 }
 
 size_t Texture2D::getPixelStride() const noexcept {
@@ -159,7 +180,7 @@ void Texture2D::createMetalTexture() {
 
     // Create a new texture object
     if (auto textureDescriptor = NS::RetainPtr(
-            MTL::TextureDescriptor::texture2DDescriptor(format, size.width, size.height, /*mipmapped=*/false))) {
+            MTL::TextureDescriptor::texture2DDescriptor(format, size.width, size.height, samplerState.mipmapped))) {
         textureDescriptor->setUsage(usage);
 #if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
         if (memoryless) {
@@ -192,10 +213,11 @@ void Texture2D::createMetalTexture() {
 
     if (metalTexture) {
         textureDirty = false;
+        trackedBytes = heldBytes();
         context.threadSafeAccessRenderingStats([&](gfx::RenderingStats& stats) {
             stats.numCreatedTextures++;
             stats.numActiveTextures++;
-            stats.memTextures += heldBytes();
+            stats.memTextures += trackedBytes;
         });
     }
 }
@@ -217,8 +239,9 @@ void Texture2D::destroyMetalTexture() noexcept {
     metalTexture.reset();
     context.threadSafeAccessRenderingStats([&](gfx::RenderingStats& stats) {
         stats.numActiveTextures--;
-        stats.memTextures -= heldBytes();
+        stats.memTextures -= trackedBytes;
     });
+    trackedBytes = 0;
 }
 
 gfx::Texture2D& Texture2D::setUsage(MTL::TextureUsage usage_) noexcept {
@@ -239,7 +262,7 @@ size_t Texture2D::heldBytes() const noexcept {
         return 0;
     }
 #endif
-    return getDataSize();
+    return getStorageSize();
 }
 
 MTL::Texture* Texture2D::getMetalTexture() const noexcept {
@@ -255,6 +278,11 @@ void Texture2D::updateSamplerConfiguration() {
     samplerDescriptor->setMagFilter(samplerState.filter == gfx::TextureFilterType::Nearest
                                         ? MTL::SamplerMinMagFilterNearest
                                         : MTL::SamplerMinMagFilterLinear);
+    // Trilinear between the levels of a mip chain, and anisotropic along a stretched footprint
+    if (samplerState.mipmapped) {
+        samplerDescriptor->setMipFilter(MTL::SamplerMipFilterLinear);
+    }
+    samplerDescriptor->setMaxAnisotropy(std::max<NS::UInteger>(samplerState.maxAnisotropy, 1));
     samplerDescriptor->setSAddressMode(samplerState.wrapU == gfx::TextureWrapType::Clamp
                                            ? MTL::SamplerAddressModeClampToEdge
                                            : MTL::SamplerAddressModeRepeat);
