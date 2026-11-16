@@ -57,15 +57,18 @@ TEST(TerrainCurtain, TheEdgesRideInTheFraction) {
 }
 
 #if MLN_RENDER_BACKEND_METAL
-// 117 Both Metal terrain passes read the size whole and skip flagged edges.
+// 117 Both Metal terrain passes read the size whole and the flagged edges.
 // 122, 125 Only Metal builds this, and under -Werror.
+// 143 a flagged edge hangs its curtain to the table, the clay face, rather than none.
 TEST(TerrainCurtain, TheMetalShadersReadTheEdges) {
-    EXPECT_NE(std::string::npos, std::string(shaders::prelude).find("inline bool curtain_hangs("));
+    EXPECT_NE(std::string::npos, std::string(shaders::prelude).find("inline bool faces_no_ground("));
+    EXPECT_NE(std::string::npos, std::string(shaders::prelude).find("inline float curtain_depth("));
     using Terrain = shaders::ShaderSource<shaders::BuiltIn::TerrainShader, gfx::Backend::Type::Metal>;
     using Depth = shaders::ShaderSource<shaders::BuiltIn::TerrainDepthShader, gfx::Backend::Type::Metal>;
     for (const std::string& source : {std::string(Terrain::source), std::string(Depth::source)}) {
         EXPECT_NE(std::string::npos, source.find("floor(drawable.dem_coords.w)"));
-        EXPECT_NE(std::string::npos, source.find("curtain_hangs(pos, drawable.dem_coords.w)"));
+        EXPECT_NE(std::string::npos, source.find("faces_no_ground(pos, drawable.dem_coords.w)"));
+        EXPECT_NE(std::string::npos, source.find("curtain_depth(elevation, to_table,"));
     }
 }
 #endif
