@@ -9,7 +9,7 @@
 namespace mln {
 namespace terrain {
 
-/// Bits of the tile edges that hang no curtain: left, right, top, bottom.
+/// Edges whose curtain reaches the table, as the clay face: left, right, top, bottom.
 enum CurtainlessEdge : uint8_t {
     LeftEdge = 1,
     RightEdge = 2,
