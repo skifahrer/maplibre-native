@@ -23,10 +23,13 @@ TEST(RenderingStats, WaitAndGpuTimeStartAtZero) {
     const gfx::RenderingStats fresh;
     EXPECT_EQ(fresh.drawableWaitTime, 0.0);
     EXPECT_EQ(fresh.gpuTime, 0.0);
+#ifndef NDEBUG
     EXPECT_EQ(fresh.toString(" ").find("gpuTime"), std::string::npos);
+#endif
 }
 
-// 142 the printed stats name both once they are measured
+#ifndef NDEBUG
+// 142 the printed stats name both once they are measured; only debug builds print
 TEST(RenderingStats, WaitAndGpuTimeArePrinted) {
     gfx::RenderingStats frame;
     frame.drawableWaitTime = 0.004;
@@ -35,3 +38,4 @@ TEST(RenderingStats, WaitAndGpuTimeArePrinted) {
     EXPECT_NE(printed.find("drawableWaitTime"), std::string::npos);
     EXPECT_NE(printed.find("gpuTime"), std::string::npos);
 }
+#endif
