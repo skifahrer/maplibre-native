@@ -87,7 +87,6 @@ struct FragmentStage {
     float depth; // view depth, for the fog
     float3 clip_xyw; // clip y and w, for the cutaway in front of the centre
     float skirt;    // 1 on the curtain below a tile edge
-    float ground;   // 1 where the height model has ground, 0 where it has none
     float none;     // 1 at a vertex with no ground under it at all
 };
 
@@ -113,27 +112,25 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     float ground = 1.0;
     float elevation = get_ground_elevation(pos, demTexture, drawable.dem_coords, props.unpack,
                                            dem_size, props.exaggeration, props.no_ground, ground);
-    if (vertx.pos.z == 1 && !ground_throughout(demTexture, drawable.dem_coords, dem_size,
-                                                props.unpack, props.no_ground)) {
+    const bool skirt = vertx.pos.z == 1;
+    const bool to_table = skirt && (faces_no_ground(pos, drawable.dem_coords.w) ||
+                                    !ground_throughout(demTexture, drawable.dem_coords, dem_size,
+                                                       props.unpack, props.no_ground));
+    if (to_table) {
         ground = 0.0;
     }
-
-    // Skirt vertices hang below the surface by elevation_offset, forming a curtain
-    // that hides the cracks between neighbouring tiles at different zoom levels
-    // (maplibre-gl-js u_ele_delta). pos.z carries the skirt flag.
-    const float ele_delta = (float(vertx.pos.z) == 1.0 && curtain_hangs(pos, drawable.dem_coords.w))
-                                ? props.elevation_offset
-                                : 0.0;
+    // Skirt vertices hang below the surface, a curtain hiding the cracks between neighbouring
+    // tiles at different zoom levels (maplibre-gl-js u_ele_delta). pos.z carries the flag.
+    const float ele_delta = skirt ? curtain_depth(elevation, to_table, props.elevation_offset) : 0.0;
     float4 position = drawable.matrix * float4(pos.x, pos.y, elevation - ele_delta, 1.0);
 
     return {
         .position  = position,
         .uv        = uv,
-        .elevation = elevation,
+        .elevation = elevation - ele_delta,
         .depth     = position.w,
         .clip_xyw  = position.xyw,
         .skirt     = float(vertx.pos.z),
-        .ground    = ground,
         .none      = ground < 0.001 ? 1.0 : 0.0,
     };
 }
@@ -153,10 +150,6 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     // be flipped here - sampling 1.0 - uv.y flips the draped map vertically (north/south
     // swapped about the view). Sample uv.y directly on Metal.
     if (cut_away(props, in.clip_xyw, in.depth, in.skirt)) {
-        discard_fragment();
-    }
-    // The curtains under ground the model does not have
-    if (in.skirt > 0.5 && in.ground < 0.999) {
         discard_fragment();
     }
     float4 color = on_clay_face(in.none) ? clay_color(in.elevation, props.clay_color)
