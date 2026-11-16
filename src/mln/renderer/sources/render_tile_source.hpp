@@ -34,6 +34,7 @@ public:
     /// pyramid's edge; still known once the pyramid has let it go.
     bool tileHasNoData(const UnwrappedTileID&) const;
 
+    const std::vector<UnwrappedTileID>& getEmptyTileIDs() const override { return tilePyramid.getEmptyTileIDs(); }
     /// Every tile the pyramid currently holds, rendered or merely retained (e.g. DEM ancestors).
     const TilePyramid& getTilePyramid() const { return tilePyramid; }
 
