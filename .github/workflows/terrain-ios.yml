@@ -24,8 +24,9 @@ permissions:
   statuses: write
 
 # 107: master too, where the newest merge carries every change since the last release
+# 146: by branch, so a pull request's run and a dispatch on its branch stop each other
 concurrency:
-  group: terrain-ios-${{ github.ref }}
+  group: terrain-ios-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -70,9 +71,14 @@ jobs:
             from=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
                      -q '[.[] | select(.tag_name | startswith("terrain-"))][0].target_commitish // ""' || true)
           fi
+          # 146: a dispatch is weighed against master, so a booking commit builds nothing
+          [ -z "$from" ] && [ -z "$PR_HEAD" ] && [ "$release" = false ] && from=master
           if [ -n "$from" ] && [ "$from" != 0000000000000000000000000000000000000000 ]; then
             files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$from...$sha" -q '.files[].filename' || echo unknown)
-            if [ -n "$files" ] && [ "$(echo "$files" | wc -l)" -lt 300 ] &&
+            if [ -z "$files" ]; then
+              echo "::notice::no file changed; nothing to build"
+              build=false release=false pipeline_only=true
+            elif [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] && [ "$(echo "$files" | wc -l)" -lt 300 ] &&
                ! echo "$files" | grep -qvE '^\.github/|\.md$'; then
               echo "::notice::only workflows or docs changed; nothing to build"
               build=false release=false pipeline_only=true
