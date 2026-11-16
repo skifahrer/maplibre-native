@@ -152,6 +152,11 @@ public:
     std::optional<double> gestureHeldCenterAltitude;
     /// The running gesture tilts around the eye, which moves the centre's height itself.
     bool gesturePivotsOnEye = false;
+    /// The exaggeration the held centre height stands on, 0 without terrain.
+    double heldExaggeration = 0.0;
+    /// 148: relief that grows or shrinks under a gesture takes the held centre with its ground, or
+    /// a tilt turns round a point the ground has left. False while no DEM covers the centre.
+    bool keepHeldCenterOnItsGround(double before, double after);
     /// How many more ground reports after an anchor may move the center along the line of sight
     /// instead of moving the camera. The anchor takes the height of the ground under the old
     /// center, so on a slope the center lands on a plane above or below the ground it then looks

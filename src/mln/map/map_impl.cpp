@@ -613,6 +613,31 @@ void Map::Impl::settleCenterAwaitingSeaLevel() {
 
 void Map::Impl::onTerrainElevationIndexChanged(std::shared_ptr<const TerrainElevationIndex> index) {
     terrainElevationIndex = std::move(index);
+    const double exaggeration = terrainElevationIndex ? terrainElevationIndex->getExaggeration() : 0.0;
+    if (exaggeration == heldExaggeration) {
+        return;
+    }
+    if (!transform.isGestureInProgress() || keepHeldCenterOnItsGround(heldExaggeration, exaggeration)) {
+        heldExaggeration = exaggeration;
+    }
+}
+
+bool Map::Impl::keepHeldCenterOnItsGround(double before, double after) {
+    const double held = gestureHeldCenterAltitude.value_or(transform.getState().getCenterAltitude());
+    double grown = 0.0;
+    if (before > 0.0) {
+        grown = held / before * after;
+    } else if (!terrainElevationIndex) {
+        return true;
+    } else if (const auto ground = terrainElevationIndex->getElevation(transform.getState().getLatLng())) {
+        grown = *ground;
+    } else {
+        return false; // no DEM under the centre yet: try again with the next index
+    }
+    gestureHeldCenterAltitude = grown;
+    transform.jumpTo(CameraOptions().withCenterAltitude(std::max(grown, eyeClearCenterAltitude())));
+    onUpdate();
+    return true;
 }
 
 double Map::Impl::eyeClearCenterAltitude() const {
