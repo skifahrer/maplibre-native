@@ -34,6 +34,10 @@ MLN_EXPORT
 @property (readonly, nonatomic) double encodingTime;
 /// Frame CPU rendering time (seconds)
 @property (readonly, nonatomic) double renderingTime;
+/// Seconds the frame was blocked acquiring a drawable, included in `encodingTime` (Metal only)
+@property (readonly, nonatomic) double drawableWaitTime;
+/// The GPU's start to end on the last frame it finished, in seconds (Metal only)
+@property (readonly, nonatomic) double gpuTime;
 
 /// Number of frames rendered
 @property (readonly, nonatomic) int numFrames;

@@ -3,7 +3,9 @@
 #import "MLNLoggingConfiguration_Private.h"
 #import "MLNMapView+Metal.h"
 
+#import <mln/gfx/context.hpp>
 #import <mln/mtl/renderable_resource.hpp>
+#import <mln/util/monotonic_timer.hpp>
 
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
@@ -47,6 +49,13 @@ public:
     if (!commandBuffer) {
       commandBuffer = [commandQueue commandBuffer];
       commandBufferPtr = NS::RetainPtr((__bridge MTL::CommandBuffer*)commandBuffer);
+      // 142 a new frame: the last one's GPU time if it has finished, no wait yet
+      auto& stats = backend.getContext().renderingStats();
+      stats.drawableWaitTime = 0.0;
+      if (lastCommitted && lastCommitted.status == MTLCommandBufferStatusCompleted) {
+        stats.gpuTime = lastCommitted.GPUEndTime - lastCommitted.GPUStartTime;
+        lastCommitted = nil;
+      }
     }
   }
 
@@ -63,7 +72,11 @@ public:
 
   const mln::mtl::MTLRenderPassDescriptorPtr& getRenderPassDescriptor() const override {
     if (!cachedRenderPassDescriptor) {
+      // 142 MTKView blocks here until a drawable is free
+      const auto waitStart = mln::util::MonotonicTimer::now();
       auto* mtlDesc = mtlView.currentRenderPassDescriptor;
+      backend.getContext().renderingStats().drawableWaitTime =
+          (mln::util::MonotonicTimer::now() - waitStart).count();
       cachedRenderPassDescriptor = NS::RetainPtr((__bridge MTL::RenderPassDescriptor*)mtlDesc);
     }
     return cachedRenderPassDescriptor;
@@ -82,6 +95,9 @@ public:
       }
     }
 
+    if (currentDrawable) {
+      lastCommitted = commandBuffer;
+    }
     commandBuffer = nil;
     commandBufferPtr.reset();
 
@@ -103,6 +119,8 @@ public:
   MLNMapViewImplDelegate* delegate = nil;
   MTKView* mtlView = nil;
   id<MTLCommandBuffer> commandBuffer;
+  /// 142 the frame last handed to the GPU, read for its time once it has finished
+  id<MTLCommandBuffer> lastCommitted;
   id<MTLCommandQueue> commandQueue;
   bool presentsWithTransaction = false;
 
