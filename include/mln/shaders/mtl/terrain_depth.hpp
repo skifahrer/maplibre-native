@@ -66,8 +66,8 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     };
 }
 
-half4 fragment fragmentMain(FragmentStage in [[stage_in]],
-                            device const TerrainEvaluatedPropsUBO& props [[buffer(idTerrainEvaluatedPropsUBO)]]) {
+float4 fragment fragmentMain(FragmentStage in [[stage_in]],
+                             device const TerrainEvaluatedPropsUBO& props [[buffer(idTerrainEvaluatedPropsUBO)]]) {
     // The cutaway of the terrain shader, so labels behind the cut mountain show
     if (cut_away(props, in.clip_xyw, in.distance, in.skirt)) {
         discard_fragment();
@@ -82,7 +82,8 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     const float d2 = floor(r);
     r = (r - d2) * 256.0;
     const float d3 = floor(r);
-    return half4(float4(d0, d1, d2, d3) / 255.0);
+    // 145: a quarter step up, so a GPU that truncates to unorm8 stores the digit as one that rounds
+    return (float4(d0, d1, d2, d3) + 0.25) / 255.0;
 }
 )";
 };
