@@ -3,11 +3,12 @@ import XCTest
 
 /// 142 the stats tell the wait for a drawable and the GPU's time apart from the CPU's work.
 final class RenderingStatsTimesTests: TerrainMapTestCase {
-    private var frames: [MLNRenderingStats] = []
+    /// 151 the map view hands one stats object over and over, so each frame's times are copied
+    private var frames: [(wait: Double, gpu: Double)] = []
 
     func mapViewDidFinishRenderingFrame(_: MLNMapView, fullyRendered _: Bool,
                                         renderingStats: MLNRenderingStats) {
-        frames.append(renderingStats)
+        frames.append((renderingStats.drawableWaitTime, renderingStats.gpuTime))
     }
 
     // 142 after a few frames the GPU has a time, and neither is a second or more
@@ -20,11 +21,11 @@ final class RenderingStatsTimesTests: TerrainMapTestCase {
             waitUntilFullyRendered()
         }
         XCTAssertGreaterThan(frames.count, 3, "too few frames to read a GPU time from")
-        XCTAssertTrue(frames.contains { $0.gpuTime > 0 }, "no frame reported the GPU's time")
-        for stats in frames {
-            XCTAssertGreaterThanOrEqual(stats.drawableWaitTime, 0)
-            XCTAssertLessThan(stats.drawableWaitTime, 1)
-            XCTAssertLessThan(stats.gpuTime, 1)
+        XCTAssertTrue(frames.contains { $0.gpu > 0 }, "no frame reported the GPU's time")
+        for frame in frames {
+            XCTAssertGreaterThanOrEqual(frame.wait, 0)
+            XCTAssertLessThan(frame.wait, 1)
+            XCTAssertLessThan(frame.gpu, 1)
         }
     }
 
@@ -39,7 +40,7 @@ final class RenderingStatsTimesTests: TerrainMapTestCase {
                               zoomLevel: 13, animated: false)
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 1.0 / 60))
         }
-        let times = frames.map(\.gpuTime).filter { $0 > 0 }
+        let times = frames.map(\.gpu).filter { $0 > 0 }
         XCTAssertGreaterThan(times.count, 20, "too few frames with a GPU time")
         let changes = zip(times, times.dropFirst()).filter { $0.0 != $0.1 }.count
         XCTAssertGreaterThan(Double(changes), Double(times.count) / 2,
