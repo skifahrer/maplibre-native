@@ -27,4 +27,22 @@ final class RenderingStatsTimesTests: TerrainMapTestCase {
             XCTAssertLessThan(stats.gpuTime, 1)
         }
     }
+
+    // 151 frames drawn back to back each bring a GPU time, not one held over many frames
+    func testGpuTimeFollowsFramesDrawnBackToBack() throws {
+        try loadMap()
+        tilt(70)
+        frames.removeAll()
+        for step in 0 ..< 90 {
+            mapView.setCenter(CLLocationCoordinate2D(latitude: Self.center.latitude,
+                                                     longitude: Self.center.longitude + Double(step) * 0.0005),
+                              zoomLevel: 13, animated: false)
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 1.0 / 60))
+        }
+        let times = frames.map(\.gpuTime).filter { $0 > 0 }
+        XCTAssertGreaterThan(times.count, 20, "too few frames with a GPU time")
+        let changes = zip(times, times.dropFirst()).filter { $0.0 != $0.1 }.count
+        XCTAssertGreaterThan(Double(changes), Double(times.count) / 2,
+                             "the GPU time stayed one value over \(times.count - changes) frames")
+    }
 }
