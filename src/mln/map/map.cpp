@@ -430,6 +430,15 @@ Color Map::getClayColor() const {
     return impl->transform.getState().getClayColor();
 }
 
+void Map::setPastModelColor(const Color& color) {
+    impl->transform.setPastModelColor(color);
+    impl->onLookChanged();
+}
+
+Color Map::getPastModelColor() const {
+    return impl->transform.getState().getPastModelColor();
+}
+
 void Map::setSkyColor(const Color& color) {
     impl->transform.setSkyColor(color);
     impl->onLookChanged();

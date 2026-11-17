@@ -3356,6 +3356,15 @@ static void *windowScreenContext = &windowScreenContext;
   return color.a > 0 ? [UIColor mgl_colorWithColor:color] : nil;
 }
 
+- (void)setPastModelColor:(UIColor *)pastModelColor {
+  _mbglMap->setPastModelColor(pastModelColor ? pastModelColor.mgl_color : mln::Color{0, 0, 0, 0});
+}
+
+- (UIColor *)pastModelColor {
+  const mln::Color color = _mbglMap->getPastModelColor();
+  return color.a > 0 ? [UIColor mgl_colorWithColor:color] : nil;
+}
+
 - (void)setSkyColor:(UIColor *)skyColor {
   _mbglMap->setSkyColor(skyColor ? skyColor.mgl_color : mln::Color{0, 0, 0, 0});
 }
