@@ -871,6 +871,7 @@ public:
   //
 
   self.anchorRotateOrZoomGesturesToCenterCoordinate = NO;
+  self.rotationKeepsEyeAbovePitch = MLNEyePivotPitch;
 
 #if TARGET_IPHONE_SIMULATOR & (TARGET_CPU_X86 | TARGET_CPU_X86_64)
   bool isM1Simulator = processIsTranslated() > 0;
@@ -2428,7 +2429,8 @@ public:
 
     if ([self _shouldChangeFromCamera:oldCamera toCamera:toCamera]) {
       // Near and past the horizon the head turns: the eye stays where it stands.
-      if (oldCamera.pitch <= MLNEyePivotPitch || !self.mbglMap.setBearingKeepingEye(newDegrees)) {
+      if (oldCamera.pitch <= self.rotationKeepsEyeAbovePitch ||
+          !self.mbglMap.setBearingKeepingEye(newDegrees)) {
         self.mbglMap.jumpTo(mln::CameraOptions()
                                 .withBearing(newDegrees)
                                 .withAnchor(mln::ScreenCoordinate{centerPoint.x, centerPoint.y}));
@@ -2458,7 +2460,9 @@ public:
 
     CGFloat velocity = rotate.velocity;
     CGFloat decelerationRate = self.decelerationRate;
-    if (decelerationRate != MLNMapViewDecelerationRateImmediate && fabs(velocity) > 3) {
+    // Drift eases round the anchor; where the turn kept the eye it would swing away at the end.
+    BOOL keptEye = self.camera.pitch > self.rotationKeepsEyeAbovePitch;
+    if (!keptEye && decelerationRate != MLNMapViewDecelerationRateImmediate && fabs(velocity) > 3) {
       CGFloat radians = self.angle + rotate.rotation;
       CGFloat newRadians = radians + velocity * decelerationRate * 0.1;
       CGFloat newDegrees = MLNDegreesFromRadians(newRadians) * -1;

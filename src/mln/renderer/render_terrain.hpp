@@ -421,6 +421,10 @@ public:
      */
     const Immutable<style::Terrain::Impl>& getImpl() const { return impl; }
 
+    /// 141 Takes a terrain that differs only in its exaggeration, which every cache here
+    /// rereads; false for another DEM source or plane, which need a new RenderTerrain.
+    bool takeExaggeration(const Immutable<style::Terrain::Impl>& changed);
+
     /**
      * @brief Get the terrain mesh for a specific tile
      *

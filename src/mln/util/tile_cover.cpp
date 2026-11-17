@@ -814,34 +814,41 @@ void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
         return;
     }
     // Thousands of tiles at a source's deep minzoom cannot merge past it; the nearest are enough.
-    keepNearestTiles(tiles, maxTiles * 4, origin);
+    // 144: no fewer than the mesh walk returns, or its fine near tiles crowded out the far slopes.
+    keepNearestTiles(tiles, maxTiles * coverWalkPerKeptTile, origin);
     std::set<OverscaledTileID> alive(tiles.begin(), tiles.end());
     const auto distance2 = [&](const OverscaledTileID& id) {
         return nearestPointDistance2(id.canonical, id.wrap, origin);
     };
     // Farthest first; a parent goes back in at its own, nearer distance.
     using Entry = std::pair<double, OverscaledTileID>;
-    std::priority_queue<Entry> farthest;
-    for (const auto& id : alive) {
-        farthest.emplace(distance2(id), id);
-    }
-    while (alive.size() > maxTiles && !farthest.empty()) {
-        const OverscaledTileID tile = farthest.top().second;
-        farthest.pop();
-        if (!alive.contains(tile) || tile.overscaledZ <= minZoom) {
-            continue;
+    // A merged tile is at most `widths` times as wide as its distance from the origin.
+    const auto merge = [&](double widths) {
+        std::priority_queue<Entry> farthest;
+        for (const auto& id : alive) {
+            farthest.emplace(distance2(id), id);
         }
-        const OverscaledTileID parent = tile.scaledTo(tile.overscaledZ - 1);
-        // No parent wider than twice its distance: merging on swallowed the near ground, 1043
-        // tiles at 79° became two z11 tiles spanning the camera and the drape there drew nothing.
-        const double parentSize = 1.0 / static_cast<double>(1u << parent.canonical.z);
-        if (parentSize * parentSize > 4 * distance2(parent)) {
-            continue;
+        while (alive.size() > maxTiles && !farthest.empty()) {
+            const OverscaledTileID tile = farthest.top().second;
+            farthest.pop();
+            if (!alive.contains(tile) || tile.overscaledZ <= minZoom) {
+                continue;
+            }
+            const OverscaledTileID parent = tile.scaledTo(tile.overscaledZ - 1);
+            // No parent wider than twice its distance: merging on swallowed the near ground, 1043
+            // tiles at 79° became two z11 tiles spanning the camera and the drape there drew nothing.
+            const double parentSize = 1.0 / static_cast<double>(1u << parent.canonical.z);
+            if (parentSize * parentSize > widths * widths * distance2(parent)) {
+                continue;
+            }
+            std::erase_if(alive, [&](const OverscaledTileID& id) { return id == parent || id.isChildOf(parent); });
+            alive.insert(parent);
+            farthest.emplace(distance2(parent), parent);
         }
-        std::erase_if(alive, [&](const OverscaledTileID& id) { return id == parent || id.isChildOf(parent); });
-        alive.insert(parent);
-        farthest.emplace(distance2(parent), parent);
-    }
+    };
+    merge(2.0);
+    // 144: still over, the far ground goes coarser again rather than being cut off behind the ridge.
+    merge(4.0);
     tiles.assign(alive.begin(), alive.end());
     keepNearestTiles(tiles, maxTiles, origin);
 }

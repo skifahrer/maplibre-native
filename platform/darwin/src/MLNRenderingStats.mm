@@ -58,6 +58,8 @@
 - (void)setCoreData:(const mln::gfx::RenderingStats&)stats {
   _encodingTime = stats.encodingTime;
   _renderingTime = stats.renderingTime;
+  _drawableWaitTime = stats.drawableWaitTime;
+  _gpuTime = stats.gpuTime;
   _numFrames = stats.numFrames;
   _numDrawCalls = stats.numDrawCalls;
   _totalDrawCalls = stats.totalDrawCalls;

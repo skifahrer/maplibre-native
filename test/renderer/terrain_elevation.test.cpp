@@ -119,3 +119,28 @@ TEST(TerrainElevation, NormalizeKeepsTheResultInsideTheTile) {
     EXPECT_GE(x, 0.0f);
     EXPECT_LT(x, extent);
 }
+
+namespace {
+Immutable<style::Terrain::Impl> terrainImpl(float exaggeration, std::optional<float> plane = std::nullopt) {
+    auto impl = makeMutable<style::Terrain::Impl>("dem", exaggeration);
+    impl->plane = plane;
+    return impl;
+}
+} // namespace
+
+// 141 a relief growing with the tilt changes only the height: the terrain keeps its mesh
+TEST(TerrainElevation, ANewExaggerationIsTakenInPlace) {
+    RenderTerrain terrain(terrainImpl(0.5f));
+    EXPECT_TRUE(terrain.takeExaggeration(terrainImpl(1.3f)));
+    EXPECT_FLOAT_EQ(terrain.getExaggeration(), 1.3f);
+}
+
+// 141 another DEM source or plane is another terrain, so it is built anew
+TEST(TerrainElevation, AnotherSourceOrPlaneIsNotTakenInPlace) {
+    RenderTerrain terrain(terrainImpl(1.0f));
+    auto other = makeMutable<style::Terrain::Impl>("relief", 1.0f);
+    EXPECT_FALSE(terrain.takeExaggeration(std::move(other)));
+    EXPECT_FALSE(terrain.takeExaggeration(terrainImpl(1.0f, -12480.0f)));
+    EXPECT_FLOAT_EQ(terrain.getExaggeration(), 1.0f);
+    EXPECT_EQ(terrain.getSourceID(), "dem");
+}

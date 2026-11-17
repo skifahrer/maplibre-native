@@ -13,7 +13,7 @@ on:
         type: boolean
         default: false
       runner:
-        description: Apple silicon first; intel is the run started when no arm64 Mac took it
+        description: Apple silicon; intel only by hand, its simulator draws terrain otherwise
         type: choice
         options: [apple, intel]
         default: apple
@@ -24,8 +24,9 @@ permissions:
   statuses: write
 
 # 107: master too, where the newest merge carries every change since the last release
+# 146: by branch, so a pull request's run and a dispatch on its branch stop each other
 concurrency:
-  group: terrain-ios-${{ github.ref }}
+  group: terrain-ios-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -70,9 +71,14 @@ jobs:
             from=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
                      -q '[.[] | select(.tag_name | startswith("terrain-"))][0].target_commitish // ""' || true)
           fi
+          # 146: a dispatch is weighed against master, so a booking commit builds nothing
+          [ -z "$from" ] && [ -z "$PR_HEAD" ] && [ "$release" = false ] && from=master
           if [ -n "$from" ] && [ "$from" != 0000000000000000000000000000000000000000 ]; then
             files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$from...$sha" -q '.files[].filename' || echo unknown)
-            if [ -n "$files" ] && [ "$(echo "$files" | wc -l)" -lt 300 ] &&
+            if [ -z "$files" ]; then
+              echo "::notice::no file changed; nothing to build"
+              build=false release=false pipeline_only=true
+            elif [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] && [ "$(echo "$files" | wc -l)" -lt 300 ] &&
                ! echo "$files" | grep -qvE '^\.github/|\.md$'; then
               echo "::notice::only workflows or docs changed; nothing to build"
               build=false release=false pipeline_only=true
@@ -113,8 +119,8 @@ jobs:
             -f target_url="$RUN_URL" -f description="Building and testing on a simulator" || true
 
   # The arm64 pool drops a job it cannot take within about 15 minutes; this run then
-  # starts again on Intel, which always has a Mac free.
-  intel-if-no-mac:
+  # starts again on Apple silicon (147: never Intel, whose simulator fails occlusion).
+  again-if-no-mac:
     needs: check
     if: needs.check.outputs.build == 'true' && inputs.runner != 'intel'
     runs-on: ubuntu-latest
@@ -124,7 +130,7 @@ jobs:
       BRANCH: ${{ github.head_ref || github.ref_name }}
       FORCE: ${{ inputs.force || false }}
     steps:
-      - name: Start again on Intel if no Apple silicon Mac takes the build
+      - name: Start again if no Apple silicon Mac takes the build
         run: |
           build() {
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
@@ -146,16 +152,16 @@ jobs:
             gh run cancel "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY"
             exit 0
           fi
-          echo "::warning::no Apple silicon Mac took the build; starting this run again on Intel"
+          echo "::warning::no Apple silicon Mac took the build; starting this run again"
           gh workflow run terrain-ios.yml -R "$GITHUB_REPOSITORY" --ref "$BRANCH" \
-            -f runner=intel -f force="$FORCE"
+            -f runner=apple -f force="$FORCE"
           gh run cancel "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY"
 
   build:
     needs: check
     if: needs.check.outputs.build == 'true'
-    # Apple silicon first: Intel runs the core's timing tests 5-10x slower. A run no arm64 Mac
-    # takes is started again on Intel by intel-if-no-mac.
+    # Apple silicon: Intel runs the core's timing tests 5-10x slower. A run no arm64 Mac
+    # takes is started again by again-if-no-mac.
     runs-on: ${{ inputs.runner == 'intel' && 'macos-26-intel' || 'macos-26' }}
     timeout-minutes: 240
     env:
@@ -240,7 +246,7 @@ jobs:
       - name: Test the core's drape, elevation, fog, view settings and label heights
         if: success() || failure()
         env:
-          FILTER: "*Terrain*:*Fog*:*StyleParsedLayers*:*SymbolZOffset*:Scheduler.Reply*-*TerrainCamera*:*MeshCover*:*TerrainSourceCover*"
+          FILTER: "*Terrain*:*Fog*:*StyleParsedLayers*:*SymbolZOffset*:Scheduler.Reply*:RenderingStats.*-*TerrainCamera*:*MeshCover*:*TerrainSourceCover*"
         run: |
           # shellcheck disable=SC2086
           bazel test $BAZEL_CACHE $BAZEL_TEST $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \

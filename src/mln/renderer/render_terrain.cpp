@@ -164,6 +164,14 @@ RenderTerrain::RenderTerrain(Immutable<style::Terrain::Impl> impl_)
 
 RenderTerrain::~RenderTerrain() = default;
 
+bool RenderTerrain::takeExaggeration(const Immutable<style::Terrain::Impl>& changed) {
+    if (changed->sourceID != impl->sourceID || changed->plane != impl->plane) {
+        return false;
+    }
+    impl = changed;
+    return true;
+}
+
 namespace {
 std::set<UnwrappedTileID> dilatedCover(const util::TileCoverParameters& coverParams, std::set<UnwrappedTileID> out) {
     // One-ring cover dilation. tileCover is a top-down DFS that only descends into tiles

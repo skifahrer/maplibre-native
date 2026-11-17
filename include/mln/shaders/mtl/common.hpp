@@ -157,12 +157,18 @@ inline float4 clay_color(float elevation, float4 chosen) {
     return float4(clay * mix(0.62, 1.0, saturate(elevation / 1500.0)), 1.0);
 }
 
-// A curtain hangs at `pos` unless the DEM size's fraction flags that edge as having no
-// ground past it (terrain::withCurtainlessEdges): one hung there was a spike to the sky
-inline bool curtain_hangs(float2 pos, float dem_size_and_edges) {
+// Whether `pos` lies on an edge the DEM size's fraction flags as having no ground past it
+// (terrain::withCurtainlessEdges)
+inline bool faces_no_ground(float2 pos, float dem_size_and_edges) {
     const uint bare = uint(round(fract(dem_size_and_edges) * 16.0));
-    return !((pos.x <= 0.0 && (bare & 1u) != 0u) || (pos.x >= 8192.0 && (bare & 2u) != 0u) ||
-             (pos.y <= 0.0 && (bare & 4u) != 0u) || (pos.y >= 8192.0 && (bare & 8u) != 0u));
+    return (pos.x <= 0.0 && (bare & 1u) != 0u) || (pos.x >= 8192.0 && (bare & 2u) != 0u) ||
+           (pos.y <= 0.0 && (bare & 4u) != 0u) || (pos.y >= 8192.0 && (bare & 8u) != 0u);
+}
+
+// A curtain where the model ends reaches the table, clay as the face is: a fixed one stood in
+// mid-air as a spike, and none let the paper through the face between tiles.
+inline float curtain_depth(float elevation, bool to_table, float offset) {
+    return to_table ? max(elevation, offset) : offset;
 }
 
 // Whether the tile has ground throughout, on a 9 by 9 grid. A tile edge's curtain hangs only

@@ -993,6 +993,50 @@ TEST(TerrainCamera, AGestureKeepsTheCameraHeightAndItsEndKeepsTheView) {
     EXPECT_NEAR(eyeAfter.location.longitude(), eyeAtRelease.location.longitude(), 1e-4);
 }
 
+// 148 Riki Maps grows its relief with the tilt: the held centre stayed at sea level and the
+// ground slid 591 m under it.
+TEST(TerrainCamera, ReliefGrowingUnderAGestureLiftsTheCentreWithItsGround) {
+    util::RunLoop loop;
+    auto fileSource = std::make_shared<StubFileSource>(ResourceOptions::Default(), ClientOptions());
+    fileSource->tileResponse = [](const Resource& resource) {
+        Response res;
+        res.data = std::make_shared<std::string>(makeRampDEMTile(resource.url));
+        return res;
+    };
+    HeadlessFrontend frontend{{390, 844}, 1};
+    MapAdapter map(frontend,
+                   MapObserver::nullObserver(),
+                   fileSource,
+                   MapOptions().withMapMode(MapMode::Static).withSize(frontend.getSize()));
+    map.setCenterClampedToGround(true);
+    map.getStyle().loadJSON(rampStyle);
+    const auto settle = [&] {
+        for (int i = 0; i < 24; ++i) {
+            loop.runOnce();
+            frontend.render(map);
+        }
+    };
+    const LatLng plateau{47.20, 11.4041};
+    map.getStyle().getTerrain()->setExaggeration(0.0f);
+    map.jumpTo(CameraOptions().withCenter(plateau).withZoom(12.0).withPitch(0.0).withBearing(0.0));
+    settle();
+    ASSERT_NEAR(*map.getCameraOptions().centerAltitude, 0.0, 1.0) << "flat relief, the centre at sea level";
+
+    map.setGestureInProgress(true);
+    for (const float exaggeration : {0.25f, 0.5f, 1.0f}) {
+        map.getStyle().getTerrain()->setExaggeration(exaggeration);
+        settle();
+        EXPECT_NEAR(*map.getCameraOptions().centerAltitude, rampMeters(plateau.latitude()) * exaggeration, 10.0)
+            << "the held centre rides its ground at " << exaggeration;
+    }
+    map.jumpTo(CameraOptions().withPitch(60.0));
+    settle();
+    const LatLng shown = map.latLngForPixelOnTerrain(
+        ScreenCoordinate{frontend.getSize().width / 2.0, frontend.getSize().height / 2.0});
+    EXPECT_NEAR(shown.latitude(), plateau.latitude(), 1e-3) << "the tilt turned round the ground at the centre";
+    map.setGestureInProgress(false);
+}
+
 // A gesture that ends over a slope: the end anchors the center at the height of the ground under
 // the old center, which puts it on ground that is higher or lower than that. Correcting the
 // center's height in place then moves the camera by the difference, the jump the hold was meant

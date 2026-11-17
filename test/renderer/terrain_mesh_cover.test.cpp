@@ -764,3 +764,28 @@ TEST(TerrainMeshCover, TheGroundTheEyeStandsOnHidesToo) {
     heights.emplace(z14(0, -2), Range<double>{1000, 1500});
     EXPECT_EQ(hidden(cover, 1600, heights), std::set<UnwrappedTileID>{z14(0, -2)});
 }
+
+// 144 bug: zoomed in close, the walk's hundreds of fine tiles round the camera filled the
+// merge's first cut, so the coarse tiles of the far slopes were dropped before they could
+// merge: behind the ridge the map stayed paper.
+TEST(TerrainMeshCover, FineGroundNearbyLeavesRoomForTheFarSlopes) {
+    std::vector<OverscaledTileID> tiles;
+    // 360 fine tiles round the camera, within the close-up walk's 384...
+    for (uint32_t x = 0; x < 24; x++) {
+        for (uint32_t y = 0; y < 15; y++) {
+            tiles.emplace_back(12, 0, CanonicalTileID(12, x, y));
+        }
+    }
+    // ...and the far slopes it went coarser for, past the walk's limit.
+    const OverscaledTileID far{8, 0, CanonicalTileID(8, 4, 0)};
+    tiles.push_back(far);
+    const std::array<double, 2> origin{{0.5 / 4096, 0.5 / 4096}};
+    util::mergeFarthestTiles(tiles, 24, origin, 0);
+    EXPECT_LE(tiles.size(), 24u);
+    const bool farCovered = std::any_of(tiles.begin(), tiles.end(), [&](const OverscaledTileID& id) {
+        return id == far || far.isChildOf(id);
+    });
+    EXPECT_TRUE(farCovered) << "the far slopes were dropped";
+    const OverscaledTileID atOrigin{12, 0, CanonicalTileID(12, 0, 0)};
+    EXPECT_NE(std::find(tiles.begin(), tiles.end(), atOrigin), tiles.end()) << "the ground underfoot coarsened";
+}

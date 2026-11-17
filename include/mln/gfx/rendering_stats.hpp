@@ -24,6 +24,10 @@ struct RenderingStats {
     double encodingTime = 0.0;
     /// Frame CPU rendering time (seconds)
     double renderingTime = 0.0;
+    /// 142 Seconds the frame was blocked acquiring a drawable; part of encodingTime. Metal only.
+    double drawableWaitTime = 0.0;
+    /// 142 The GPU's start to end on the last frame it finished (seconds). Metal only.
+    double gpuTime = 0.0;
 
     /// Number of frames rendered
     int numFrames = 0;

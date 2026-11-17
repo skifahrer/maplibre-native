@@ -31,7 +31,6 @@ struct FragmentStage {
     float distance;
     float3 clip_xyw;
     float skirt;
-    float ground;
 };
 
 FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
@@ -51,22 +50,19 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     float ground = 1.0;
     const float elevation = get_ground_elevation(pos, demTexture, drawable.dem_coords, props.unpack,
                                                  dem_size, props.exaggeration, props.no_ground, ground);
-    if (vertx.pos.z == 1 && !ground_throughout(demTexture, drawable.dem_coords, dem_size,
-                                                props.unpack, props.no_ground)) {
-        ground = 0.0;
-    }
-
-    // Skirt vertices drop below the surface by elevation_offset (gl-js u_ele_delta)
-    const float ele_delta = (float(vertx.pos.z) == 1.0 && curtain_hangs(pos, drawable.dem_coords.w))
-                                ? props.elevation_offset
-                                : 0.0;
+    const bool skirt = vertx.pos.z == 1;
+    const bool to_table = skirt && (faces_no_ground(pos, drawable.dem_coords.w) ||
+                                    !ground_throughout(demTexture, drawable.dem_coords, dem_size,
+                                                       props.unpack, props.no_ground));
+    // Skirt vertices hang below the surface, a curtain hiding the cracks between neighbouring
+    // tiles at different zoom levels (maplibre-gl-js u_ele_delta). pos.z carries the flag.
+    const float ele_delta = skirt ? curtain_depth(elevation, to_table, props.elevation_offset) : 0.0;
     const float4 position = drawable.matrix * float4(pos.x, pos.y, elevation - ele_delta, 1.0);
     return {
         .position = position,
         .distance = position.w,
         .clip_xyw = position.xyw,
         .skirt    = float(vertx.pos.z),
-        .ground   = ground,
     };
 }
 
@@ -74,10 +70,6 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
                             device const TerrainEvaluatedPropsUBO& props [[buffer(idTerrainEvaluatedPropsUBO)]]) {
     // The cutaway of the terrain shader, so labels behind the cut mountain show
     if (cut_away(props, in.clip_xyw, in.distance, in.skirt)) {
-        discard_fragment();
-    }
-    // The curtains under ground the model does not have
-    if (in.skirt > 0.5 && in.ground < 0.999) {
         discard_fragment();
     }
     // The camera distance / 2^24 as four base-256 digits, each k / 255 so the unorm8 target

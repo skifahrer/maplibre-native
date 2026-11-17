@@ -35,6 +35,8 @@ bool RenderingStats::isZero() const {
 RenderingStats& RenderingStats::operator+=(const RenderingStats& r) {
     encodingTime += r.encodingTime;
     renderingTime += r.renderingTime;
+    drawableWaitTime += r.drawableWaitTime;
+    gpuTime += r.gpuTime;
     numFrames += r.numFrames;
     numDrawCalls += r.numDrawCalls;
     totalDrawCalls += r.totalDrawCalls;
@@ -98,6 +100,8 @@ std::string RenderingStats::toString(std::string_view sep) const {
 
     optionalStatLine(ss, encodingTime, "encodingTime", sep);
     optionalStatLine(ss, renderingTime, "renderingTime", sep);
+    optionalStatLine(ss, drawableWaitTime, "drawableWaitTime", sep);
+    optionalStatLine(ss, gpuTime, "gpuTime", sep);
     optionalStatLine(ss, numFrames, "numFrames", sep);
     optionalStatLine(ss, numDrawCalls, "numDrawCalls", sep);
     optionalStatLine(ss, totalDrawCalls, "totalDrawCalls", sep);
