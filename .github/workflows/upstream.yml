@@ -1,7 +1,7 @@
 name: upstream
 
-# Keeps one branch of ours with every upstream branch we follow and master merged into it, and one
-# pull request from it into master whose terrain-ios run tests that merge. Nothing merges on its own.
+# Keeps a branch of ours for each upstream branch we follow, with master merged into it, and a pull
+# request from it into master whose terrain-ios run tests that merge. Nothing merges on its own.
 on:
   schedule:
     - cron: "23 2 * * *"
@@ -19,13 +19,12 @@ concurrency:
 
 env:
   UPSTREAM: maplibre/maplibre-native
-  BRANCHES: main feature/terrain-3d
   GH_TOKEN: ${{ github.token }}
 
 jobs:
-  follow:
+  workflows-off:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       # upstream's files stay as they are, so its workflows are switched off, not deleted
       - name: Keep upstream's own workflows off
@@ -42,19 +41,36 @@ jobs:
               esac
             done
 
+  follow:
+    needs: workflows-off
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # 149: terrain-3d conflicts with our terrain work; main must not wait for it
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sync: upstream
+            branches: main
+            title: Upstream comes in
+          - sync: upstream-terrain
+            branches: feature/terrain-3d
+            title: Upstream terrain comes in
+    steps:
       - uses: actions/checkout@v4
         with:
           ref: master
           fetch-depth: 0
           token: ${{ secrets.UPSTREAM_TOKEN || github.token }}
 
-      - name: Merge every upstream branch and master into one branch, open its pull request and test it
+      - name: Merge the upstream branch and master into ours, open its pull request and test it
         env:
           # 90: a token with the repo and workflow scopes; the default one may not push
           # upstream's workflow changes, and its pushes start no pipeline
           PUSH_TOKEN: ${{ secrets.UPSTREAM_TOKEN }}
-          # 104: one branch and one pull request for all of upstream
-          SYNC: upstream
+          SYNC: ${{ matrix.sync }}
+          BRANCHES: ${{ matrix.branches }}
+          TITLE: ${{ matrix.title }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -112,9 +128,9 @@ jobs:
                  --json number -q '.[0].number // empty')
           if [ -z "$pr" ]; then
             pr=$(GH_TOKEN=${PUSH_TOKEN:-$GH_TOKEN} gh pr create -R "$GITHUB_REPOSITORY" \
-                   --base master --head "$sync" --title "Upstream comes in" \
+                   --base master --head "$sync" --title "$TITLE" \
                    --body "Booking. @skifahrer" | grep -o '[0-9]*$')
-            gh pr edit "$pr" -R "$GITHUB_REPOSITORY" --title "$pr Upstream comes in" --body "$UPSTREAM's \`${BRANCHES// /\` and \`}\` with \`master\` merged in, on \`$sync\`. It follows all of them as they move.
+            gh pr edit "$pr" -R "$GITHUB_REPOSITORY" --title "$pr $TITLE" --body "$UPSTREAM's \`${BRANCHES// /\` and \`}\` with \`master\` merged in, on \`$sync\`. It follows all of them as they move.
 
           The \`terrain-ios\` status builds that merge and runs upstream's iOS tests and ours on a simulator, again each time one moves. Merge only when it is green on the head.
 
