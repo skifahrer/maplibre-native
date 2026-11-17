@@ -295,6 +295,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // terrain is disabled instead of holding their textures indefinitely
         texturePool.removeStaleRenderTargets({});
     }
+    texturePool.releaseRetired(drapesFreedPerFrame);
 
     // - UPLOAD PASS -------------------------------------------------------------------------------
     // Uploads all required buffers and images before we do any actual rendering.
@@ -956,6 +957,7 @@ void Renderer::Impl::reduceMemoryUse() {
     // The drape targets are the largest reclaimable GPU allocation (one
     // tile-sized texture per terrain tile); they are rebuilt on the next frame
     texturePool.removeStaleRenderTargets({});
+    texturePool.releaseRetired(0);
     backend.getContext().reduceMemoryUsage();
 }
 

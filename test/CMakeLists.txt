@@ -125,6 +125,7 @@ add_library(
     ${PROJECT_SOURCE_DIR}/test/util/action_journal.test.cpp
     ${PROJECT_SOURCE_DIR}/test/util/async_task.test.cpp
     ${PROJECT_SOURCE_DIR}/test/util/bounding_volumes.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/util/retiring.test.cpp
     ${PROJECT_SOURCE_DIR}/test/util/camera.test.cpp
     ${PROJECT_SOURCE_DIR}/test/util/color.test.cpp
     ${PROJECT_SOURCE_DIR}/test/util/geo.test.cpp
