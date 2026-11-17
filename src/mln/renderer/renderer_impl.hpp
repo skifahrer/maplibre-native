@@ -77,6 +77,8 @@ private:
     static constexpr uint32_t drapeQualityFactor = 2;
     // Drape targets are sized to the tile on screen, in steps of drapeTileSize up to this.
     static constexpr uint32_t maxDrapeSide = 4096;
+    // 156: retired drapes freed a frame; all at once took 12 samples of a hang.
+    static constexpr std::size_t drapesFreedPerFrame = 4;
     std::map<UnwrappedTileID, uint32_t> drapeSides(const RenderTerrain& terrain,
                                                    const std::set<UnwrappedTileID>& tiles,
                                                    const TransformState& state,

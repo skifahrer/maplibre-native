@@ -1008,6 +1008,7 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/util/quaternion.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/rapidjson.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/rapidjson.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/util/retiring.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/std.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/stopwatch.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/stopwatch.hpp
