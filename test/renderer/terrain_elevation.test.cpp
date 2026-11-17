@@ -144,3 +144,12 @@ TEST(TerrainElevation, AnotherSourceOrPlaneIsNotTakenInPlace) {
     EXPECT_FLOAT_EQ(terrain.getExaggeration(), 1.0f);
     EXPECT_EQ(terrain.getSourceID(), "dem");
 }
+
+// 154 a peak's name dropped behind its mountain when its tile's DEM fell to a coarser one
+TEST(TerrainElevation, ANameKeepsTheDeepestDEMItHad) {
+    EXPECT_TRUE(RenderTerrain::keepsSymbolDEM(12, 0.0f, 9, 0.0f));
+    EXPECT_TRUE(RenderTerrain::keepsSymbolDEM(12, 0.0f, std::nullopt, 0.0f));
+    EXPECT_TRUE(RenderTerrain::keepsSymbolDEM(12, 0.0f, 12, 0.0f));
+    EXPECT_FALSE(RenderTerrain::keepsSymbolDEM(9, 0.0f, 12, 0.0f));
+    EXPECT_FALSE(RenderTerrain::keepsSymbolDEM(12, 0.0f, 12, -500.0f));
+}
