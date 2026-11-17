@@ -151,6 +151,11 @@ inline bool on_clay_face(float none) {
     return none > 0.001 && none < 0.999;
 }
 
+// Past the model, its clay face and the table, where the view gives them one colour
+inline bool past_model(float none, float4 past_model_color) {
+    return past_model_color.a > 0.0 && none > 0.001;
+}
+
 // Clay grey, or the map's own (premultiplied), darker toward the table it stands on
 inline float4 clay_color(float elevation, float4 chosen) {
     const float3 clay = chosen.a > 0.0 ? chosen.rgb / chosen.a : float3(0.58, 0.56, 0.53);
