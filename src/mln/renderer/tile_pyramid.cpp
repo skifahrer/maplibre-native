@@ -123,7 +123,8 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
         .roundZoom = type == SourceType::Raster || type == SourceType::Video,
         .nearDetail = type == SourceType::RasterDEM ? uint8_t{0} : util::nearDetailLevels(),
         .elevationProvider = parameters.elevationProvider,
-        .tileLodOrigin = parameters.tileLodOrigin};
+        .tileLodOrigin = parameters.tileLodOrigin,
+        .minZoomReach = parameters.coverMinZoomReach};
     // 116: tipped level a walk to the horizon split hundreds of thousands of tiles to keep a few.
     if (parameters.coverTileLimit > 0) {
         tileCoverParameters.tileLimit = parameters.coverTileLimit * util::coverWalkPerKeptTile;
