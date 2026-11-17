@@ -402,6 +402,8 @@ public:
         /// requested tile into normalized coordinates (0..1) of the DEM tile
         std::array<float, 4> demCoords;
         float demDim;
+        /// The zoom of the DEM tile bound, the requested tile's or an ancestor's.
+        int demZoom = -1;
     };
 
     /**
@@ -409,6 +411,19 @@ public:
      * from the matching DEM tile or its closest available ancestor
      */
     std::optional<TerrainData> getTerrainData(const UnwrappedTileID&) const;
+
+    /**
+     * @brief The DEM a symbol tile stands its names on: the deepest it has had, never a
+     * coarser one. A peak's name read from a coarser ancestor sank behind its mountain and
+     * blinked back to the summit when the fine DEM returned; it keeps the fine one alive.
+     */
+    std::optional<TerrainData> getSymbolTerrainData(const UnwrappedTileID&) const;
+
+    /// Whether a symbol tile keeps the DEM it holds rather than the one found now (nullopt
+    /// when none is): a coarser or missing one never replaces it, a new plane always does.
+    static bool keepsSymbolDEM(int heldZoom, float heldPlane, std::optional<int> nowZoom, float plane) {
+        return heldPlane == plane && (!nowZoom || *nowZoom <= heldZoom);
+    }
 
     /**
      * @brief A 1x1 zero-elevation DEM texture bound when no DEM tile is available,
@@ -603,6 +618,15 @@ private:
     // this, preventing unbounded growth while browsing (previously reached 2GB+)
     static constexpr size_t maxDEMTextures = 96;
     uint64_t demUpdateCounter = 0;
+
+    /// getSymbolTerrainData's deepest DEM per symbol tile, and when it was last asked for.
+    struct SymbolDEM {
+        TerrainData data;
+        uint64_t lastUsed = 0;
+    };
+    mutable std::map<UnwrappedTileID, SymbolDEM> symbolDEMs;
+    /// Symbol tiles kept; the longest unasked go first beyond it.
+    static constexpr size_t maxSymbolDEMs = 256;
 
     /// Per-tile height copies behind elevationIndex, kept across rebuilds so a new tile set
     /// copies only its new tiles. `source` identifies the DEM the copy was taken from.

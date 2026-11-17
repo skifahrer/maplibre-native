@@ -1587,7 +1587,35 @@ std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const Un
         .demTexture = entry->texture,
         .demCoords = {{mapping[0], mapping[1], mapping[2], getPlane().value_or(-1.0e9f)}},
         .demDim = static_cast<float>(entry->dim),
+        .demZoom = demTileID->canonical.z,
     };
+}
+
+std::optional<RenderTerrain::TerrainData> RenderTerrain::getSymbolTerrainData(const UnwrappedTileID& tileID) const {
+    auto now = getTerrainData(tileID);
+    const float plane = getPlane().value_or(-1.0e9f);
+    if (const auto kept = symbolDEMs.find(tileID); kept != symbolDEMs.end()) {
+        auto& held = kept->second;
+        const auto nowZoom = now ? std::optional<int>(now->demZoom) : std::nullopt;
+        if (keepsSymbolDEM(held.data.demZoom, held.data.demCoords[3], nowZoom, plane)) {
+            held.lastUsed = demUpdateCounter;
+            return held.data;
+        }
+    }
+    if (!now) {
+        return std::nullopt;
+    }
+    symbolDEMs[tileID] = {.data = *now, .lastUsed = demUpdateCounter};
+    if (symbolDEMs.size() > maxSymbolDEMs) {
+        auto oldest = symbolDEMs.begin();
+        for (auto it = symbolDEMs.begin(); it != symbolDEMs.end(); ++it) {
+            if (it->second.lastUsed < oldest->second.lastUsed) {
+                oldest = it;
+            }
+        }
+        symbolDEMs.erase(oldest);
+    }
+    return now;
 }
 
 const std::shared_ptr<gfx::Texture2D>& RenderTerrain::getPlaceholderDEMTexture(gfx::Context& context) {
