@@ -950,6 +950,7 @@ public:
   _hapticFeedbackEnabled = YES;
 
   _decelerationRate = MLNMapViewDecelerationRateNormal;
+  _zoomRate = 1;
 
   _quickZoom =
       [[UILongPressGestureRecognizer alloc] initWithTarget:self
@@ -2298,8 +2299,7 @@ public:
     [self notifyGestureDidBegin];
   } else if (pinch.state == UIGestureRecognizerStateChanged) {
     // Zoom limiting happens at the core level.
-    CGFloat newScale = self.scale * pinch.scale;
-    double newZoom = log2(newScale);
+    double newZoom = log2(self.scale) + log2(pinch.scale) * self.zoomRate;
 
     // Calculates the final camera zoom, has no effect within current map camera.
     MLNMapCamera *toCamera = [self cameraByZoomingToZoomLevel:newZoom
@@ -2327,13 +2327,14 @@ public:
       // UIPinchGestureRecognizer sometimes returns NaN for the velocity
       velocity = 0;
     }
+    velocity *= self.zoomRate;
     if (velocity > -0.5 && velocity < 3) {
       velocity = 0;
     }
 
     NSTimeInterval duration = (velocity > 0 ? 1 : 0.25) * self.decelerationRate;
 
-    CGFloat scale = self.scale * pinch.scale;
+    CGFloat scale = self.scale * pow(pinch.scale, self.zoomRate);
     CGFloat newScale = scale;
     if (velocity >= 0) {
       newScale += scale * velocity * duration * 0.1;
