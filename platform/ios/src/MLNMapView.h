@@ -1083,6 +1083,14 @@ of north, the map will automatically snap to exact north.
 @property (nonatomic) BOOL anchorRotateOrZoomGesturesToCenterCoordinate;
 
 /**
+ How many zoom levels a pinch moves for each one its fingers spread or close, and so how far
+ its fling carries. The default, 1, follows the fingers; below 1 a pinch zooms more gently.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic) CGFloat zoomRate;
+
+/**
  The pitch, in degrees, above which a rotation gesture turns the camera where it stands
  instead of round a point on the ground ahead of it.
 
