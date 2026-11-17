@@ -796,7 +796,11 @@ double Map::getSightGroundDistance() const {
 }
 
 void Map::setCenterClampedToGround(bool clamped) {
+    const bool switchedOn = clamped && !impl->centerClampedToGround;
     impl->centerClampedToGround = clamped;
+    if (switchedOn) {
+        impl->clampSwitchedOn();
+    }
 }
 
 bool Map::getCenterClampedToGround() const {
