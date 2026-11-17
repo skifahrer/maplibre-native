@@ -135,7 +135,7 @@ jobs:
         run: |
           build() {
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
-              -q ".jobs[] | select(.name == \"build\") | \"\\(.status) \\(.conclusion) \\(.runner_name)\""
+              -q ".jobs[] | select(.name == \"build\") | \"\\(.status) \\(.conclusion) \\(.runner_id // 0)\""
           }
           # until a Mac takes the build or the pool drops it
           while :; do
@@ -143,8 +143,8 @@ jobs:
             read -r status conclusion runner <<< "$(build)"
             case "$status" in
               queued | waiting | pending | "") ;;
-              completed) [ "$conclusion" = cancelled ] && [ "$runner" = null ] && break; exit 0 ;;
-              *) echo "build taken by $runner"; exit 0 ;;
+              completed) [ "$conclusion" = cancelled ] && [ "$runner" = 0 ] && break; exit 0 ;;
+              *) echo "build taken by runner $runner"; exit 0 ;;
             esac
           done
           # a pull request merged meanwhile has no branch left; master's own run builds it
