@@ -117,6 +117,46 @@ struct TerrainCameraTest {
     }
 };
 
+// A phone's screen at half its width and height. Tests that do not read pixels use it with a zoom
+// one lower: the screen then covers the same ground in meters and the camera sits at the same
+// height over it, for a quarter of the pixels to draw.
+constexpr Size halfPhone{195, 422};
+
+// What a settle watches: the eye, the center and its height, and the view around them.
+std::array<double, 9> cameraSignature(MapAdapter& map) {
+    const auto eye = *map.getFreeCameraOptions().position;
+    const auto camera = map.getCameraOptions();
+    return {eye[0],
+            eye[1],
+            eye[2],
+            camera.center->latitude(),
+            camera.center->longitude(),
+            camera.centerAltitude.value_or(0.0),
+            camera.zoom.value_or(0.0),
+            camera.pitch.value_or(0.0),
+            camera.bearing.value_or(0.0)};
+}
+
+// Renders still frames for a camera that reacts to the ground over a few of them, and stops once
+// the camera has not changed for `quietFrames` frames in a row. Every still render waits for the
+// tiles it asks for, so a camera that holds for that long has finished reacting; `maxFrames` is the
+// longest a settle may take, for a camera that never holds. Returns the frames rendered.
+int renderUntilSettled(
+    util::RunLoop& loop, HeadlessFrontend& frontend, MapAdapter& map, int maxFrames, int quietFrames = 4) {
+    auto last = cameraSignature(map);
+    int quiet = 0;
+    int frames = 0;
+    while (frames < maxFrames && quiet < quietFrames) {
+        loop.runOnce();
+        frontend.render(map);
+        ++frames;
+        const auto now = cameraSignature(map);
+        quiet = (now == last) ? quiet + 1 : 0;
+        last = now;
+    }
+    return frames;
+}
+
 // A fill layer over a geojson source that covers far more tiles than the terrain mesh has,
 // beside the DEM that gives the mesh.
 const char* drapedFillStyle = R"STYLE({
@@ -909,7 +949,7 @@ TEST(TerrainCamera, EyeStaysAboveTheSlopeRisingTowardsTheCamera) {
         res.data = std::make_shared<std::string>(makeRampDEMTile(resource.url));
         return res;
     };
-    HeadlessFrontend frontend{{390, 844}, 1};
+    HeadlessFrontend frontend{halfPhone, 1};
     MapAdapter map(frontend,
                    MapObserver::nullObserver(),
                    fileSource,
@@ -919,12 +959,9 @@ TEST(TerrainCamera, EyeStaysAboveTheSlopeRisingTowardsTheCamera) {
     map.getStyle().loadJSON(rampStyle);
     // The center on the ridge line, looking north from the climb behind it.
     map.jumpTo(
-        CameraOptions().withCenter(LatLng{rampStartLatitude, 11.4041}).withZoom(12.0).withPitch(80.0).withBearing(0.0));
+        CameraOptions().withCenter(LatLng{rampStartLatitude, 11.4041}).withZoom(11.0).withPitch(80.0).withBearing(0.0));
 
-    for (int i = 0; i < 24; ++i) {
-        loop.runOnce();
-        frontend.render(map);
-    }
+    renderUntilSettled(loop, frontend, map, 24);
 
     const auto location = map.getFreeCameraOptions().getLocation();
     ASSERT_TRUE(location.has_value());
@@ -945,7 +982,7 @@ TEST(TerrainCamera, AGestureKeepsTheCameraHeightAndItsEndKeepsTheView) {
         res.data = std::make_shared<std::string>(makeRampDEMTile(resource.url));
         return res;
     };
-    HeadlessFrontend frontend{{390, 844}, 1};
+    HeadlessFrontend frontend{halfPhone, 1};
     MapAdapter map(frontend,
                    MapObserver::nullObserver(),
                    fileSource,
@@ -953,10 +990,7 @@ TEST(TerrainCamera, AGestureKeepsTheCameraHeightAndItsEndKeepsTheView) {
     map.setCenterClampedToGround(true);
     map.getStyle().loadJSON(rampStyle);
     const auto settle = [&] {
-        for (int i = 0; i < 24; ++i) {
-            loop.runOnce();
-            frontend.render(map);
-        }
+        renderUntilSettled(loop, frontend, map, 24);
     };
     const auto eye = [&] {
         const auto location = map.getFreeCameraOptions().getLocation();
@@ -965,7 +999,7 @@ TEST(TerrainCamera, AGestureKeepsTheCameraHeightAndItsEndKeepsTheView) {
     };
     // High enough that the eye clears the 6,000 m plateau by a wide margin, so only the hold
     // decides the camera's height.
-    map.jumpTo(CameraOptions().withCenter(LatLng{47.40, 11.4041}).withZoom(10.0).withPitch(45.0).withBearing(0.0));
+    map.jumpTo(CameraOptions().withCenter(LatLng{47.40, 11.4041}).withZoom(9.0).withPitch(45.0).withBearing(0.0));
     settle();
     ASSERT_NEAR(*map.getCameraOptions().centerAltitude, 0.0, 1.0) << "the center starts on flat ground";
     const double eyeAltitudeBefore = eye().altitude;
@@ -1051,7 +1085,7 @@ TEST(TerrainCamera, AGestureEndingOverASlopeKeepsTheCameraWhereItIs) {
         res.data = std::make_shared<std::string>(makeRampDEMTile(resource.url));
         return res;
     };
-    HeadlessFrontend frontend{{390, 844}, 1};
+    HeadlessFrontend frontend{halfPhone, 1};
     MapAdapter map(frontend,
                    MapObserver::nullObserver(),
                    fileSource,
@@ -1059,10 +1093,7 @@ TEST(TerrainCamera, AGestureEndingOverASlopeKeepsTheCameraWhereItIs) {
     map.setCenterClampedToGround(true);
     map.getStyle().loadJSON(rampStyle);
     const auto settle = [&] {
-        for (int i = 0; i < 24; ++i) {
-            loop.runOnce();
-            frontend.render(map);
-        }
+        renderUntilSettled(loop, frontend, map, 24);
     };
     const auto eye = [&] {
         const auto location = map.getFreeCameraOptions().getLocation();
@@ -1070,7 +1101,7 @@ TEST(TerrainCamera, AGestureEndingOverASlopeKeepsTheCameraWhereItIs) {
         return location.value_or(LatLngAltitude{});
     };
     // Looking north, so the camera sits south of the center, up the slope.
-    map.jumpTo(CameraOptions().withCenter(LatLng{47.40, 11.4041}).withZoom(12.0).withPitch(60.0).withBearing(0.0));
+    map.jumpTo(CameraOptions().withCenter(LatLng{47.40, 11.4041}).withZoom(11.0).withPitch(60.0).withBearing(0.0));
     settle();
 
     // Drag the center onto the middle of the slope, where the ground is 3,000 m.
@@ -1135,7 +1166,7 @@ TEST(TerrainCamera, AGestureEndingOverBrokenGroundKeepsTheCameraWhereItIs) {
         res.data = std::make_shared<std::string>(makeBandDEMTile(resource.url));
         return res;
     };
-    HeadlessFrontend frontend{{390, 844}, 1};
+    HeadlessFrontend frontend{halfPhone, 1};
     MapAdapter map(frontend,
                    MapObserver::nullObserver(),
                    fileSource,
@@ -1143,17 +1174,14 @@ TEST(TerrainCamera, AGestureEndingOverBrokenGroundKeepsTheCameraWhereItIs) {
     map.setCenterClampedToGround(true);
     map.getStyle().loadJSON(rampStyle);
     const auto settle = [&] {
-        for (int i = 0; i < 40; ++i) {
-            loop.runOnce();
-            frontend.render(map);
-        }
+        renderUntilSettled(loop, frontend, map, 40);
     };
     const auto eye = [&] {
         const auto location = map.getFreeCameraOptions().getLocation();
         EXPECT_TRUE(location.has_value());
         return location.value_or(LatLngAltitude{});
     };
-    map.jumpTo(CameraOptions().withCenter(LatLng{47.40, 11.4041}).withZoom(12.0).withPitch(60.0).withBearing(0.0));
+    map.jumpTo(CameraOptions().withCenter(LatLng{47.40, 11.4041}).withZoom(11.0).withPitch(60.0).withBearing(0.0));
     settle();
 
     for (const double latitude : {47.255, 47.245, 47.235, 47.225}) {
@@ -1180,7 +1208,7 @@ TEST(TerrainCamera, AGestureEndingWhereTheCenterCannotSlideKeepsTheCamera) {
         res.data = std::make_shared<std::string>(makeRampDEMTile(resource.url));
         return res;
     };
-    HeadlessFrontend frontend{{390, 844}, 1};
+    HeadlessFrontend frontend{halfPhone, 1};
     MapAdapter map(frontend,
                    MapObserver::nullObserver(),
                    fileSource,
@@ -1189,10 +1217,7 @@ TEST(TerrainCamera, AGestureEndingWhereTheCenterCannotSlideKeepsTheCamera) {
     map.setBounds(BoundOptions().withMaxPitch(85.0));
     map.getStyle().loadJSON(rampStyle);
     const auto settle = [&] {
-        for (int i = 0; i < 40; ++i) {
-            loop.runOnce();
-            frontend.render(map);
-        }
+        renderUntilSettled(loop, frontend, map, 40);
     };
     const auto eye = [&] {
         const auto location = map.getFreeCameraOptions().getLocation();
@@ -1200,7 +1225,7 @@ TEST(TerrainCamera, AGestureEndingWhereTheCenterCannotSlideKeepsTheCamera) {
         return location.value_or(LatLngAltitude{});
     };
     // Looking south from the flat ground at the climb.
-    map.jumpTo(CameraOptions().withCenter(LatLng{47.40, 11.4041}).withZoom(13.0).withPitch(80.0).withBearing(180.0));
+    map.jumpTo(CameraOptions().withCenter(LatLng{47.40, 11.4041}).withZoom(12.0).withPitch(80.0).withBearing(180.0));
     settle();
 
     map.setGestureInProgress(true);
@@ -1382,7 +1407,7 @@ struct EyeOverTheClimb {
         map.getStyle().loadJSON(fineRampStyle);
         map.jumpTo(CameraOptions().withCenter(LatLng{47.34, 11.4041}).withZoom(14.0).withPitch(85.0).withBearing(0.0));
         pump(std::chrono::milliseconds(30000), [&] { return groundUnderTheEyeIsKnown(); });
-        pump(std::chrono::milliseconds(1000));
+        pumpUntilQuiet(std::chrono::milliseconds(1000));
     }
 
     void pump(std::chrono::milliseconds duration, const std::function<bool()>& done = nullptr) {
@@ -1390,6 +1415,30 @@ struct EyeOverTheClimb {
         while (std::chrono::steady_clock::now() < end && !(done && done())) {
             loop.runOnce();
             std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        }
+    }
+
+    // Like `pump`, for a wait that only lets the camera finish easing onto the ground: stops once the eye
+    // and the center have not changed for `quietSteps` steps in a row, so a settled camera is not waited
+    // on for the rest of `duration`.
+    void pumpUntilQuiet(std::chrono::milliseconds duration, int quietSteps = 60) {
+        const auto read = [&] {
+            const auto location = map.getFreeCameraOptions().getLocation();
+            const auto camera = map.getCameraOptions();
+            return std::array<double, 4>{location ? location->altitude : 0.0,
+                                         location ? location->location.latitude() : 0.0,
+                                         camera.center->latitude(),
+                                         camera.centerAltitude.value_or(0.0)};
+        };
+        auto last = read();
+        int quiet = 0;
+        const auto end = std::chrono::steady_clock::now() + duration;
+        while (std::chrono::steady_clock::now() < end && quiet < quietSteps) {
+            loop.runOnce();
+            std::this_thread::sleep_for(std::chrono::milliseconds(8));
+            const auto now = read();
+            quiet = (now == last) ? quiet + 1 : 0;
+            last = now;
         }
     }
 
@@ -1409,7 +1458,7 @@ struct EyeOverTheClimb {
     void settleOnTheClimb(double latitude = 47.30) {
         map.jumpTo(CameraOptions().withCenter(LatLng{latitude, 11.4041}));
         pump(std::chrono::milliseconds(30000), [&] { return groundUnderTheEyeIsKnown(); });
-        pump(std::chrono::milliseconds(2000));
+        pumpUntilQuiet(std::chrono::milliseconds(2000));
     }
 
     // How far the eye is over the ground right now, without a frame in between.
@@ -1816,10 +1865,7 @@ TEST(TerrainCamera, EyeOverUnloadedGroundBelowSeaLevelIsNotLifted) {
     ASSERT_TRUE(start.has_value());
     eyeGround = start->location;
 
-    for (int i = 0; i < 24; ++i) {
-        loop.runOnce();
-        frontend.render(map);
-    }
+    renderUntilSettled(loop, frontend, map, 24);
 
     ASSERT_NEAR(*map.getCameraOptions().centerAltitude, -430.0, 1.0) << "the center is on the basin floor";
     const auto eye = map.getFreeCameraOptions().getLocation();
@@ -1854,10 +1900,7 @@ TEST(TerrainCamera, TheTileUnderTheEyeKeepsTheEyeOutOfTheMountainBehind) {
     ASSERT_TRUE(start.has_value());
     ASSERT_GT(rampMeters(start->location.latitude()), 3000.0) << "the eye starts well inside the mountain";
 
-    for (int i = 0; i < 24; ++i) {
-        loop.runOnce();
-        frontend.render(map);
-    }
+    renderUntilSettled(loop, frontend, map, 24);
 
     const auto eye = map.getFreeCameraOptions().getLocation();
     ASSERT_TRUE(eye.has_value());
@@ -1876,7 +1919,7 @@ TEST(TerrainCamera, TheEyeIsLiftedWhenTheGroundUnderTheCenterIsAtSeaLevel) {
         res.data = std::make_shared<std::string>(makeRampDEMTile(resource.url));
         return res;
     };
-    HeadlessFrontend frontend{{390, 844}, 1};
+    HeadlessFrontend frontend{halfPhone, 1};
     MapAdapter map(frontend,
                    MapObserver::nullObserver(),
                    fileSource,
@@ -1885,12 +1928,9 @@ TEST(TerrainCamera, TheEyeIsLiftedWhenTheGroundUnderTheCenterIsAtSeaLevel) {
     map.setBounds(BoundOptions().withMaxPitch(85.0));
     map.getStyle().loadJSON(rampStyle);
     // The center on the flat ground north of the ridge line, the climb behind the camera.
-    map.jumpTo(CameraOptions().withCenter(LatLng{47.34, 11.4041}).withZoom(12.0).withPitch(80.0).withBearing(0.0));
+    map.jumpTo(CameraOptions().withCenter(LatLng{47.34, 11.4041}).withZoom(11.0).withPitch(80.0).withBearing(0.0));
 
-    for (int i = 0; i < 24; ++i) {
-        loop.runOnce();
-        frontend.render(map);
-    }
+    renderUntilSettled(loop, frontend, map, 24);
 
     const auto location = map.getFreeCameraOptions().getLocation();
     ASSERT_TRUE(location.has_value());
@@ -1967,6 +2007,34 @@ struct EyeLeavesTheMountain {
         }
     }
 
+    // Like `render`, for a wait in which nothing is expected to happen: stops once nothing the tests
+    // read has changed for `quietSteps` steps in a row, so a camera that has settled is not waited on
+    // for the rest of the steps. `steps` is still the longest it runs.
+    void renderUntilQuiet(int steps, int quietSteps = 100) {
+        const auto read = [&] {
+            return std::array<double, 5>{centerAltitude(),
+                                         eyeAltitude(),
+                                         reportedCenterGround(),
+                                         centerGroundLost() ? 1.0 : 0.0,
+                                         map.getCameraOptions().zoom.value_or(0.0)};
+        };
+        const auto same = [](const std::array<double, 5>& a, const std::array<double, 5>& b) {
+            for (size_t i = 0; i < a.size(); ++i) {
+                if (a[i] != b[i] && !(std::isnan(a[i]) && std::isnan(b[i]))) return false;
+            }
+            return true;
+        };
+        auto last = read();
+        int quiet = 0;
+        int step = 0;
+        for (; step < steps && quiet < quietSteps; ++step) {
+            render(1);
+            const auto now = read();
+            quiet = same(now, last) ? quiet + 1 : 0;
+            last = now;
+        }
+    }
+
     double centerAltitude() const { return map.getCameraOptions().centerAltitude.value_or(0.0); }
     // The ground height under the center the renderer last reported to the map; NaN is "not known".
     double reportedCenterGround() const { return map.reportedCenterGround(); }
@@ -2015,7 +2083,7 @@ TEST(TerrainCamera, EyeFarFromWhereItsHeightWasReadDoesNotKeepTheMountainClearan
     EyeLeavesTheMountain test;
     test.newEyeTile = EyeLeavesTheMountain::NewEyeTile::Missing;
     test.climbThenJump();
-    test.render(400);
+    test.renderUntilQuiet(400);
 
     EXPECT_LT(test.centerAltitude(), 1050.0) << "center altitude " << test.centerAltitude();
     EXPECT_LT(test.eyeAltitude(), 1300.0) << "eye altitude " << test.eyeAltitude() << " over flat ground";
@@ -2026,7 +2094,7 @@ TEST(TerrainCamera, EyeFarFromWhereItsHeightWasReadDoesNotKeepTheMountainClearan
 TEST(TerrainCamera, EyeHeightIsUnknownUntilTheTileUnderTheNewEyeArrives) {
     EyeLeavesTheMountain test;
     test.climbThenJump();
-    test.render(400);
+    test.renderUntilQuiet(400);
 
     EXPECT_LT(test.centerAltitude(), 1050.0) << "center altitude " << test.centerAltitude();
     EXPECT_LT(test.eyeAltitude(), 1300.0) << "eye altitude " << test.eyeAltitude() << " while its tile is on the way";
@@ -2047,7 +2115,7 @@ TEST(TerrainCamera, CenterFarFromWhereItsHeightWasReadDoesNotKeepTheMountainHeig
     test.newCenterGround = EyeLeavesTheMountain::flatCenter();
     test.newCenterTile = EyeLeavesTheMountain::NewEyeTile::Missing;
     test.climbThenJump(true);
-    test.render(400);
+    test.renderUntilQuiet(400);
 
     EXPECT_TRUE(std::isnan(test.reportedCenterGround())) << "reported center ground " << test.reportedCenterGround();
     EXPECT_LT(test.centerAltitude(), 100.0) << "center altitude " << test.centerAltitude() << " over unknown ground";
@@ -2060,11 +2128,11 @@ TEST(TerrainCamera, TheLostCenterGroundIsForgottenWhenTheTerrainIsRemoved) {
     test.newCenterGround = EyeLeavesTheMountain::flatCenter();
     test.newCenterTile = EyeLeavesTheMountain::NewEyeTile::Missing;
     test.climbThenJump(true);
-    test.render(400);
+    test.renderUntilQuiet(400);
     ASSERT_TRUE(test.centerGroundLost()) << "the renderer lost the ground under the center";
 
     test.map.removeTerrain();
-    test.render(100);
+    test.renderUntilQuiet(100, 50);
     EXPECT_FALSE(test.centerGroundLost()) << "still lost with no terrain";
 }
 
@@ -2075,7 +2143,7 @@ TEST(TerrainCamera, CenterHeightIsUnknownUntilTheTileUnderTheNewCenterArrives) {
     test.newCenterGround = EyeLeavesTheMountain::flatCenter();
     test.newCenterTile = EyeLeavesTheMountain::NewEyeTile::Held;
     test.climbThenJump(true);
-    test.render(400);
+    test.renderUntilQuiet(400);
 
     EXPECT_TRUE(std::isnan(test.reportedCenterGround()))
         << "reported center ground " << test.reportedCenterGround() << " while its tile is on the way";
@@ -2084,7 +2152,7 @@ TEST(TerrainCamera, CenterHeightIsUnknownUntilTheTileUnderTheNewCenterArrives) {
     test.render(1500, [&] { return test.reportedCenterGround() > 1500.0; });
 
     EXPECT_NEAR(test.reportedCenterGround(), 2000.0, 5.0);
-    test.render(100);
+    test.renderUntilQuiet(100, 50);
     EXPECT_NEAR(test.centerAltitude(), 2000.0, 5.0)
         << "center altitude " << test.centerAltitude() << " over ground 2000";
 }
