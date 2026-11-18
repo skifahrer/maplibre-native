@@ -406,6 +406,17 @@ void Map::Impl::anchorAfterHold() {
     anchorBracketHigh = std::numeric_limits<double>::infinity();
 }
 
+void Map::Impl::clampSwitchedOn() {
+    // The renderer reports the ground only when it changes, so act on its last report now.
+    if (!style->impl->getTerrain() || std::isnan(terrainCenterElevation)) {
+        return;
+    }
+    centerAwaitingTerrainAnchor = true;
+    centerAnchorKeepsView = true;
+    applyCenterClamp();
+    onUpdate();
+}
+
 void Map::Impl::noteCameraSet(bool fling) {
     anchorPassesLeft = 0;
     centerSettledBesideACliff = false;

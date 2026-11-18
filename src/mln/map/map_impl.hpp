@@ -132,6 +132,8 @@ public:
     /// height, and its end anchors the center on the ground keeping the view, the way GL JS's
     /// elevationFreeze and recalculateZoomAndCenter do.
     bool centerClampedToGround = false;
+    /// 157: a clamp switched on puts the centre on the ground in view, keeping the view.
+    void clampSwitchedOn();
     /// Terrain height under the centre, as the renderer last reported it (NaN until then).
     double terrainCenterElevation = std::numeric_limits<double>::quiet_NaN();
     /// Where a point on screen meets the drawn ground: 0 without terrain.
