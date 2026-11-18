@@ -120,11 +120,12 @@ jobs:
 
   # The arm64 pool drops a job it cannot take within about 15 minutes; this run then
   # starts again on Apple silicon (147: never Intel, whose simulator fails occlusion).
+  # 153: a build still queued keeps its place; starting again put it at the back.
   again-if-no-mac:
     needs: check
     if: needs.check.outputs.build == 'true' && inputs.runner != 'intel'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 360
     env:
       GH_TOKEN: ${{ github.token }}
       BRANCH: ${{ github.head_ref || github.ref_name }}
@@ -134,16 +135,16 @@ jobs:
         run: |
           build() {
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
-              -q ".jobs[] | select(.name == \"build\") | \"\\(.status) \\(.conclusion) \\(.runner_name)\""
+              -q ".jobs[] | select(.name == \"build\") | \"\\(.status) \\(.conclusion) \\(.runner_id // 0)\""
           }
-          # checked until just before the pool's own cut, so the run is never left without one
-          for _ in $(seq 1 13); do
+          # until a Mac takes the build or the pool drops it
+          while :; do
             sleep 60
             read -r status conclusion runner <<< "$(build)"
             case "$status" in
               queued | waiting | pending | "") ;;
-              completed) [ "$conclusion" = cancelled ] && [ "$runner" = null ] && break; exit 0 ;;
-              *) echo "build taken by $runner"; exit 0 ;;
+              completed) [ "$conclusion" = cancelled ] && [ "$runner" = 0 ] && break; exit 0 ;;
+              *) echo "build taken by runner $runner"; exit 0 ;;
             esac
           done
           # a pull request merged meanwhile has no branch left; master's own run builds it
@@ -243,10 +244,10 @@ jobs:
           bazel test $BAZEL_CACHE $BAZEL_TEST $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
             //platform/ios/test/core:CppUnitTests
 
-      - name: Test the core's drape, elevation, fog, view settings and label heights
+      - name: Test the core's drape, elevation, fog, view settings, label heights and layer order
         if: success() || failure()
         env:
-          FILTER: "*Terrain*:*Fog*:*StyleParsedLayers*:*SymbolZOffset*:Scheduler.Reply*:RenderingStats.*-*TerrainCamera*:*MeshCover*:*TerrainSourceCover*"
+          FILTER: "*Terrain*:*Fog*:*StyleParsedLayers*:*SymbolZOffset*:Scheduler.Reply*:RenderingStats.*:*LayersBySource*:Retiring.*-*TerrainCamera*:*MeshCover*:*TerrainSourceCover*"
         run: |
           # shellcheck disable=SC2086
           bazel test $BAZEL_CACHE $BAZEL_TEST $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \

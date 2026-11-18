@@ -13,6 +13,9 @@
 
 #import <Metal/Metal.hpp>
 
+#include <atomic>
+#include <memory>
+
 @interface MLNMapViewImplDelegate : NSObject <MTKViewDelegate>
 @end
 
@@ -49,13 +52,10 @@ public:
     if (!commandBuffer) {
       commandBuffer = [commandQueue commandBuffer];
       commandBufferPtr = NS::RetainPtr((__bridge MTL::CommandBuffer*)commandBuffer);
-      // 142 a new frame: the last one's GPU time if it has finished, no wait yet
+      // 142 a new frame: no wait yet; 151 the GPU's time of the last frame it finished
       auto& stats = backend.getContext().renderingStats();
       stats.drawableWaitTime = 0.0;
-      if (lastCommitted && lastCommitted.status == MTLCommandBufferStatusCompleted) {
-        stats.gpuTime = lastCommitted.GPUEndTime - lastCommitted.GPUStartTime;
-        lastCommitted = nil;
-      }
+      stats.gpuTime = lastGpuTime->load(std::memory_order_relaxed);
     }
   }
 
@@ -85,6 +85,11 @@ public:
   void swap() override {
     id<CAMetalDrawable> currentDrawable = [mtlView currentDrawable];
     if (currentDrawable) {
+      // 151 every frame the GPU finishes, not only one done before the next frame begins
+      auto gpuTime = lastGpuTime;
+      [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
+        gpuTime->store(buffer.GPUEndTime - buffer.GPUStartTime, std::memory_order_relaxed);
+      }];
       if (presentsWithTransaction) {
         [commandBuffer commit];
         [commandBuffer waitUntilScheduled];
@@ -95,9 +100,6 @@ public:
       }
     }
 
-    if (currentDrawable) {
-      lastCommitted = commandBuffer;
-    }
     commandBuffer = nil;
     commandBufferPtr.reset();
 
@@ -119,8 +121,8 @@ public:
   MLNMapViewImplDelegate* delegate = nil;
   MTKView* mtlView = nil;
   id<MTLCommandBuffer> commandBuffer;
-  /// 142 the frame last handed to the GPU, read for its time once it has finished
-  id<MTLCommandBuffer> lastCommitted;
+  /// 151 shared with the completion handlers, which may outlive this resource
+  std::shared_ptr<std::atomic<double>> lastGpuTime = std::make_shared<std::atomic<double>>(0.0);
   id<MTLCommandQueue> commandQueue;
   bool presentsWithTransaction = false;
 

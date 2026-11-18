@@ -128,6 +128,10 @@ public:
     /// A transparent colour (the default) keeps the built-in light clay. Metal only for now.
     void setClayColor(const Color& color);
     Color getClayColor() const;
+    /// One colour (premultiplied) for all terrain past its height model, clay and table.
+    /// Transparent, the default, keeps them. Metal only for now.
+    void setPastModelColor(const Color& color);
+    Color getPastModelColor() const;
     /// The colour shown where nothing is drawn, above the horizon of a tipped map, premultiplied.
     /// A transparent colour (the default) shows the style's background colour there.
     void setSkyColor(const Color& color);

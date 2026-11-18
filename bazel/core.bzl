@@ -618,6 +618,7 @@ MLN_CORE_SOURCE = [
     "src/mln/util/quaternion.hpp",
     "src/mln/util/rapidjson.cpp",
     "src/mln/util/rapidjson.hpp",
+    "src/mln/util/retiring.hpp",
     "src/mln/util/source_location.hpp",
     "src/mln/util/std.hpp",
     "src/mln/util/stopwatch.cpp",

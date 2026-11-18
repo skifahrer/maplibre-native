@@ -644,6 +644,14 @@ MLN_EXPORT
 @property (nonatomic, nullable) UIColor *clayColor;
 
 /**
+ One color for all terrain past its height model, its clay face and the ground below,
+ or `nil` (the default) for the clay and the map.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic, nullable) UIColor *pastModelColor;
+
+/**
  The color shown where the map draws nothing, as above the horizon of a map
  tipped past it, or `nil` for the style's background color.
 

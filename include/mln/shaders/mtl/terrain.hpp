@@ -44,9 +44,10 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
     /* 56 */ float cut_depth;
     /* 60 */ float cut_ndc_y;
     /* 64 */ float4 clay_color;
-    /* 80 */
+    /* 80 */ float4 past_model_color;
+    /* 96 */
 };
-static_assert(sizeof(TerrainEvaluatedPropsUBO) == 80, "wrong size");
+static_assert(sizeof(TerrainEvaluatedPropsUBO) == 96, "wrong size");
 
 // Terrain the camera must see through: what stands nearer than the centre in a window over it,
 // so the mountains to the sides stay. The curtains under the cut tiles' edges go with it.
@@ -151,6 +152,9 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     // swapped about the view). Sample uv.y directly on Metal.
     if (cut_away(props, in.clip_xyw, in.depth, in.skirt)) {
         discard_fragment();
+    }
+    if (past_model(in.none, props.past_model_color)) {
+        return half4(float4(props.past_model_color.rgb / props.past_model_color.a, 1.0));
     }
     float4 color = on_clay_face(in.none) ? clay_color(in.elevation, props.clay_color)
                                          : mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
