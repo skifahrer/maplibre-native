@@ -806,6 +806,30 @@ double nearestPointDistance2(const CanonicalTileID& id, int16_t wrap, const std:
     return dx * dx + dy * dy;
 }
 
+namespace {
+// 159: the set orders by zoom, wrap, z, x, y, so each level's descendants are runs found by
+// lookup; an erase_if over the whole set per merge held the main thread for 0.4 s.
+void eraseWithDescendants(std::set<OverscaledTileID>& alive, const OverscaledTileID& parent, uint8_t deepest) {
+    alive.erase(parent);
+    const CanonicalTileID& top = parent.canonical;
+    for (unsigned level = parent.overscaledZ + 1u; level <= deepest; ++level) {
+        for (unsigned z = top.z; z <= level; ++z) {
+            const unsigned shift = z - top.z;
+            const uint64_t x1 = (static_cast<uint64_t>(top.x) + 1) << shift;
+            const uint64_t y0 = static_cast<uint64_t>(top.y) << shift;
+            const uint64_t y1 = (static_cast<uint64_t>(top.y) + 1) << shift;
+            const CanonicalTileID first(static_cast<uint8_t>(z), top.x << shift, 0);
+            auto it = alive.lower_bound(OverscaledTileID(static_cast<uint8_t>(level), parent.wrap, first));
+            while (it != alive.end() && it->overscaledZ == level && it->wrap == parent.wrap && it->canonical.z == z &&
+                   it->canonical.x < x1) {
+                const bool under = it->canonical.y >= y0 && it->canonical.y < y1;
+                it = under ? alive.erase(it) : std::next(it);
+            }
+        }
+    }
+}
+} // namespace
+
 void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
                         size_t maxTiles,
                         const std::array<double, 2>& origin,
@@ -841,7 +865,7 @@ void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
             if (parentSize * parentSize > widths * widths * distance2(parent)) {
                 continue;
             }
-            std::erase_if(alive, [&](const OverscaledTileID& id) { return id == parent || id.isChildOf(parent); });
+            eraseWithDescendants(alive, parent, alive.rbegin()->overscaledZ);
             alive.insert(parent);
             farthest.emplace(distance2(parent), parent);
         }
@@ -851,6 +875,24 @@ void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
     merge(4.0);
     tiles.assign(alive.begin(), alive.end());
     keepNearestTiles(tiles, maxTiles, origin);
+}
+
+void FarthestTileMerge::apply(std::vector<OverscaledTileID>& tiles,
+                              size_t maxTiles,
+                              const std::array<double, 2>& origin,
+                              uint8_t minZoom) {
+    // 159: a frame where nothing moved asked every source for the same merge again.
+    if (filled && maxTiles == limit && origin == from && minZoom == zoomFloor && tiles == input) {
+        tiles = output;
+        return;
+    }
+    input = tiles;
+    mergeFarthestTiles(tiles, maxTiles, origin, minZoom);
+    output = tiles;
+    limit = maxTiles;
+    from = origin;
+    zoomFloor = minZoom;
+    filled = true;
 }
 
 } // namespace util

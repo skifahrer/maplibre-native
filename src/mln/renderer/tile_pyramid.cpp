@@ -194,8 +194,7 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
     }
 
     if (parameters.coverTileLimit > 0) {
-        util::mergeFarthestTiles(
-            idealTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin, zoomRange.min);
+        farthestMerge.apply(idealTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin, zoomRange.min);
         util::keepNearestTiles(panTiles, parameters.coverTileLimit, parameters.coverTileLimitOrigin);
         util::keepTilesWithin(idealTiles, parameters.coverReach, parameters.coverTileLimitOrigin);
         util::keepTilesWithin(panTiles, parameters.coverReach, parameters.coverTileLimitOrigin);
