@@ -1156,7 +1156,9 @@ std::vector<OverscaledTileID> randomCover(std::mt19937& rng, size_t count) {
         const uint32_t span = std::min<uint32_t>(1u << z, 64u);
         const auto overscaledZ = static_cast<uint8_t>(rng() % 4 == 0 ? std::min(z + 2, 22) : z);
         const auto wrap = static_cast<int16_t>(rng() % 10 == 0 ? 1 : 0);
-        const OverscaledTileID id(overscaledZ, wrap, {z, rng() % span, rng() % span});
+        const auto x = static_cast<uint32_t>(rng() % span);
+        const auto y = static_cast<uint32_t>(rng() % span);
+        const OverscaledTileID id(overscaledZ, wrap, {z, x, y});
         if (seen.insert(id).second) tiles.push_back(id);
     }
     return tiles;
