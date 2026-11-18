@@ -1,0 +1,29 @@
+#include <mln/renderer/drape_budget.hpp>
+
+#include <gtest/gtest.h>
+
+using namespace mln;
+
+// 158 with nothing set, every mode keeps the budget it had
+TEST(DrapeBudget, UnsetKeepsTheModesOwn) {
+    for (const auto mode : {TerrainLoadMode::Quality,
+                            TerrainLoadMode::Balanced,
+                            TerrainLoadMode::Performance,
+                            TerrainLoadMode::CloseUp}) {
+        EXPECT_EQ(drapeTexelBudget(mode, nullptr), terrainLoadBudget(mode).drapeTexels);
+    }
+}
+
+// 158 a run can ask for a smaller budget, in millions of texels
+TEST(DrapeBudget, MillionsStandInForTheMode) {
+    EXPECT_EQ(drapeTexelBudget(TerrainLoadMode::Balanced, "32"), std::size_t{32} << 20);
+    EXPECT_EQ(drapeTexelBudget(TerrainLoadMode::Quality, "24"), std::size_t{24} << 20);
+}
+
+// 158 a value that is no whole number above zero changes nothing
+TEST(DrapeBudget, NonsenseIsIgnored) {
+    const auto own = terrainLoadBudget(TerrainLoadMode::Balanced).drapeTexels;
+    for (const char* value : {"", "0", "abc", "32MB", "-8"}) {
+        EXPECT_EQ(drapeTexelBudget(TerrainLoadMode::Balanced, value), own) << value;
+    }
+}

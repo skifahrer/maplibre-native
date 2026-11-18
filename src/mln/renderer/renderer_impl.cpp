@@ -19,6 +19,7 @@
 #include <mln/renderer/render_tile.hpp>
 #include <mln/renderer/terrain_cache_policy.hpp>
 #include <mln/renderer/texture_pool.hpp>
+#include <mln/renderer/drape_budget.hpp>
 #include <mln/renderer/update_parameters.hpp>
 #include <mln/shaders/program_parameters.hpp>
 #include <mln/util/convert.hpp>
@@ -919,7 +920,7 @@ std::map<UnwrappedTileID, uint32_t> Renderer::Impl::drapeSides(const RenderTerra
         texels += std::size_t{side} * side;
     }
     // Over the budget, the largest give way first, a step at a time.
-    const std::size_t budget = terrainLoadBudget(mode).drapeTexels;
+    const std::size_t budget = drapeTexelBudget(mode);
     while (texels > budget) {
         auto largest = std::max_element(wanted.begin(), wanted.end(), [](const Wanted& a, const Wanted& b) {
             return a.side < b.side || (a.side == b.side && a.edge > b.edge);
