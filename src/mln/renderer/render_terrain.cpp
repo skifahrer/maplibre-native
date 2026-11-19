@@ -61,6 +61,7 @@
 #include <iterator>
 #include <array>
 #include <limits>
+#include <numbers>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -349,7 +350,16 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     // tile it dropped.
     if (updateParameters) {
         const auto origin = meshTileCapOrigin(state);
-        auto kept = nearestMeshTiles(out, terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles, origin);
+        // Up to the pitch threshold the cover has one zoom: at the threshold on a phone, 67 tiles
+        // of the DEM's own zoom, which cannot merge. Dropping the farthest of them left the far
+        // corners of the view to the sky.
+        const bool oneZoom = coverParams.tileLodMode != TileLodMode::Adaptive &&
+                             state.getPitch() <= coverParams.tileLodPitchThreshold;
+        const size_t cap = meshTileCap(terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles,
+                                       state.getPitch(),
+                                       state.getFieldOfView(),
+                                       oneZoom);
+        auto kept = nearestMeshTiles(out, cap, origin);
         // Where the first dropped tile begins, so the fog can be full before the cover ends.
         double nearestDropped2 = std::numeric_limits<double>::infinity();
         for (const auto& id : out) {
@@ -728,6 +738,14 @@ double RenderTerrain::nearestPointDist2(const UnwrappedTileID& id, const std::ar
     const double dx = std::max({0.0, x0 - origin[0], origin[0] - (x0 + 1.0 / scale)});
     const double dy = std::max({0.0, y0 - origin[1], origin[1] - (y0 + 1.0 / scale)});
     return dx * dx + dy * dy;
+}
+
+size_t RenderTerrain::meshTileCap(const size_t modeCap,
+                                  const double pitch,
+                                  const double fieldOfView,
+                                  const bool oneZoom) {
+    const bool topEdgeOnTheGround = pitch + fieldOfView / 2.0 < std::numbers::pi / 2.0;
+    return oneZoom && topEdgeOnTheGround ? modeCap * 2 : modeCap;
 }
 
 std::set<UnwrappedTileID> RenderTerrain::nearestMeshTiles(std::set<UnwrappedTileID> tiles,
