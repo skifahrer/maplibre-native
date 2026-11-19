@@ -1769,13 +1769,12 @@ struct EyeLeavesTheMountain {
     // for the rest of the steps. `steps` is still the longest it runs.
     void renderUntilQuiet(int steps, int quietSteps = 100) {
         const auto read = [&] {
-            return std::array<double, 5>{centerAltitude(),
+            return std::array<double, 4>{centerAltitude(),
                                          eyeAltitude(),
                                          reportedCenterGround(),
-                                         centerGroundLost() ? 1.0 : 0.0,
                                          map.getCameraOptions().zoom.value_or(0.0)};
         };
-        const auto same = [](const std::array<double, 5>& a, const std::array<double, 5>& b) {
+        const auto same = [](const std::array<double, 4>& a, const std::array<double, 4>& b) {
             for (size_t i = 0; i < a.size(); ++i) {
                 if (a[i] != b[i] && !(std::isnan(a[i]) && std::isnan(b[i]))) return false;
             }
