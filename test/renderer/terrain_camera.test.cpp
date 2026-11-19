@@ -2027,11 +2027,12 @@ TEST(TerrainDEMTextures, ANeighbourLoadingLaterRefreshesTheTexturesOfTheTilesItB
     ASSERT_TRUE(renderUntilQuiet()) << "the even columns kept arriving";
     ASSERT_GT(stats.numDEMTexturesCreated, 0) << "the tiles in the even columns have no texture";
     ASSERT_FALSE(requestedOdd.empty()) << "the view has no tile in an odd column, so nothing backfills";
-    EXPECT_EQ(stats.numDEMTexturesRefreshed, 0) << "nothing has backfilled a border yet";
+    // 161 a row that came after its neighbours' textures backfills them too: count from here
+    const int refreshedBefore = stats.numDEMTexturesRefreshed;
 
     holdOddColumns = false;
     ASSERT_TRUE(renderUntilQuiet()) << "the odd columns kept arriving";
-    EXPECT_GT(stats.numDEMTexturesRefreshed, 0)
+    EXPECT_GT(stats.numDEMTexturesRefreshed, refreshedBefore)
         << "a tile backfilled by a neighbour that loaded after its texture was made kept the stale texture";
 }
 
