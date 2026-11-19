@@ -2,6 +2,7 @@
 #include <mln/test/stub_file_source.hpp>
 #include <mln/test/map_adapter.hpp>
 
+#include <mln/gfx/backend_scope.hpp>
 #include <mln/gfx/headless_frontend.hpp>
 #include <mln/map/bound_options.hpp>
 #include <mln/map/camera.hpp>
