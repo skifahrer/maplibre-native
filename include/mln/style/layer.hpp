@@ -148,6 +148,11 @@ public:
     void setMinZoom(float);
     void setMaxZoom(float);
 
+    /// Over terrain, a line layer stands on the ground and is drawn over every other
+    /// layer, buildings and ridges too, instead of being draped; other types ignore it.
+    bool isDrawnOverTerrain() const;
+    void setDrawnOverTerrain(bool);
+
     // Dynamic properties
     enum class PropertyScope {
         Paint,
