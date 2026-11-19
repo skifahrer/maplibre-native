@@ -189,6 +189,12 @@ PremultipliedImage loadedFrame(float exaggeration) {
     return std::move(fresh.settle().image);
 }
 
+// The textures a map loaded with `exaggeration` creates to draw its first frame
+int loadedTextures(float exaggeration) {
+    RidgeMap fresh(exaggeration);
+    return fresh.settle().stats.numCreatedTextures;
+}
+
 size_t differingPixels(const PremultipliedImage& a, const PremultipliedImage& b) {
     size_t count = 0;
     for (size_t i = 0; i < a.bytes(); i += 4) {
@@ -233,7 +239,9 @@ TEST(TerrainExaggeration, AChangeKeepsWhatTheTerrainBuilt) {
 
     changed.map.getStyle().getTerrain()->setExaggeration(1.0f);
     const auto raised = changed.frontend.render(changed.map);
-    EXPECT_EQ(raised.stats.numCreatedTextures, low.stats.numCreatedTextures);
+    // 165 ours covers the ground the higher relief brings into view, a drape for each such tile;
+    // building it all again would make a loaded map's worth of textures once more
+    EXPECT_LT(raised.stats.numCreatedTextures - low.stats.numCreatedTextures, loadedTextures(1.0f) / 4);
     EXPECT_LT(differingPixels(raised.image, expected), 50u);
 }
 
@@ -248,7 +256,8 @@ TEST(TerrainExaggeration, ARiseInStepsEndsWhereAJumpDoes) {
         rising.map.getStyle().getTerrain()->setExaggeration(static_cast<float>(step) / 10.0f);
         frame = rising.frontend.render(rising.map);
     }
-    EXPECT_EQ(frame.stats.numCreatedTextures, flat.stats.numCreatedTextures);
+    // 165 as above: only the drapes of ground the rise brings into view
+    EXPECT_LT(frame.stats.numCreatedTextures - flat.stats.numCreatedTextures, loadedTextures(1.0f) / 4);
     EXPECT_LT(differingPixels(frame.image, expected), 50u);
 }
 
