@@ -595,7 +595,6 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         tileParameters.coverTileLimit = isDemSource ? 0 : coverTileLimit;
         tileParameters.terrainMeshCover = isDemSource ? util::terrainMeshCover() : std::vector<UnwrappedTileID>{};
         tileParameters.alsoCover = isDemSource ? terrainEye : std::nullopt;
-        tileParameters.leaveOutEmptyTiles = terrainEnabled && !isDemSource && RenderTerrain::leavesOutEmptyTiles();
 
         tileParameters.isUpdateSynchronous = sourceImpl->isUpdateSynchronous();
         // The DEM source additionally keeps the coarser ancestors of its cover that are already
