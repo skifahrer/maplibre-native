@@ -127,6 +127,18 @@ const MLNExceptionName MLNInvalidStyleLayerException = @"MLNInvalidStyleLayerExc
   return self.rawLayer->getMinZoom();
 }
 
+- (void)setDrawnOverTerrain:(BOOL)drawnOverTerrain {
+  MLNAssertStyleLayerIsValid();
+
+  self.rawLayer->setDrawnOverTerrain(drawnOverTerrain);
+}
+
+- (BOOL)isDrawnOverTerrain {
+  MLNAssertStyleLayerIsValid();
+
+  return self.rawLayer->isDrawnOverTerrain();
+}
+
 - (NSString *)description {
   if (self.rawLayer) {
     return [NSString stringWithFormat:@"<%@: %p; identifier = %@; visible = %@>",

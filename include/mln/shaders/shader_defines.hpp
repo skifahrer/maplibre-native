@@ -369,6 +369,8 @@ enum {
 enum {
     idLineImageTexture,
     idLineDashTexture,
+    idLineDEMTexture,
+    idLineDepthTexture,
     lineTextureCount
 };
 

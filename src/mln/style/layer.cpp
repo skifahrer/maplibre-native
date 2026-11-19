@@ -152,6 +152,18 @@ void Layer::setMaxZoom(float maxZoom) {
     observer->onLayerChanged(*this);
 }
 
+bool Layer::isDrawnOverTerrain() const {
+    return baseImpl->drawnOverTerrain;
+}
+
+void Layer::setDrawnOverTerrain(bool over) {
+    if (isDrawnOverTerrain() == over) return;
+    auto impl_ = mutableBaseImpl();
+    impl_->drawnOverTerrain = over;
+    baseImpl = std::move(impl_);
+    observer->onLayerChanged(*this);
+}
+
 Value Layer::serialize() const {
     mapbox::base::ValueObject result;
     result.emplace(std::make_pair("id", getID()));

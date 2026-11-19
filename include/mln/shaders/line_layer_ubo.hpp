@@ -23,9 +23,16 @@ struct alignas(16) LineDrawableUBO {
     /* 84 */ float offset_t;
     /* 88 */ float width_t;
     /* 92 */ float pad1; // Reused padding slot to flag terrain render-to-texture tiles
-    /* 96 */
+
+    // A line drawn over terrain stands on it: the DEM tile under it, as circles bind it
+    /* 96 */ std::array<float, 4> dem_coords;
+    /* 112 */ float dem_dim;
+    /* 116 */ float dem_exaggeration;
+    /* 120 */ float dem_encoding; // 0 none, 1 Mapbox, 2 Terrarium
+    /* 124 */ float depth_enabled;
+    /* 128 */
 };
-static_assert(sizeof(LineDrawableUBO) == 6 * 16);
+static_assert(sizeof(LineDrawableUBO) == 8 * 16);
 
 //
 // Line gradient

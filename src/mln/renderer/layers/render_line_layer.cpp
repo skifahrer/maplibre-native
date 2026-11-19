@@ -328,9 +328,26 @@ void RenderLineLayer::update(gfx::ShaderRegistry& shaders,
         return;
     }
 
+#if MLN_RENDER_BACKEND_METAL
+    // Only a plain line can stand over the terrain; dashes, patterns and gradients stay draped
+    const auto& lineProperties = static_cast<const LineLayerProperties&>(*evaluatedProperties).evaluated;
+    const bool plain = lineProperties.get<LineDasharray>().from.empty() &&
+                       unevaluated.get<LinePattern>().isUndefined() &&
+                       unevaluated.get<LineGradient>().getValue().isUndefined();
+    const bool draped = !(baseImpl->drawnOverTerrain && plain);
+#else
+    // Only Metal's line shader reads the height model
+    constexpr bool draped = true;
+#endif
+    if (layerGroup && layerGroup->shouldRenderToTerrain() != draped) {
+        removeAllDrawables();
+        setLayerGroup(nullptr, changes);
+        layerTweaker.reset();
+    }
+
     // Set up a layer group
     if (!layerGroup) {
-        if (auto layerGroup_ = context.createTileLayerGroup(layerIndex, /*initialCapacity=*/64, getID(), true)) {
+        if (auto layerGroup_ = context.createTileLayerGroup(layerIndex, /*initialCapacity=*/64, getID(), draped)) {
             setLayerGroup(std::move(layerGroup_), changes);
         } else {
             return;
