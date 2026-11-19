@@ -61,6 +61,8 @@
 #include <iterator>
 #include <array>
 #include <limits>
+#include <atomic>
+#include <numbers>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -157,6 +159,9 @@ std::vector<LoadedDEMTile> loadedDEMTiles(const RenderSource* demSource) {
     return out;
 }
 
+// Set by tests only (RenderTerrain::setMaxDEMTexturesForTesting); 0 keeps the default cap
+std::atomic<size_t> demTextureCapOverride{0};
+
 } // namespace
 
 RenderTerrain::RenderTerrain(Immutable<style::Terrain::Impl> impl_)
@@ -198,6 +203,10 @@ std::set<UnwrappedTileID> dilatedCover(const util::TileCoverParameters& coverPar
     return out;
 }
 } // namespace
+
+void RenderTerrain::setMaxDEMTexturesForTesting(size_t cap) {
+    demTextureCapOverride = cap;
+}
 
 std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     const TransformState& state, const std::shared_ptr<UpdateParameters>& updateParameters) const {
@@ -349,7 +358,16 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     // tile it dropped.
     if (updateParameters) {
         const auto origin = meshTileCapOrigin(state);
-        auto kept = nearestMeshTiles(out, terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles, origin);
+        // Up to the pitch threshold the cover has one zoom: at the threshold on a phone, 67 tiles
+        // of the DEM's own zoom, which cannot merge. Dropping the farthest of them left the far
+        // corners of the view to the sky.
+        const bool oneZoom = coverParams.tileLodMode != TileLodMode::Adaptive &&
+                             state.getPitch() <= coverParams.tileLodPitchThreshold;
+        const size_t cap = meshTileCap(terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles,
+                                       state.getPitch(),
+                                       state.getFieldOfView(),
+                                       oneZoom);
+        auto kept = nearestMeshTiles(out, cap, origin);
         // Where the first dropped tile begins, so the fog can be full before the cover ends.
         double nearestDropped2 = std::numeric_limits<double>::infinity();
         for (const auto& id : out) {
@@ -730,6 +748,14 @@ double RenderTerrain::nearestPointDist2(const UnwrappedTileID& id, const std::ar
     return dx * dx + dy * dy;
 }
 
+size_t RenderTerrain::meshTileCap(const size_t modeCap,
+                                  const double pitch,
+                                  const double fieldOfView,
+                                  const bool oneZoom) {
+    const bool topEdgeOnTheGround = pitch + fieldOfView / 2.0 < std::numbers::pi / 2.0;
+    return oneZoom && topEdgeOnTheGround ? modeCap * 2 : modeCap;
+}
+
 std::set<UnwrappedTileID> RenderTerrain::nearestMeshTiles(std::set<UnwrappedTileID> tiles,
                                                           size_t maxTiles,
                                                           const std::array<double, 2>& origin) {
@@ -955,11 +981,33 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
             demDim = demData->dim;
             if (auto existing = demTextures.find(loaded.id); existing != demTextures.end()) {
                 existing->second.lastUsed = demUpdateCounter;
+                // A neighbour that loaded after the texture was made has backfilled the border
+                // (RenderRasterDEMSource::onTileChanged), which the tile's edge samples. The
+                // image is shared and already changed; the copy on the GPU is not. Send it
+                // again, as gl-js does (needsDEMTextureUpload), or the edge keeps the stand-in
+                // border and steps against its neighbour.
+                if (existing->second.borderRevision != demData->getBorderRevision()) {
+                    existing->second.borderRevision = demData->getBorderRevision();
+                    existing->second.texture->setImage(demData->getImagePtr());
+#if MLN_RENDER_BACKEND_OPENGL
+                    // OpenGL uploads at once; Metal does it when the texture is next bound
+                    existing->second.texture->upload();
+                    // A tile already packed into the array is packed again; one not yet bound is
+                    // packed from this frame's data when it is
+                    if (demArrayLayer.contains(loaded.id)) {
+                        packDEMArrayLayer(context, loaded.id, *demData);
+                    }
+#endif
+                    context.renderingStats().numDEMTexturesRefreshed++;
+                }
             } else if (relatedToMesh(loaded.id)) {
                 if (auto texture = createDEMTexture(context, *demData)) {
                     context.renderingStats().numDEMTexturesCreated++;
                     // Keep the texture available for elevation sampling by non-draped layers
-                    demTextures[loaded.id] = {.texture = texture, .dim = demData->dim, .lastUsed = demUpdateCounter};
+                    demTextures[loaded.id] = {.texture = texture,
+                                              .dim = demData->dim,
+                                              .lastUsed = demUpdateCounter,
+                                              .borderRevision = demData->getBorderRevision()};
                 }
             }
         }
@@ -1006,11 +1054,15 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
     // Cap the cache: ancestor/descendant relations accumulate while browsing
     // (zooming makes whole chains "related"), which previously grew past 2GB
     // of DEM textures and overflowed/OOMed. Evict least-recently-used entries
-    // that were not used this frame until the cache is back under budget.
+    // that were not used this frame until the cache is back under budget. A texture an
+    // elevated layer bound in the previous frame's draw (getTerrainData) is in use as well: an
+    // ancestor DEM that only symbols still sample has no loaded DEM tile to remake it from.
+    const size_t capOverride = demTextureCapOverride.load();
+    const size_t maxDEMTextures = capOverride ? capOverride : defaultMaxDEMTextures;
     if (demTextures.size() > maxDEMTextures) {
         std::vector<std::pair<uint64_t, UnwrappedTileID>> evictable;
         for (const auto& [id, entry] : demTextures) {
-            if (entry.lastUsed != demUpdateCounter) {
+            if (entry.lastUsed != demUpdateCounter && entry.sampledAt + 1 < demUpdateCounter) {
                 evictable.emplace_back(entry.lastUsed, id);
             }
         }
@@ -1578,6 +1630,8 @@ std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const Un
     if (!entry || !entry->texture) {
         return std::nullopt;
     }
+    // The layer is about to draw with this texture: keep it out of the next update()'s eviction
+    entry->sampledAt = demUpdateCounter;
 
     // Map tile-local coordinates (0..EXTENT) of the requested tile into
     // normalized coordinates (0..1) of the (possibly ancestor) DEM tile

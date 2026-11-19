@@ -790,10 +790,13 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     // DEM, so this is the channel; whether the camera acts on it is the map's call
     // (Map::setCenterClampedToGround). Gated so a still map does not post a message a frame.
     auto* terrain = orchestrator.getRenderTerrain();
-    // A reloaded style drops the centre to sea level: report as the first terrain did.
-    if (terrain != reportedTerrain) {
-        reportedTerrain = terrain;
+    // A style swap removes the terrain and the app sets it back before a frame is drawn without
+    // it: the same heights, held back as reported, left the centre at sea level. Report again.
+    if (reportedTerrain != updateParameters->terrain) {
+        reportedTerrain = updateParameters->terrain;
         lastReportedCenterElevation = std::numeric_limits<double>::quiet_NaN();
+        lastReportedEyeElevation = std::numeric_limits<double>::quiet_NaN();
+        eyeElevationTile.reset();
     }
     // Only once a DEM tile covers the spot: ground not loaded yet is not sea level.
     if (terrain) {

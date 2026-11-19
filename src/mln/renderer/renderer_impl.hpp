@@ -3,6 +3,7 @@
 #include <mln/gfx/context_observer.hpp>
 #include <mln/renderer/render_orchestrator.hpp>
 #include <mln/renderer/texture_pool.hpp>
+#include <mln/style/terrain.hpp>
 
 #if MLN_RENDER_BACKEND_METAL
 #include <mln/mtl/mtl_fwd.hpp>
@@ -131,7 +132,9 @@ private:
     /// Last terrain height reported under the map centre, so an unchanged surface does not
     /// post an observer message every frame. NaN until one is: ground at 0 m is a height too.
     double lastReportedCenterElevation = std::numeric_limits<double>::quiet_NaN();
-    const RenderTerrain* reportedTerrain = nullptr;
+    /// The terrain those heights were reported for: one set again after it was removed is another
+    /// terrain to the map, even where the renderer drew no frame without one.
+    std::optional<Immutable<style::Terrain::Impl>> reportedTerrain;
     double lastReportedEyeElevation = std::numeric_limits<double>::quiet_NaN();
     /// The loaded DEM tile the eye's height was last read from: once the eye is outside it with no
     /// loaded tile under it, that height is not the ground under the eye any more.

@@ -162,9 +162,13 @@ public:
     static double nearestPointDist2(const UnwrappedTileID& id, const std::array<double, 2>& origin);
 
     /// The `maxTiles` tiles whose nearest points lie nearest `origin` (normalized web-mercator), or all
-    /// of them when there are no more than that or `maxTiles` is 0. The mesh-tile cap
-    /// (TerrainLoadBudget::maxMeshTiles) that computeMeshCover applies, after
-    /// coarsenFarMeshTiles.
+    /// of them when there are no more than that or `maxTiles` is 0. computeMeshCover applies it
+    /// with the frame's mesh-tile cap (meshTileCap), after coarsenFarMeshTiles.
+    /// The most mesh tiles a frame may have (0 = no limit): `modeCap`, or twice that for a view
+    /// of one zoom (`oneZoom`: the pitch at or under the threshold) whose top edge is on the
+    /// ground, since every tile dropped from it is a hole on screen.
+    static size_t meshTileCap(size_t modeCap, double pitch, double fieldOfView, bool oneZoom);
+
     static std::set<UnwrappedTileID> nearestMeshTiles(std::set<UnwrappedTileID> tiles,
                                                       size_t maxTiles,
                                                       const std::array<double, 2>& origin);
@@ -252,6 +256,10 @@ public:
      * @return false when the point lies past a pole, where there is no tile to resolve to
      */
     static bool normalizeTileCoordinates(UnwrappedTileID& tileID, float& x, float& y);
+
+    /// Overrides the DEM texture cache cap (default 96) for every RenderTerrain, so a test can
+    /// reach the eviction with a few tiles. Pass 0 to restore the default.
+    static void setMaxDEMTexturesForTesting(size_t cap);
 
     /**
      * @brief Get elevation at a specific tile coordinate
@@ -435,6 +443,12 @@ public:
      * @brief Get the terrain implementation
      */
     const Immutable<style::Terrain::Impl>& getImpl() const { return impl; }
+    void setImpl(Immutable<style::Terrain::Impl> impl_) {
+        impl = std::move(impl_);
+        depthDirty = true;
+    }
+    /// Whether anything is held that was built from DEM tiles
+    bool holdsDEMData() const { return !demTextures.empty() || !elevationGrids.empty(); }
 
     /// 141 Takes a terrain that differs only in its exaggeration, which every cache here
     /// rereads; false for another DEM source or plane, which need a new RenderTerrain.
@@ -611,12 +625,18 @@ private:
         std::shared_ptr<gfx::Texture2D> texture;
         int32_t dim;
         uint64_t lastUsed = 0;
+        // demUpdateCounter of the last frame an elevated layer (symbol, circle, heatmap,
+        // fill-extrusion) bound this texture through getTerrainData. Mutable because that
+        // lookup is const and runs after update(), in the frame's draw.
+        mutable uint64_t sampledAt = 0;
+        // DEMData::getBorderRevision() of the image the texture holds
+        uint32_t borderRevision = 0;
     };
     std::map<UnwrappedTileID, DEMTextureEntry> demTextures;
     // Retention cap for demTextures (~1MB per 514x514 DEM texture); entries not
     // used in the current frame are evicted least-recently-used first beyond
     // this, preventing unbounded growth while browsing (previously reached 2GB+)
-    static constexpr size_t maxDEMTextures = 96;
+    static constexpr size_t defaultMaxDEMTextures = 96;
     uint64_t demUpdateCounter = 0;
 
     /// getSymbolTerrainData's deepest DEM per symbol tile, and when it was last asked for.
