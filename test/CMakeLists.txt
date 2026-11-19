@@ -46,6 +46,7 @@ add_library(
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_dem_cache.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_occlusion.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_elevation.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/renderer/terrain_exaggeration.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_line_drape.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/shader_registry.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/layer_min_zoom_tiles.test.cpp
@@ -114,6 +115,7 @@ add_library(
     ${PROJECT_SOURCE_DIR}/test/text/local_glyph_rasterizer.test.cpp
     ${PROJECT_SOURCE_DIR}/test/text/quads.test.cpp
     ${PROJECT_SOURCE_DIR}/test/text/shaping.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/text/symbol_projection.test.cpp
     ${PROJECT_SOURCE_DIR}/test/text/tagged_string.test.cpp
     ${PROJECT_SOURCE_DIR}/test/tile/custom_geometry_tile.test.cpp
     ${PROJECT_SOURCE_DIR}/test/tile/geojson_tile.test.cpp
