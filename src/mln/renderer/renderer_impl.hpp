@@ -130,9 +130,6 @@ private:
     double lastReportedCenterElevation = std::numeric_limits<double>::quiet_NaN();
     const RenderTerrain* reportedTerrain = nullptr;
     double lastReportedEyeElevation = std::numeric_limits<double>::quiet_NaN();
-    /// The loaded DEM tile the center's height was last read from: once the center is outside it
-    /// with no loaded tile under it, that height is not the ground under the center any more.
-    std::optional<UnwrappedTileID> centerElevationTile;
     /// The loaded DEM tile the eye's height was last read from: once the eye is outside it with no
     /// loaded tile under it, that height is not the ground under the eye any more.
     std::optional<UnwrappedTileID> eyeElevationTile;
