@@ -17,7 +17,6 @@ public:
 
     PremultipliedImage readStillImage() override;
     const gfx::Texture2DPtr& getTexture() override;
-    void setMipmapped(bool mipmapped, uint8_t maxAnisotropy) override;
 };
 
 } // namespace mtl
