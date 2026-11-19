@@ -594,8 +594,6 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         }
         tileParameters.coverTileLimit = isDemSource ? 0 : coverTileLimit;
         tileParameters.terrainMeshCover = isDemSource ? util::terrainMeshCover() : std::vector<UnwrappedTileID>{};
-        tileParameters.coverMinZoomReach = terrainEnabled && !isDemSource ? RenderTerrain::sourceMinZoomReach()
-                                                                          : std::nullopt;
         tileParameters.alsoCover = isDemSource ? terrainEye : std::nullopt;
         tileParameters.leaveOutEmptyTiles = terrainEnabled && !isDemSource && RenderTerrain::leavesOutEmptyTiles();
 
