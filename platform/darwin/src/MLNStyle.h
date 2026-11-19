@@ -11,6 +11,7 @@
 
 @class MLNSource;
 @class MLNLight;
+@class MLNTerrain;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -348,6 +349,22 @@ MLN_EXPORT
  This method is experimental and subject to change.
  */
 - (void)removeTerrain;
+
+/**
+ The style's 3D terrain, or `nil` if the map is flat.
+
+ Setting this property to an ``MLNTerrain`` object drapes the map over the elevation data of
+ one of the style's ``MLNRasterDEMSource`` objects. Setting it to `nil` makes the map flat
+ again. A style whose JSON has a `terrain` object starts with it set. Reading the property
+ returns a new object each time, so changing the terrain means setting a new one.
+
+ The raster-dem source does not have to exist yet when the terrain is set, but the map stays
+ flat until it does. Loading a style replaces the terrain, so wait until the style has
+ finished loading before setting this property. You can use the
+ ``MLNMapViewDelegate/mapView:didFinishLoadingStyle:`` method as an indicator that it's safe
+ to modify the map's style.
+ */
+@property (nonatomic, nullable, copy) MLNTerrain *terrain;
 
 // MARK: Localizing Map Content
 
