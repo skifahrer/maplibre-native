@@ -2,6 +2,7 @@
 
 #include <mln/tile/tile_id.hpp>
 #include <mln/renderer/render_target.hpp>
+#include <mln/util/retiring.hpp>
 #include <optional>
 #include <set>
 
@@ -20,8 +21,12 @@ public:
                             const Color& backgroundColor,
                             uint32_t size = 0);
 
-    /// Remove render targets for tiles that are no longer part of the given set
+    /// Targets of tiles not in the set leave the pool at once, to be freed by `releaseRetired`.
     void removeStaleRenderTargets(const std::set<UnwrappedTileID>& currentTiles);
+
+    /// Frees at most `count` targets that left the pool, every one when `count` is 0.
+    std::size_t releaseRetired(std::size_t count) { return retired.release(count); }
+    std::size_t retiredCount() const { return retired.size(); }
 
     template <typename Func /* void(std::shared_ptr<RenderTarget>&) */>
     void visitRenderTargets(Func f) {
@@ -45,6 +50,7 @@ private:
     uint32_t tileSize;
 
     std::map<UnwrappedTileID, std::shared_ptr<RenderTarget>> renderTargets;
+    util::Retiring<std::shared_ptr<RenderTarget>> retired;
 };
 
 } // namespace mln

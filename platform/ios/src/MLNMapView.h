@@ -119,23 +119,6 @@ typedef NS_ENUM(NSUInteger, MLNPanScrollingMode) {
 };
 
 /**
- How much 3D terrain the map draws and builds per frame, used by
- ``MLNMapView/terrainLoadMode``. Each mode also caps the terrain tiles drawn,
- keeping those nearest the camera, so a lighter mode draws less of the distance.
- */
-typedef NS_ENUM(NSUInteger, MLNTerrainLoadMode) {
-  /** No per-frame budget; up to 64 terrain tiles. */
-  MLNTerrainLoadModeQuality = 0,
-  /** 32 new tiles and 16 drapes a frame; up to 48 terrain tiles. */
-  MLNTerrainLoadModeBalanced,
-  /** 8 new tiles and 4 drapes a frame; up to 24 terrain tiles. */
-  MLNTerrainLoadModePerformance,
-  /** As Performance, but the tiles near the camera go as deep as the view, for a
-      view from the ground. */
-  MLNTerrainLoadModeCloseUp,
-};
-
-/**
  How the map picks the zoom of the tiles it covers the view with, used by
  ``MLNMapView/tileLodMode``.
  */
@@ -577,6 +560,16 @@ MLN_EXPORT
 @property (nonatomic, assign) MLNTileLodMode tileLodMode;
 
 /**
+ Whether the edges of 3D terrain tiles are skirted.
+
+ Skirts hide the gaps between terrain tiles of different zoom levels, but show as vertical
+ artifacts where the map has a transparent background, so use ``MLNTerrainSkirtLengthNone`` there.
+ Changing this property rebuilds the terrain mesh and every tile. The default is
+ ``MLNTerrainSkirtLengthAuto``.
+ */
+@property (nonatomic, assign) MLNTerrainSkirtLength terrainSkirtLength;
+
+/**
  Frustum offset used to disable rendering of elements at the edge of the screen
 
  Offset applied to camera frustum and scissor rectangle. The camrea frustum is modified
@@ -644,6 +637,14 @@ MLN_EXPORT
 @property (nonatomic, nullable) UIColor *clayColor;
 
 /**
+ One color for all terrain past its height model, its clay face and the ground below,
+ or `nil` (the default) for the clay and the map.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic, nullable) UIColor *pastModelColor;
+
+/**
  The color shown where the map draws nothing, as above the horizon of a map
  tipped past it, or `nil` for the style's background color.
 
@@ -706,6 +707,20 @@ MLN_EXPORT
  This property is experimental and subject to change.
  */
 @property (nonatomic, readonly) CLLocationDistance sightGroundDistance;
+
+/**
+ The rendered 3D terrain's height under a coordinate, in meters with the style's
+ exaggeration applied, as the renderer last loaded it.
+
+ Returns `nil` when terrain is not enabled or the DEM under the coordinate has not
+ loaded yet. The same query positions annotation views and the user location on
+ the draped surface; a caller that needs true elevation divides by the terrain's
+ exaggeration.
+
+ @param coordinate The geographic coordinate to sample.
+ */
+- (nullable NSNumber *)terrainElevationForCoordinate:(CLLocationCoordinate2D)coordinate
+    NS_SWIFT_NAME(terrainElevation(at:));
 
 // MARK: Displaying the User’s Location
 
@@ -1307,6 +1322,31 @@ of north, the map will automatically snap to exact north.
     NS_SWIFT_NAME(setCenter(_:altitude:zoomLevel:direction:pitch:));
 
 /**
+ Puts the camera at an eye position and points it at a point, without
+ animation.
+
+ The map's center becomes `centerCoordinate` at `centerAltitude`. The zoom
+ level, direction and pitch become those that place the camera at
+ `eyeCoordinate` and `eyeAltitude` with the current `fieldOfView`. A center
+ above the eye gives a pitch over 90 degrees.
+
+ The pitch is limited by `maximumPitch` and the zoom level by
+ `minimumZoomLevel` and `maximumZoomLevel`; where a limit applies, the camera
+ is not at the eye position. With 3D terrain, altitudes are in meters with the
+ terrain exaggeration applied, and `centerClampedToGround` moves the center
+ after this call: turn it off to keep the camera where this method put it.
+
+ @param centerCoordinate The point the camera looks at.
+ @param centerAltitude The altitude of that point above sea level, in meters.
+ @param eyeCoordinate The coordinate the camera is over.
+ @param eyeAltitude The altitude of the camera above sea level, in meters.
+ */
+- (void)setCenterCoordinate:(CLLocationCoordinate2D)centerCoordinate
+             centerAltitude:(CLLocationDistance)centerAltitude
+          fromEyeCoordinate:(CLLocationCoordinate2D)eyeCoordinate
+                eyeAltitude:(CLLocationDistance)eyeAltitude;
+
+/**
  * The minimum zoom level at which the map can be shown.
  *
  * Depending on the map view’s aspect ratio, the map view may be prevented
@@ -1384,6 +1424,22 @@ of north, the map will automatically snap to exact north.
  The default value of this property is 60 degrees.
  */
 @property (nonatomic) CGFloat maximumPitch;
+
+/**
+ The vertical field of view of the map’s camera, measured in degrees.
+
+ The map keeps its center coordinate, zoom level, pitch and direction when this
+ property changes: the scale at the center of the view stays the same, and a
+ wider field of view moves the camera closer to the center, so a pitched map
+ shows more of the distance, as a wide-angle lens does.
+
+ The value is limited to the range from 0.1 to 150 degrees. The default value
+ of this property is about 36.87 degrees.
+
+ `MLNMapCamera.altitude` and `MLNMapCamera.viewingDistance` describe the camera
+ at the default field of view.
+ */
+@property (nonatomic) CGFloat fieldOfView;
 
 /**
  Resets the map rotation to a northern heading — a `direction` of `0` degrees.

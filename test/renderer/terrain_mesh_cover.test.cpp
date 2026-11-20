@@ -6,6 +6,7 @@
 #include <mln/util/tile_cover.hpp>
 #include <mln/tile/tile_id.hpp>
 #include <mln/util/constants.hpp>
+#include <mln/math/angles.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -788,4 +789,19 @@ TEST(TerrainMeshCover, FineGroundNearbyLeavesRoomForTheFarSlopes) {
     EXPECT_TRUE(farCovered) << "the far slopes were dropped";
     const OverscaledTileID atOrigin{12, 0, CanonicalTileID(12, 0, 0)};
     EXPECT_NE(std::find(tiles.begin(), tiles.end(), atOrigin), tiles.end()) << "the ground underfoot coarsened";
+}
+
+// The cap is for the far tiles a steep pitch or a wide field of view pulls in. A view with one
+// zoom whose top edge is on the ground has none, and may hold twice the cap.
+TEST(TerrainMeshCover, AViewOfOneZoomThatEndsOnTheGroundMayHoldTwiceTheCap) {
+    const double fov = util::deg2rad(36.87);
+    EXPECT_EQ(96u, RenderTerrain::meshTileCap(48, util::deg2rad(60.0), fov, true));
+    EXPECT_EQ(96u, RenderTerrain::meshTileCap(48, 0.0, fov, true));
+    // Past the pitch threshold the cover varies its zoom
+    EXPECT_EQ(48u, RenderTerrain::meshTileCap(48, util::deg2rad(61.0), fov, false));
+    // A field of view that reaches the horizon, at or under the pitch threshold
+    EXPECT_EQ(48u, RenderTerrain::meshTileCap(48, util::deg2rad(40.0), util::deg2rad(120.0), true));
+    EXPECT_EQ(48u, RenderTerrain::meshTileCap(48, util::deg2rad(60.0), util::deg2rad(65.0), true));
+    // No cap stays no cap
+    EXPECT_EQ(0u, RenderTerrain::meshTileCap(0, util::deg2rad(60.0), fov, true));
 }

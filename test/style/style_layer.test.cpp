@@ -493,3 +493,21 @@ TEST(Layer, SymbolLayerOverrides) {
         EXPECT_EQ(*Color::parse("red"), evaluated);
     }
 }
+
+// 170 a route over 3D asks its line layer to stand on the ground instead of being draped
+TEST(Layer, DrawnOverTerrain) {
+    auto layer = std::make_unique<LineLayer>("line", "source");
+    StubLayerObserver observer;
+    layer->setObserver(&observer);
+    int changes = 0;
+    observer.layerChanged = [&](Layer&) { ++changes; };
+
+    EXPECT_FALSE(layer->isDrawnOverTerrain());
+    layer->setDrawnOverTerrain(true);
+    EXPECT_TRUE(layer->isDrawnOverTerrain());
+    layer->setDrawnOverTerrain(true);
+    EXPECT_EQ(changes, 1);
+
+    auto copy = layer->cloneRef("copy");
+    EXPECT_TRUE(copy->isDrawnOverTerrain());
+}

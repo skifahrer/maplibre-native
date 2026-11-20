@@ -11,6 +11,9 @@
 #include <cmath>
 #include <limits>
 #include <set>
+#include <chrono>
+#include <queue>
+#include <random>
 
 #include <algorithm>
 #include <map>
@@ -1109,4 +1112,126 @@ TEST(TileCover, KeepTilesWithinAnInfiniteReachKeepsAll) {
     std::vector<OverscaledTileID> tiles{{2, 0, 2, 0, 0}, {2, 0, 2, 3, 3}};
     util::keepTilesWithin(tiles, std::numeric_limits<double>::infinity(), {{0.5, 0.5}});
     EXPECT_EQ(2u, tiles.size());
+}
+
+namespace {
+// The merge as it was: each merged parent drops its descendants by walking the whole set.
+std::vector<OverscaledTileID> mergeByWalkingTheSet(std::vector<OverscaledTileID> tiles,
+                                                   size_t maxTiles,
+                                                   const std::array<double, 2>& origin,
+                                                   uint8_t minZoom) {
+    if (maxTiles == 0 || tiles.size() <= maxTiles) return tiles;
+    util::keepNearestTiles(tiles, maxTiles * util::coverWalkPerKeptTile, origin);
+    std::set<OverscaledTileID> alive(tiles.begin(), tiles.end());
+    const auto distance2 = [&](const OverscaledTileID& id) {
+        return util::nearestPointDistance2(id.canonical, id.wrap, origin);
+    };
+    const auto merge = [&](double widths) {
+        std::priority_queue<std::pair<double, OverscaledTileID>> farthest;
+        for (const auto& id : alive) farthest.emplace(distance2(id), id);
+        while (alive.size() > maxTiles && !farthest.empty()) {
+            const OverscaledTileID tile = farthest.top().second;
+            farthest.pop();
+            if (!alive.contains(tile) || tile.overscaledZ <= minZoom) continue;
+            const OverscaledTileID parent = tile.scaledTo(tile.overscaledZ - 1);
+            const double parentSize = 1.0 / static_cast<double>(1u << parent.canonical.z);
+            if (parentSize * parentSize > widths * widths * distance2(parent)) continue;
+            std::erase_if(alive, [&](const OverscaledTileID& id) { return id == parent || id.isChildOf(parent); });
+            alive.insert(parent);
+            farthest.emplace(distance2(parent), parent);
+        }
+    };
+    merge(2.0);
+    merge(4.0);
+    tiles.assign(alive.begin(), alive.end());
+    util::keepNearestTiles(tiles, maxTiles, origin);
+    return tiles;
+}
+
+std::vector<OverscaledTileID> randomCover(std::mt19937& rng, size_t count) {
+    std::vector<OverscaledTileID> tiles;
+    std::set<OverscaledTileID> seen;
+    while (tiles.size() < count) {
+        const auto z = static_cast<uint8_t>(rng() % 15);
+        const uint32_t span = std::min<uint32_t>(1u << z, 64u);
+        const auto overscaledZ = static_cast<uint8_t>(rng() % 4 == 0 ? std::min(z + 2, 22) : z);
+        const auto wrap = static_cast<int16_t>(rng() % 10 == 0 ? 1 : 0);
+        const auto x = static_cast<uint32_t>(rng() % span);
+        const auto y = static_cast<uint32_t>(rng() % span);
+        const OverscaledTileID id(overscaledZ, wrap, {z, x, y});
+        if (seen.insert(id).second) tiles.push_back(id);
+    }
+    return tiles;
+}
+
+std::vector<OverscaledTileID> squareOfTiles(uint32_t side) {
+    std::vector<OverscaledTileID> tiles;
+    for (uint32_t x = 0; x < side; ++x) {
+        for (uint32_t y = 0; y < side; ++y) tiles.emplace_back(16, 30000 + x, 20000 + y);
+    }
+    return tiles;
+}
+} // namespace
+
+TEST(TileCover, MergeFarthestTilesKeepsWhatTheWholeSetWalkKept) {
+    // 159: descendants are found by lookup now; every mixed cover must merge exactly as before.
+    std::mt19937 rng(159);
+    for (int round = 0; round < 400; ++round) {
+        const auto tiles = randomCover(rng, 5 + rng() % 300);
+        const size_t maxTiles = 1 + rng() % 60;
+        const std::array<double, 2> origin{{(rng() % 1000) / 1000.0, (rng() % 1000) / 1000.0}};
+        const auto minZoom = static_cast<uint8_t>(rng() % 4);
+        auto merged = tiles;
+        util::mergeFarthestTiles(merged, maxTiles, origin, minZoom);
+        ASSERT_EQ(mergeByWalkingTheSet(tiles, maxTiles, origin, minZoom), merged) << "round " << round;
+    }
+}
+
+TEST(TileCover, MergeFarthestTilesGrowsWithTheCoverNotItsSquare) {
+    // 159: each merge walked the whole set, so a 3D cover held a frame for 0.4 s; four times the
+    // tiles took eleven to fourteen times as long. Without the walk it takes about five.
+    const std::array<double, 2> origin{{30000.5 / 65536.0, 20000.5 / 65536.0}};
+    const auto timed = [&](uint32_t side) {
+        const auto tiles = squareOfTiles(side);
+        double best = std::numeric_limits<double>::infinity();
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            auto merged = tiles;
+            const auto start = std::chrono::steady_clock::now();
+            util::mergeFarthestTiles(merged, tiles.size() / 16, origin, 0);
+            best = std::min(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+        }
+        return best;
+    };
+    const double small = timed(128);
+    const double large = timed(256);
+    EXPECT_LT(large / small, 8.0) << "128² tiles " << small << " s, 256² tiles " << large << " s";
+}
+
+TEST(TileCover, FarthestTileMergeAnswersAgainOnlyWhileNothingMoved) {
+    // 159: the last merge is reused for the same cover and limits, never for another.
+    const std::array<double, 2> origin{{30000.5 / 65536.0, 20000.5 / 65536.0}};
+    const auto tiles = squareOfTiles(40);
+    const auto fresh = [&](size_t maxTiles, const std::array<double, 2>& from) {
+        auto merged = tiles;
+        util::mergeFarthestTiles(merged, maxTiles, from, 0);
+        return merged;
+    };
+    util::FarthestTileMerge merge;
+    for (int pass = 0; pass < 2; ++pass) {
+        auto again = tiles;
+        merge.apply(again, 100, origin, 0);
+        EXPECT_EQ(fresh(100, origin), again) << "pass " << pass;
+    }
+    auto fewer = tiles;
+    merge.apply(fewer, 50, origin, 0);
+    EXPECT_EQ(fresh(50, origin), fewer) << "a lower limit was answered with the last merge";
+    const std::array<double, 2> moved{{30030.5 / 65536.0, 20030.5 / 65536.0}};
+    auto elsewhere = tiles;
+    merge.apply(elsewhere, 50, moved, 0);
+    EXPECT_EQ(fresh(50, moved), elsewhere) << "a moved camera was answered with the last merge";
+    auto shorter = std::vector<OverscaledTileID>(tiles.begin(), tiles.begin() + 600);
+    auto expected = shorter;
+    util::mergeFarthestTiles(expected, 50, moved, 0);
+    merge.apply(shorter, 50, moved, 0);
+    EXPECT_EQ(expected, shorter) << "another cover was answered with the last merge";
 }

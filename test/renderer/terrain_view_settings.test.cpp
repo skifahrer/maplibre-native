@@ -103,3 +103,13 @@ TEST(TerrainFog, TheTransformPassesFogAndClayToItsState) {
     EXPECT_EQ(transform.getState().getFogEnd(), 9000.0);
     EXPECT_EQ(transform.getState().getClayColor(), (Color{0.3f, 0.25f, 0.2f, 1.0f}));
 }
+
+// 155 under a sky the model's edge stood as a table with walls; it takes the sky's colour
+TEST(TerrainClay, PastTheModelKeepsClayAndTableUntilGivenAColour) {
+    Transform transform;
+    EXPECT_EQ(transform.getState().getPastModelColor().a, 0.0f);
+    transform.setPastModelColor(Color{0.1f, 0.12f, 0.2f, 1.0f});
+    EXPECT_EQ(transform.getState().getPastModelColor(), (Color{0.1f, 0.12f, 0.2f, 1.0f}));
+    transform.setPastModelColor(Color{0.0f, 0.0f, 0.0f, 0.0f});
+    EXPECT_EQ(transform.getState().getPastModelColor().a, 0.0f);
+}

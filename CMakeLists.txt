@@ -173,6 +173,7 @@ list(APPEND INCLUDE_FILES
     ${PROJECT_SOURCE_DIR}/include/mln/renderer/layer_tweaker.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/renderer/render_target.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/renderer/terrain_cache_policy.hpp
+    ${PROJECT_SOURCE_DIR}/include/mln/renderer/drape_budget.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/shaders/shader_program_base.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/util/suppress_copies.hpp
 )
@@ -1008,6 +1009,7 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/util/quaternion.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/rapidjson.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/rapidjson.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/util/retiring.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/std.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/stopwatch.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/stopwatch.hpp

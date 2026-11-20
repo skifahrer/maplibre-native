@@ -203,6 +203,19 @@ final class TerrainMapTests: TerrainMapTestCase {
         XCTAssertEqual(mapView.drawDistance, 0)
     }
 
+    // 155 under a sky the model's edge stood as a table with walls
+    func testPastTheModelTakesItsColourOnlyWhenGivenOne() throws {
+        try loadMap()
+        XCTAssertNil(mapView.pastModelColor)
+        mapView.pastModelColor = UIColor(red: 0.1, green: 0.12, blue: 0.2, alpha: 1)
+        tilt(80, distance: 3000)
+        waitUntilFullyRendered()
+        assertColor(mapView.pastModelColor, 0.1, 0.12, 0.2)
+        mapView.pastModelColor = nil
+        waitUntilFullyRendered()
+        XCTAssertNil(mapView.pastModelColor)
+    }
+
     private func assertColor(_ color: UIColor?, _ red: CGFloat, _ green: CGFloat, _ blue: CGFloat,
                              file: StaticString = #filePath, line: UInt = #line) {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0

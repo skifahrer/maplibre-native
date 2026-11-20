@@ -159,6 +159,10 @@ public:
     Color getClayColor() const { return clayColor; }
     void setClayColor(const Color& color) { clayColor = color; }
 
+    /// The colour past the height model (Map::setPastModelColor), premultiplied.
+    Color getPastModelColor() const { return pastModelColor; }
+    void setPastModelColor(const Color& color) { pastModelColor = color; }
+
     /// Where nothing is drawn (Map::setSkyColor), premultiplied; transparent for the background.
     Color getSkyColor() const { return skyColor; }
     void setSkyColor(const Color& color) { skyColor = color; }
@@ -325,6 +329,7 @@ private:
     double fogStart = 0;
     double fogEnd = 0;
     Color clayColor = Color{0.0f, 0.0f, 0.0f, 0.0f};
+    Color pastModelColor = Color{0.0f, 0.0f, 0.0f, 0.0f};
     Color skyColor = Color{0.0f, 0.0f, 0.0f, 0.0f};
 
     mat4 coordinatePointMatrix(const mat4& projMatrix) const;

@@ -47,6 +47,7 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
     // Fog, as view depth in world pixels: 1 unit is 1 pixel at the centre, as the far plane.
     const Color fogColor = parameters.state.getFogColor();
     const Color clayColor = parameters.state.getClayColor();
+    const Color pastModel = parameters.state.getPastModelColor();
     const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(parameters.state.getLatLng().latitude(),
                                                                           parameters.state.getZoom());
     const auto fogDepth = [&](double metres) { return static_cast<float>(metres / metresPerPixel); };
@@ -81,7 +82,8 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
                                                .fog_end = fogDepth(fogEnd),
                                                .cut_depth = cutDepth,
                                                .cut_ndc_y = cutNdcY,
-                                               .clay_color = {clayColor.r, clayColor.g, clayColor.b, clayColor.a}};
+                                               .clay_color = {clayColor.r, clayColor.g, clayColor.b, clayColor.a},
+                                               .past_model_color = {pastModel.r, pastModel.g, pastModel.b, pastModel.a}};
     layerUniforms.createOrUpdate(idTerrainEvaluatedPropsUBO, &propsUBO, context);
 
 #if MLN_UBO_CONSOLIDATION

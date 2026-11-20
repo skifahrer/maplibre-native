@@ -48,7 +48,9 @@ const auto posNormalAttribName = "a_pos_normal";
 RenderLineLayer::RenderLineLayer(Immutable<style::LineLayer::Impl> _impl)
     : RenderLayer(makeMutable<LineLayerProperties>(std::move(_impl))),
       unevaluated(impl_cast(baseImpl).paint.untransitioned()),
-      colorRamp(std::make_shared<PremultipliedImage>(Size(256, 1))) {
+      // 4096 steps along the line: at 256 a sharp stop on a long line (a route drawn so far)
+      // snapped to steps of 1/256 of its length - 160 m on a 40 km day.
+      colorRamp(std::make_shared<PremultipliedImage>(Size(4096, 1))) {
     styleDependencies = unevaluated.getDependencies();
 }
 
@@ -279,14 +281,14 @@ void RenderLineLayer::updateColorRamp() {
     }
 
     if (colorRampTexture2D) {
-        colorRampTexture2D.reset();
-
-        // delete all gradient drawables
-        if (layerGroup) {
-            stats.drawablesRemoved += layerGroup->getDrawableCount();
-            layerGroup->clearDrawables();
-        }
+        // Update the ramp in place: every gradient drawable shares this texture, so a fresh image
+        // is picked up on its next upload. Dropping the texture and clearing the drawables, as
+        // this used to, left an animated gradient (a route revealed progress by progress) with
+        // no line at all until each tile rebuilt - and over terrain, drape targets baked blank.
+        colorRampTexture2D->setImage(std::make_shared<PremultipliedImage>(colorRamp->clone()));
     }
+    // Drapes over terrain bake this layer into cached textures; a new ramp must re-bake them.
+    ++styleRevision;
 }
 
 float RenderLineLayer::getLineWidth(const GeometryTileFeature& feature,
@@ -326,9 +328,26 @@ void RenderLineLayer::update(gfx::ShaderRegistry& shaders,
         return;
     }
 
+#if MLN_RENDER_BACKEND_METAL
+    // Only a plain line can stand over the terrain; dashes, patterns and gradients stay draped
+    const auto& lineProperties = static_cast<const LineLayerProperties&>(*evaluatedProperties).evaluated;
+    const bool plain = lineProperties.get<LineDasharray>().from.empty() &&
+                       unevaluated.get<LinePattern>().isUndefined() &&
+                       unevaluated.get<LineGradient>().getValue().isUndefined();
+    const bool draped = !(baseImpl->drawnOverTerrain && plain);
+#else
+    // Only Metal's line shader reads the height model
+    constexpr bool draped = true;
+#endif
+    if (layerGroup && layerGroup->shouldRenderToTerrain() != draped) {
+        removeAllDrawables();
+        setLayerGroup(nullptr, changes);
+        layerTweaker.reset();
+    }
+
     // Set up a layer group
     if (!layerGroup) {
-        if (auto layerGroup_ = context.createTileLayerGroup(layerIndex, /*initialCapacity=*/64, getID(), true)) {
+        if (auto layerGroup_ = context.createTileLayerGroup(layerIndex, /*initialCapacity=*/64, getID(), draped)) {
             setLayerGroup(std::move(layerGroup_), changes);
         } else {
             return;

@@ -430,6 +430,15 @@ Color Map::getClayColor() const {
     return impl->transform.getState().getClayColor();
 }
 
+void Map::setPastModelColor(const Color& color) {
+    impl->transform.setPastModelColor(color);
+    impl->onLookChanged();
+}
+
+Color Map::getPastModelColor() const {
+    return impl->transform.getState().getPastModelColor();
+}
+
 void Map::setSkyColor(const Color& color) {
     impl->transform.setSkyColor(color);
     impl->onLookChanged();
@@ -787,7 +796,11 @@ double Map::getSightGroundDistance() const {
 }
 
 void Map::setCenterClampedToGround(bool clamped) {
+    const bool switchedOn = clamped && !impl->centerClampedToGround;
     impl->centerClampedToGround = clamped;
+    if (switchedOn) {
+        impl->clampSwitchedOn();
+    }
 }
 
 bool Map::getCenterClampedToGround() const {

@@ -1,6 +1,8 @@
 #include <mln/renderer/render_orchestrator.hpp>
 #include <mln/renderer/placement_pace.hpp>
 
+#include <mln/style/layers/raster_layer_impl.hpp>
+
 #include <mln/annotation/annotation_manager.hpp>
 #include <mln/layermanager/layer_manager.hpp>
 #include <mln/renderer/change_request.hpp>
@@ -26,6 +28,7 @@
 #include <mln/renderer/image_manager.hpp>
 #include <mln/geometry/line_atlas.hpp>
 #include <mln/style/source_impl.hpp>
+#include <mln/style/sources/tile_source_impl.hpp>
 #include <mln/style/transition_options.hpp>
 #include <mln/text/glyph_manager.hpp>
 #include <mln/tile/tile.hpp>
@@ -37,6 +40,8 @@
 #include <mln/util/logging.hpp>
 
 #include <algorithm>
+#include <string_view>
+#include <unordered_map>
 #include <iterator>
 
 namespace mln {
@@ -279,9 +284,41 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
     if (updateParameters->terrain) {
         // 141 A new exaggeration alone keeps the mesh, the drapes and the DEM: rebuilding them
         // cost a slow frame for each step of a relief growing with the tilt.
-        if (renderTerrain && renderTerrain->getImpl() != *updateParameters->terrain &&
-            !renderTerrain->takeExaggeration(*updateParameters->terrain)) {
-            dropRenderTerrain();
+        const auto& terrainImpl = *updateParameters->terrain;
+        const auto sourceImpl = [&](const auto& sources) -> const style::Source::Impl* {
+            const auto it = std::ranges::find_if(
+                *sources, [&](const auto& source) { return source->id == terrainImpl->sourceID; });
+            return it != sources->end() ? it->get() : nullptr;
+        };
+        // Whether the DEM is no longer the one the terrain was built from. What the terrain holds comes
+        // from the source's tiles, which depend on its tileset (tile URLs, encoding, zoom range, ...)
+        // and on nothing else: a setter such as setVolatile makes a new impl with the same tileset,
+        // and the source keeps its tiles. A tileset that arrives where there was none changes nothing
+        // unless the terrain already holds tiles, which happens when a source takes the place of
+        // another and its TileJSON is yet to load.
+        const auto demChanged = [&] {
+            const auto* before = sourceImpl(sourceImpls);
+            const auto* after = sourceImpl(updateParameters->sources);
+            if (before == after) {
+                return false;
+            }
+            const auto tilesetOf = [](const style::Source::Impl* impl) -> const std::optional<Tileset>* {
+                return impl && impl->type == style::SourceType::RasterDEM
+                           ? &static_cast<const style::TileSource::Impl*>(impl)->tileset
+                           : nullptr;
+            };
+            const auto* was = tilesetOf(before);
+            const auto* now = tilesetOf(after);
+            if (!was || !now) {
+                return true; // added, removed or put in under another type
+            }
+            return *now && *now != *was && (*was || renderTerrain->holdsDEMData());
+        };
+        if (renderTerrain) {
+            if (renderTerrain->getSourceID() != terrainImpl->sourceID || demChanged() ||
+                (renderTerrain->getImpl() != terrainImpl && !renderTerrain->takeExaggeration(terrainImpl))) {
+                dropRenderTerrain();
+            }
         }
         if (!renderTerrain) {
             renderTerrain = std::make_unique<RenderTerrain>(*updateParameters->terrain);
@@ -452,7 +489,20 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         if (layerAddedOrChanged || zoomChangedAndMatters || globalStateChangedAndMatters ||
             evaluationParameters.hasCrossfade || layer.hasTransition()) {
             const auto previousMask = layer.evaluatedProperties->constantsMask();
+            const bool wasInTransition = layer.hasTransition();
             layer.evaluate(evaluationParameters);
+            // A drape over terrain bakes a layer once per revision of its style
+            // (RenderLayer::styleRevision), on the frame the style changed. That is the frame a
+            // paint transition starts on, so the drape kept the paint the transition started
+            // from: a raster basemap whose brightness the app changed kept its old look. The
+            // paint a raster layer's transition ends on is another revision. Only a raster
+            // layer's: a fill-pattern layer baked again on this frame comes out without its
+            // pattern (TerrainDrape.APatternDrapedDuringAZoomLevelFadeSettlesOnTheFinalScale),
+            // and every layer ends a transition 300 ms after it is added.
+            if (wasInTransition && !layer.hasTransition() &&
+                layer.baseImpl->getTypeInfo() == style::RasterLayer::Impl::staticTypeInfo()) {
+                ++layer.styleRevision;
+            }
             if (previousMask != layer.evaluatedProperties->constantsMask()) {
                 constantsMaskChanged.insert(id);
             }
@@ -497,6 +547,24 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
     // Track which layers are flagged for rendering
     std::vector<bool> updateList(orderedLayers.size());
 
+    // 153 each source walks only its own layers: every layer for every source cost
+    // sources x layers a frame, most of a frame with many regions' styles.
+    std::unordered_map<std::string_view, std::vector<std::size_t>> layersBySource;
+    std::vector<std::size_t> layersWithoutSource;
+    if (!sourceImpls->empty()) {
+        for (std::size_t index = 0; index < orderedLayers.size(); ++index) {
+            const RenderLayer& layer = orderedLayers[index];
+            const auto* layerInfo = layer.baseImpl->getTypeInfo();
+            renderTreeParameters->has3D |= (layerInfo->pass3d == LayerTypeInfo::Pass3D::Required);
+            if (layerInfo->source != LayerTypeInfo::Source::NotRequired) {
+                layersBySource[layer.baseImpl->source].push_back(index);
+            } else {
+                layersWithoutSource.push_back(index);
+            }
+        }
+    }
+    static const std::vector<std::size_t> noLayers;
+
     // Update all sources and initialize renderItems.
     for (const auto& sourceImpl : *sourceImpls) {
         MLN_TRACE_ZONE(update source);
@@ -506,54 +574,52 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         bool sourceNeedsRendering = false;
         bool sourceNeedsRelayout = false;
 
-        for (std::size_t index = 0; index < orderedLayers.size(); ++index) {
+        const auto found = layersBySource.find(sourceImpl->id);
+        for (const std::size_t index : found == layersBySource.end() ? noLayers : found->second) {
             RenderLayer& layer = orderedLayers[index];
-            const auto* layerInfo = layer.baseImpl->getTypeInfo();
             const bool layerIsVisible = layer.baseImpl->visibility != style::VisibilityType::None;
             const bool zoomFitsLayer = layer.supportsZoom(zoomHistory.lastZoom);
-            renderTreeParameters->has3D |= (layerInfo->pass3d == LayerTypeInfo::Pass3D::Required);
-
-            if (layerInfo->source != LayerTypeInfo::Source::NotRequired) {
-                if (layer.baseImpl->source == sourceImpl->id) {
-                    const std::string& layerId = layer.getID();
-                    // A global state change requires a relayout of this
-                    // layer's source if one of the changed state properties
-                    // is referenced by anything that is baked into the tile's
-                    // buckets: the filter, layout properties, or data-driven
-                    // paint properties (i.e. expressions retained in the
-                    // evaluated properties).
-                    const bool globalStateRequiresRelayout = [&] {
-                        if (!globalStateChanged || !((layer.baseImpl->getLayoutDependencies() |
-                                                      layer.evaluatedProperties->getEvaluatedDependencies()) &
-                                                     expression::Dependency::GlobalState)) {
-                            return false;
-                        }
-                        if (!changedGlobalStateKeys) {
-                            return true;
-                        }
-                        std::set<std::string> refs;
-                        layer.baseImpl->collectLayoutGlobalStateRefs(refs);
-                        layer.evaluatedProperties->collectEvaluatedGlobalStateRefs(refs);
-                        return expression::globalStateRefsIntersect(&refs, changedGlobalStateKeys.get());
-                    }();
-                    sourceNeedsRelayout = (sourceNeedsRelayout || hasImageDiff ||
-                                           constantsMaskChanged.contains(layerId) ||
-                                           hasLayoutDifference(layerDiff, layerId) || globalStateRequiresRelayout);
-                    if (layerIsVisible) {
-                        filteredLayersForSource.push_back(layer.evaluatedProperties);
-                        if (zoomFitsLayer) {
-                            sourceNeedsRendering = true;
-                            renderItemsEmplaceHint = layerRenderItems.emplace_hint(
-                                renderItemsEmplaceHint, layer, source, static_cast<uint32_t>(index));
-                            updateList[index] = true;
-                        }
-                    }
+            const std::string& layerId = layer.getID();
+            // A global state change requires a relayout of this
+            // layer's source if one of the changed state properties
+            // is referenced by anything that is baked into the tile's
+            // buckets: the filter, layout properties, or data-driven
+            // paint properties (i.e. expressions retained in the
+            // evaluated properties).
+            const bool globalStateRequiresRelayout = [&] {
+                if (!globalStateChanged || !((layer.baseImpl->getLayoutDependencies() |
+                                              layer.evaluatedProperties->getEvaluatedDependencies()) &
+                                             expression::Dependency::GlobalState)) {
+                    return false;
                 }
-                continue;
+                if (!changedGlobalStateKeys) {
+                    return true;
+                }
+                std::set<std::string> refs;
+                layer.baseImpl->collectLayoutGlobalStateRefs(refs);
+                layer.evaluatedProperties->collectEvaluatedGlobalStateRefs(refs);
+                return expression::globalStateRefsIntersect(&refs, changedGlobalStateKeys.get());
+            }();
+            sourceNeedsRelayout = (sourceNeedsRelayout || hasImageDiff ||
+                                   constantsMaskChanged.contains(layerId) ||
+                                   hasLayoutDifference(layerDiff, layerId) || globalStateRequiresRelayout);
+            if (layerIsVisible) {
+                filteredLayersForSource.push_back(layer.evaluatedProperties);
+                if (zoomFitsLayer) {
+                    sourceNeedsRendering = true;
+                    renderItemsEmplaceHint = layerRenderItems.emplace_hint(
+                        renderItemsEmplaceHint, layer, source, static_cast<uint32_t>(index));
+                    updateList[index] = true;
+                }
             }
+        }
 
-            // Handle layers without source.
-            if (layerIsVisible && zoomFitsLayer && sourceImpl.get() == sourceImpls->at(0).get()) {
+        // Handle layers without source, once, with the first source.
+        for (const std::size_t index : sourceImpl.get() == sourceImpls->at(0).get() ? layersWithoutSource : noLayers) {
+            RenderLayer& layer = orderedLayers[index];
+            const bool layerIsVisible = layer.baseImpl->visibility != style::VisibilityType::None;
+            const bool zoomFitsLayer = layer.supportsZoom(zoomHistory.lastZoom);
+            if (layerIsVisible && zoomFitsLayer) {
                 if (backgroundLayerAsColor && layer.baseImpl == layerImpls->front()) {
                     const auto& solidBackground = layer.getSolidBackground();
                     if (solidBackground) {
@@ -567,6 +633,7 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
                 updateList[index] = true;
             }
         }
+
         // Mark DEM source as needed for terrain rendering
         const bool isDemSource = renderTerrain && renderTerrain->isEnabled() &&
                                  sourceImpl->id == renderTerrain->getSourceID();
@@ -585,8 +652,11 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         tileParameters.retainAncestorLevels = isDemSource ? RenderTerrain::demAncestorLevels : 0;
         source->update(sourceImpl, filteredLayersForSource, sourceNeedsRendering, sourceNeedsRelayout, tileParameters);
         filteredLayersForSource.clear();
+    }
 
-        // Update all layers with their new renderability status, if it changed.
+    // 153 after all sources: inside their loop, each later source's layers were
+    // switched off and on again every frame.
+    if (!sourceImpls->empty()) {
         for (size_t i = 0; i < updateList.size(); i++) {
             if (orderedLayers[i].get().isLayerRenderable() != updateList[i]) {
                 orderedLayers[i].get().markLayerRenderable(updateList[i], changes);

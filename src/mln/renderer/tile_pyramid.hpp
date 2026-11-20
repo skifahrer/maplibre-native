@@ -11,6 +11,7 @@
 #include <mln/util/mat4.hpp>
 #include <mln/util/feature.hpp>
 #include <mln/util/range.hpp>
+#include <mln/util/tile_cover.hpp>
 
 #include <memory>
 #include <unordered_map>
@@ -88,6 +89,7 @@ private:
 
     bool fadingTiles = false;
     bool cacheEnabled = true;
+    util::FarthestTileMerge farthestMerge;
 };
 
 } // namespace mln

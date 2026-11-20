@@ -83,6 +83,7 @@ public:
     float minZoom = -std::numeric_limits<float>::infinity();
     float maxZoom = std::numeric_limits<float>::infinity();
     VisibilityType visibility = VisibilityType::Visible;
+    bool drawnOverTerrain = false;
 
 protected:
     Impl(const Impl&) = default;

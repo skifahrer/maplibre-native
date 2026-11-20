@@ -550,6 +550,10 @@ void Transform::setClayColor(const Color& color) {
     state.setClayColor(color);
 }
 
+void Transform::setPastModelColor(const Color& color) {
+    state.setPastModelColor(color);
+}
+
 void Transform::setSkyColor(const Color& color) {
     state.setSkyColor(color);
 }

@@ -163,6 +163,24 @@ void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
                         size_t maxTiles,
                         const std::array<double, 2>& origin,
                         uint8_t minZoom);
+
+/// mergeFarthestTiles that answers from its last result while its input and limits hold.
+class FarthestTileMerge {
+public:
+    void apply(std::vector<OverscaledTileID>& tiles,
+               size_t maxTiles,
+               const std::array<double, 2>& origin,
+               uint8_t minZoom);
+
+private:
+    std::vector<OverscaledTileID> input;
+    std::vector<OverscaledTileID> output;
+    size_t limit = 0;
+    std::array<double, 2> from{{0.0, 0.0}};
+    uint8_t zoomFloor = 0;
+    bool filled = false;
+};
+
 std::vector<UnwrappedTileID> tileCover(const LatLngBounds&, uint8_t z);
 std::vector<UnwrappedTileID> tileCover(const Geometry<double>&, uint8_t z);
 
