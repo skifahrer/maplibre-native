@@ -13,7 +13,7 @@ on:
         type: boolean
         default: false
       runner:
-        description: Apple silicon; intel only by hand, its simulator draws terrain otherwise
+        description: Apple silicon on Xcode 27; intel only by hand, on Xcode 26, its simulator draws terrain otherwise
         type: choice
         options: [apple, intel]
         default: apple
@@ -163,7 +163,8 @@ jobs:
     if: needs.check.outputs.build == 'true'
     # Apple silicon: Intel runs the core's timing tests 5-10x slower. A run no arm64 Mac
     # takes is started again by again-if-no-mac.
-    runs-on: ${{ inputs.runner == 'intel' && 'macos-26-intel' || 'macos-26' }}
+    # 171: Xcode 27, as the app is built with; GitHub has no Intel image of it
+    runs-on: ${{ inputs.runner == 'intel' && 'macos-26-intel' || 'xcode-27' }}
     timeout-minutes: 240
     env:
       SHA: ${{ needs.check.outputs.sha }}
@@ -180,10 +181,10 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-ios-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
+          key: bazel-ios-xcode27-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
           restore-keys: |
-            bazel-ios-${{ runner.arch }}-${{ needs.check.outputs.sha }}-
-            bazel-ios-${{ runner.arch }}-
+            bazel-ios-xcode27-${{ runner.arch }}-${{ needs.check.outputs.sha }}-
+            bazel-ios-xcode27-${{ runner.arch }}-
 
       # The same flags as upstream's ios-release, so the framework is as small as theirs.
       - name: Build the XCFramework
@@ -286,7 +287,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-ios-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
+          key: bazel-ios-xcode27-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
 
       - name: Release
         id: release
