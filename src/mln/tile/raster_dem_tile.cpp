@@ -36,15 +36,20 @@ RasterDEMTile::RasterDEMTile(const OverscaledTileID& id_,
       mailbox(std::make_shared<Mailbox>(*Scheduler::GetCurrent())),
       worker(parameters.threadPool, ActorRef<RasterDEMTile>(*this, mailbox)) {
     encoding = tileset.rasterEncoding.value_or(Tileset::RasterEncoding::Mapbox);
+    neighboringTiles = neighborsPastTheWorld();
+}
+
+DEMTileNeighbors RasterDEMTile::neighborsPastTheWorld() const {
+    auto none = DEMTileNeighbors::Empty;
     if (id.canonical.y == 0) {
         // this tile doesn't have upper neighboring tiles so marked those as backfilled
-        neighboringTiles = neighboringTiles | DEMTileNeighbors::NoUpper;
+        none = none | DEMTileNeighbors::NoUpper;
     }
-
     if (id.canonical.y + 1 == std::pow(2, id.canonical.z)) {
         // this tile doesn't have lower neighboring tiles so marked those as backfilled
-        neighboringTiles = neighboringTiles | DEMTileNeighbors::NoLower;
+        none = none | DEMTileNeighbors::NoLower;
     }
+    return none;
 }
 
 RasterDEMTile::~RasterDEMTile() {
@@ -91,6 +96,8 @@ void RasterDEMTile::setData(const std::shared_ptr<const std::string>& data) {
 void RasterDEMTile::onParsed(std::unique_ptr<HillshadeBucket> result, const uint64_t resultCorrelationID) {
     if (!obsolete) {
         bucket = std::move(result);
+        // 172 a reload's data has none of the border its neighbours filled in: they fill it again
+        neighboringTiles = neighborsPastTheWorld();
         loaded = true;
         if (resultCorrelationID == correlationID) {
             pending = false;
