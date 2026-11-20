@@ -91,6 +91,8 @@ public:
 
 private:
     void markObsolete();
+    /// The neighbours past the world's top or bottom edge, which never fill a border.
+    DEMTileNeighbors neighborsPastTheWorld() const;
 
     TileLoader<RasterDEMTile> loader;
 

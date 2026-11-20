@@ -136,7 +136,7 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
                    : util::tileCover(tileCoverParameters, coverZ, zoomRange, overscaledZ);
     };
 
-    std::optional<OverscaledTileID> alsoCovered;
+    std::vector<OverscaledTileID> alsoCovered;
     const auto addUnlessCovered = [&](const OverscaledTileID& extra) {
         if (std::none_of(idealTiles.begin(), idealTiles.end(), [&](const OverscaledTileID& tile) {
                 return tile.wrap == extra.wrap &&
@@ -182,14 +182,14 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
             idealTiles = {idealTiles[0]};
         }
 
-        // The tile over a position the cover leaves out, at the cover's finest zoom.
-        if (parameters.alsoCover) {
-            const auto at = Projection::project(*parameters.alsoCover, idealZoom);
+        // The tile over each position the cover leaves out, at the cover's finest zoom.
+        for (const auto& position : parameters.alsoCover) {
+            const auto at = Projection::project(position, idealZoom);
             const UnwrappedTileID unwrapped(static_cast<uint8_t>(idealZoom),
                                             static_cast<int64_t>(std::floor(at.x)),
                                             static_cast<int64_t>(std::floor(at.y)));
-            alsoCovered.emplace(static_cast<uint8_t>(tileZoom), unwrapped.wrap, unwrapped.canonical);
-            addUnlessCovered(*alsoCovered);
+            alsoCovered.emplace_back(static_cast<uint8_t>(tileZoom), unwrapped.wrap, unwrapped.canonical);
+            addUnlessCovered(alsoCovered.back());
         }
     }
 
@@ -208,9 +208,9 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
             demTiles.emplace(z, id.wrap, id.canonical.scaledTo(z));
         }
         idealTiles.assign(demTiles.begin(), demTiles.end());
-        // The mesh is cut to the view; the ground under the eye is often behind it.
-        if (alsoCovered) {
-            addUnlessCovered(*alsoCovered);
+        // The mesh is cut to the view; the ground under the eye and the center often lie outside.
+        for (const auto& extra : alsoCovered) {
+            addUnlessCovered(extra);
         }
     }
 

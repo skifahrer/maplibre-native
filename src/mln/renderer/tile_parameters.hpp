@@ -82,10 +82,10 @@ public:
     double coverReach = std::numeric_limits<double>::infinity();
     /// For the terrain's DEM source: the mesh's last cover, loaded instead of the DEM's own.
     std::vector<UnwrappedTileID> terrainMeshCover{};
-    /// A position the source asks a tile for as well, wherever the view is: the ground under the
-    /// camera's eye, which is often behind or below the view and so outside the frustum the cover
-    /// is taken from. Nothing is asked for where the cover already holds a tile over it.
-    std::optional<LatLng> alsoCover = std::nullopt;
+    /// Positions the source asks a tile for as well, wherever the view is: the ground under the
+    /// camera's eye, often outside the frustum the cover is taken from, and the ground under the
+    /// map's center, whose height the center clamp needs. None where the cover holds one already.
+    std::vector<LatLng> alsoCover{};
 };
 
 } // namespace mln

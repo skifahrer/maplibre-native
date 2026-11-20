@@ -649,10 +649,15 @@ private:
     static constexpr size_t maxSymbolDEMs = 256;
 
     /// Per-tile height copies behind elevationIndex, kept across rebuilds so a new tile set
-    /// copies only its new tiles. `source` identifies the DEM the copy was taken from.
+    /// copies only its new tiles. `source` identifies the DEM the copy was taken from, and
+    /// `borderRevision` its border then: a neighbour that loads later backfills the border in
+    /// place, which the pointer cannot show, and the copy reads the border near the tile's edge.
     struct ElevationGridCopy {
         const DEMData* source = nullptr;
+        uint32_t borderRevision = 0;
         std::shared_ptr<const TerrainElevationIndex::Grid> grid;
+
+        bool isCopyOf(const DEMData* dem) const;
     };
     std::unordered_map<UnwrappedTileID, ElevationGridCopy> elevationGrids;
     std::shared_ptr<const TerrainElevationIndex> elevationIndex;

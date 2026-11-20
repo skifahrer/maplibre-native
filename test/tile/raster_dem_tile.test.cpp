@@ -213,6 +213,28 @@ TEST(RasterDEMTile, TerrainBackfillRedrawsThePreparedTarget) {
     EXPECT_TRUE(bucket->borderChanged);
 }
 
+// 172 a DEM tile loaded again kept its old border mask: the new data's border was never filled
+TEST(RasterDEMTile, NewDataTakesItsBorderAgain) {
+    RasterDEMTileTest test;
+    RasterDEMTile tile(OverscaledTileID(2, 1, 1), "testSource", test.tileParameters, test.tileset);
+    RasterDEMTile right(OverscaledTileID(2, 2, 1), "testSource", test.tileParameters, test.tileset);
+    tile.onParsed(std::make_unique<HillshadeBucket>(PremultipliedImage({16, 16}), Tileset::RasterEncoding::Mapbox), 0);
+    right.onParsed(std::make_unique<HillshadeBucket>(PremultipliedImage({16, 16}), Tileset::RasterEncoding::Mapbox), 0);
+    tile.backfillBorder(right, DEMTileNeighbors::Right);
+    ASSERT_EQ(tile.neighboringTiles, DEMTileNeighbors::Right);
+
+    tile.onParsed(std::make_unique<HillshadeBucket>(PremultipliedImage({16, 16}), Tileset::RasterEncoding::Mapbox), 0);
+    EXPECT_EQ(tile.neighboringTiles, DEMTileNeighbors::Empty);
+}
+
+// 172 a top-row tile still has no neighbours above it after new data
+TEST(RasterDEMTile, NewDataKeepsTheEdgesPastTheWorld) {
+    RasterDEMTileTest test;
+    RasterDEMTile tile(OverscaledTileID(1, 0, 0), "testSource", test.tileParameters, test.tileset);
+    tile.onParsed(std::make_unique<HillshadeBucket>(PremultipliedImage({16, 16}), Tileset::RasterEncoding::Mapbox), 0);
+    EXPECT_EQ(tile.neighboringTiles, DEMTileNeighbors::NoUpper);
+}
+
 // 70 (for 68): a tile with no target yet is still prepared from scratch.
 TEST(RasterDEMTile, TerrainBackfillWithoutATargetPreparesAfresh) {
     RasterDEMTileTest test;
