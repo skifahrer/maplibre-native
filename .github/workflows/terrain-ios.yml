@@ -225,9 +225,13 @@ jobs:
           for r in ios:
               r["phones"] = [d["name"] for d in r["supportedDeviceTypes"] if d["productFamily"] == "iPhone"]
               print("iOS", r["version"], r["buildversion"], "takes", r["phones"], file=sys.stderr)
-          newest = max((r for r in ios if r["phones"]), key=lambda r: [int(n) for n in r["version"].split(".")])
-          plain = [p for p in newest["phones"] if re.fullmatch(r"iPhone \d+", p)] or newest["phones"]
-          version = newest["version"]
+          # a version two runtimes share must take the iPhone in both: Bazel picks either
+          def ok(v):
+              names = [set(p for p in r["phones"] if re.fullmatch(r"iPhone \d+", p)) for r in ios if r["version"] == v]
+              return set.intersection(*names)
+          v = max((r["version"] for r in ios if ok(r["version"])), key=lambda v: [int(n) for n in v.split(".")])
+          plain = sorted(ok(v), key=lambda p: -int(p.split()[1]))
+          version = v
           print(f"SIMULATOR=--ios_simulator_device={plain[0]}")
           print(f"SIMULATOR_IOS=--ios_simulator_version={version}")
           ' >> "$GITHUB_ENV"
