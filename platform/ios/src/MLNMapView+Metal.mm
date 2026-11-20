@@ -92,7 +92,7 @@ public:
       }];
       if (presentsWithTransaction) {
         [commandBuffer commit];
-        [commandBuffer waitUntilScheduled];
+        [commandBuffer waitUntilCompleted];
         [currentDrawable present];
       } else {
         [commandBuffer presentDrawable:currentDrawable];
