@@ -97,6 +97,17 @@ void PluginLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
                 callbackContext.pattern_texture_size[0] = texture->getSize().width;
                 callbackContext.pattern_texture_size[1] = texture->getSize().height;
             }
+            auto callbackContext = frameContext;
+            if (tileID) {
+                callbackContext.tile_x = tileID->canonical.x;
+                callbackContext.tile_y = tileID->canonical.y;
+                callbackContext.tile_z = tileID->canonical.z;
+                callbackContext.tile_wrap = tileID->wrap;
+            }
+            if (const auto& texture = drawable.getTexture(0)) {
+                callbackContext.pattern_texture_size[0] = texture->getSize().width;
+                callbackContext.pattern_texture_size[1] = texture->getSize().height;
+            }
             const auto tileMatrixFloats = util::cast<float>(tileMatrix);
             std::copy(tileMatrixFloats.begin(), tileMatrixFloats.end(), callbackContext.tile_matrix);
             callbackContext.pixels_to_tile_units = hasTile ? tileID->pixelsToTileUnits(
