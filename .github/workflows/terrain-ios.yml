@@ -35,8 +35,6 @@ env:
   # one simulator at a time: two booting together can fail on a small runner
   # a disk-cached pass is replayed for unchanged inputs, but a simulator test is not hermetic
   BAZEL_TEST: --test_output=errors --local_test_jobs=1 --test_timeout=3600 --nocache_test_results
-  # 171: iOS 27 takes no iPhone 15, Bazel's default; both images have the iPhone 17
-  SIMULATOR: --ios_simulator_device=iPhone 17
 
 jobs:
   check:
@@ -216,17 +214,35 @@ jobs:
           ls -la out
           du -sh x/MapLibre.xcframework/ios-arm64/MapLibre.framework/MapLibre
 
+      # 171: Bazel's default iPhone 15 is no device iOS 27 takes
+      - name: Pick an iPhone the simulator's iOS takes
+        run: |
+          xcrun simctl list runtimes
+          echo "SDK $(xcrun --sdk iphonesimulator --show-sdk-version) $(xcrun --sdk iphonesimulator --show-sdk-build-version)"
+          xcrun simctl list runtimes -j | python3 -c '
+          import json, re, sys
+          ios = [r for r in json.load(sys.stdin)["runtimes"] if r["platform"] == "iOS" and r["isAvailable"]]
+          for r in ios:
+              r["phones"] = [d["name"] for d in r["supportedDeviceTypes"] if d["productFamily"] == "iPhone"]
+              print("iOS", r["version"], r["buildversion"], "takes", r["phones"], file=sys.stderr)
+          newest = max((r for r in ios if r["phones"]), key=lambda r: [int(n) for n in r["version"].split(".")])
+          plain = [p for p in newest["phones"] if re.fullmatch(r"iPhone \d+", p)] or newest["phones"]
+          version = newest["version"]
+          print(f"SIMULATOR=--ios_simulator_device={plain[0]}")
+          print(f"SIMULATOR_IOS=--ios_simulator_version={version}")
+          ' >> "$GITHUB_ENV"
+
       # not opt, whose NDEBUG drops the assertions upstream's tests expect to throw
       - name: Test ours on a simulator
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" --//:renderer=metal //platform/ios/riki-test:riki_test
+          bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" "$SIMULATOR_IOS" --//:renderer=metal //platform/ios/riki-test:riki_test
 
       - name: Test upstream's iOS on a simulator
         if: success() || failure()
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" --//:renderer=metal //platform/ios/test:ios_test
+          bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" "$SIMULATOR_IOS" --//:renderer=metal //platform/ios/test:ios_test
 
       # each group alone: beside the others, xcodebuild missed the simulator Bazel had just made
       - name: Test the core's terrain camera
@@ -235,7 +251,7 @@ jobs:
           FILTER: "*TerrainCamera*"
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
+          bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" "$SIMULATOR_IOS" $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
             //platform/ios/test/core:CppUnitTests
 
       - name: Test the core's tile and mesh cover
@@ -244,7 +260,7 @@ jobs:
           FILTER: "*TileCover*:*MeshCover*:*TerrainSourceCover*"
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
+          bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" "$SIMULATOR_IOS" $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
             //platform/ios/test/core:CppUnitTests
 
       - name: Test the core's drape, elevation, fog, view settings, label heights and layer order
@@ -253,7 +269,7 @@ jobs:
           FILTER: "*Terrain*:*Fog*:*StyleParsedLayers*:*SymbolZOffset*:Scheduler.Reply*:RenderingStats.*:*LayersBySource*:Retiring.*:DrapeBudget.*-*TerrainCamera*:*MeshCover*:*TerrainSourceCover*"
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
+          bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" "$SIMULATOR_IOS" $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
             //platform/ios/test/core:CppUnitTests
 
       # A test app that crashes takes its unflushed output with it; its crash report names the test.
