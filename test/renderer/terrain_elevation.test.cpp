@@ -207,6 +207,8 @@ TEST(TerrainElevation, ANameKeepsTheDeepestDEMItHad) {
     EXPECT_TRUE(RenderTerrain::keepsSymbolDEM(12, 0.0f, 12, 0.0f));
     EXPECT_FALSE(RenderTerrain::keepsSymbolDEM(9, 0.0f, 12, 0.0f));
     EXPECT_FALSE(RenderTerrain::keepsSymbolDEM(12, 0.0f, 12, -500.0f));
+}
+
 // A Terrain-RGB or Terrarium pixel holds the height of its whole cell, and hillshade and
 // color-relief draw it over that cell, so the height at a pixel's centre is the pixel's value.
 // Read as the height at the cell's top-left corner instead, the terrain stood half a pixel
