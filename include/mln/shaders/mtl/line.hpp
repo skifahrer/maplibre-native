@@ -32,9 +32,20 @@ struct alignas(16) LineDrawableUBO {
     /* 84 */ float offset_t;
     /* 88 */ float width_t;
     /* 92 */ float pad1; // Reused padding slot to flag terrain render-to-texture tiles
-    /* 96 */
+
+    /* 96 */ float4 dem_coords;
+    /* 112 */ float dem_dim;
+    /* 116 */ float dem_exaggeration;
+    /* 120 */ float dem_encoding; // 0 none, 1 Mapbox, 2 Terrarium
+    /* 124 */ float depth_enabled;
+    /* 128 */
 };
-static_assert(sizeof(LineDrawableUBO) == 6 * 16, "wrong size");
+static_assert(sizeof(LineDrawableUBO) == 8 * 16, "wrong size");
+
+// The unpack vector of DEMData::getUnpackVector for the encoding the drawable names
+inline float4 line_dem_unpack(float encoding) {
+    return encoding == 2.0 ? float4(256.0, 1.0, 1.0 / 256.0, 32768.0) : float4(6553.6, 25.6, 0.1, 10000.0);
+}
 
 //
 // Line gradient
@@ -184,7 +195,7 @@ struct ShaderSource<BuiltIn::LineShader, gfx::Backend::Type::Metal> {
 
     static const std::array<AttributeInfo, 8> attributes;
     static constexpr std::array<AttributeInfo, 0> instanceAttributes{};
-    static const std::array<TextureInfo, 0> textures;
+    static const std::array<TextureInfo, 2> textures;
 
     static constexpr auto prelude = lineShadePrelude;
     static constexpr auto source = R"(
@@ -218,6 +229,7 @@ struct FragmentStage {
     float2 width2;
     float2 normal;
     half gamma_scale;
+    half visibility;
 
 #if !defined(HAS_UNIFORM_u_color)
     float4 color;
@@ -235,7 +247,11 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
                                 device const uint32_t& uboIndex [[buffer(idGlobalUBOIndex)]],
                                 device const LineDrawableUnionUBO* drawableVector [[buffer(idLineDrawableUBO)]],
                                 device const LineEvaluatedPropsUBO& props [[buffer(idLineEvaluatedPropsUBO)]],
-                                device const LineExpressionUBO& expr [[buffer(idLineExpressionUBO)]]) {
+                                device const LineExpressionUBO& expr [[buffer(idLineExpressionUBO)]],
+                                texture2d<float, access::sample> demTexture [[texture(0)]],
+                                sampler demSampler [[sampler(0)]],
+                                texture2d<float, access::sample> depthTexture [[texture(1)]],
+                                sampler depthSampler [[sampler(1)]]) {
 
     device const LineDrawableUBO& drawable = drawableVector[uboIndex].lineDrawableUBO;
 
@@ -289,9 +305,17 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     const float t = 1.0 - abs(u);
     const float2 offset2 = offset * a_extrude * LINE_NORMAL_SCALE * v_normal.y * float2x2(t, -u, u, t);
 
+    // A line drawn over terrain stands on the ground under its own vertex
+    const float ele = get_elevation(pos, demTexture, demSampler, drawable.dem_coords,
+                                    line_dem_unpack(drawable.dem_encoding), drawable.dem_dim,
+                                    drawable.dem_exaggeration, drawable.dem_encoding > 0.0 ? 1.0 : 0.0);
     const float4 projected_extrude = drawable.matrix * float4(dist / drawable.ratio, 0.0, 0.0);
-    float4 rawPosition = drawable.matrix * float4(pos + offset2 / drawable.ratio, 0.0, 1.0) + projected_extrude;
+    float4 rawPosition = drawable.matrix * float4(pos + offset2 / drawable.ratio, ele, 1.0) + projected_extrude;
     const float4 position = apply_drape_transform(rawPosition, drawable.matrix, paintParams.drape_tile);
+    // Behind a ridge it stays in sight, fainter
+    const half visibility = drawable.depth_enabled == 0.0
+                                ? half(1.0)
+                                : half(mix(0.45, 1.0, depth_opacity(position, depthTexture, depthSampler, 1.0)));
 
     // calculate how much the perspective view squishes or stretches the extrude.
     // A value of 1.0 is used when drawn into a terrain render-to-texture tile with an
@@ -306,6 +330,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
         .gamma_scale = drawable.pad1 != 0.0
                            ? half(1.0)
                            : half(extrude_length_without_perspective / extrude_length_with_perspective),
+        .visibility  = visibility,
 
 #if !defined(HAS_UNIFORM_u_color)
         .color       = unpack_mix_color(vertx.color,   drawable.color_t),
@@ -356,7 +381,7 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     const float blur2 = (blur + 1.0 / DEVICE_PIXEL_RATIO) * in.gamma_scale;
     const float alpha = clamp(min(dist - (in.width2.y - blur2), in.width2.x - dist) / blur2, 0.0, 1.0);
 
-    return half4(color * (alpha * opacity));
+    return half4(color * (alpha * opacity * in.visibility));
 }
 )";
 };

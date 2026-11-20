@@ -8,6 +8,7 @@
 #include <mln/renderer/layer_group.hpp>
 #include <mln/renderer/paint_parameters.hpp>
 #include <mln/renderer/render_tile.hpp>
+#include <mln/renderer/render_terrain.hpp>
 #include <mln/shaders/line_layer_ubo.hpp>
 #include <mln/shaders/shader_program_base.hpp>
 #include <mln/style/layers/line_layer_properties.hpp>
@@ -63,6 +64,49 @@ auto LineLayerTweaker::evaluate([[maybe_unused]] const PaintParameters& paramete
 
     return evaluated.get<Property>().constantOr(Property::defaultValue());
 }
+
+namespace {
+
+struct OverTerrain {
+    std::array<float, 4> demCoords{{0, 0, 0, 0}};
+    float demDim = 0.0f;
+    float exaggeration = 0.0f;
+    float encoding = 0.0f;
+};
+
+// A line drawn over terrain samples the ground under it and draws past whatever stands in front
+OverTerrain overTerrainData(const LayerGroupBase& layerGroup,
+                            const UnwrappedTileID& tileID,
+                            const PaintParameters& parameters,
+                            gfx::Drawable& drawable) {
+    OverTerrain over;
+    if (layerGroup.shouldRenderToTerrain()) {
+        return over;
+    }
+    const bool standsOnTerrain = parameters.terrain && parameters.terrain->isEnabled() &&
+                                 static_cast<LineLayerTweaker::LineType>(drawable.getType()) ==
+                                     LineLayerTweaker::LineType::Simple;
+    // Without terrain it is an ordinary line again, depth and all
+    drawable.setEnableDepth(!standsOnTerrain);
+    if (!standsOnTerrain) {
+        return over;
+    }
+    const auto terrainData = parameters.terrain->getTerrainData(tileID);
+    auto& context = parameters.context;
+    drawable.setTexture(terrainData ? terrainData->demTexture : parameters.terrain->getPlaceholderDEMTexture(context),
+                        idLineDEMTexture);
+    drawable.setTexture(parameters.terrain->getDepthTexture(context), idLineDepthTexture);
+    if (!terrainData) {
+        return over;
+    }
+    over.demCoords = terrainData->demCoords;
+    over.demDim = terrainData->demDim;
+    over.exaggeration = parameters.terrain->getExaggeration();
+    over.encoding = parameters.terrain->getDEMUnpackVector()[3] == 32768.0f ? 2.0f : 1.0f;
+    return over;
+}
+
+} // namespace
 
 void LineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParameters& parameters) {
     if (layerGroup.empty()) {
@@ -233,8 +277,9 @@ void LineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParameters
                                           inViewportPixelUnits,
                                           drawable,
                                           /*aligned=*/false,
-                                          /*renderToTerrain=*/true,
+                                          layerGroup.shouldRenderToTerrain(),
                                           &renderingToTerrain);
+        const auto overTerrain = overTerrainData(layerGroup, tileID, parameters, drawable);
 
 #if !MLN_UBO_CONSOLIDATION
         auto& drawableUniforms = drawable.mutableUniformBuffers();
@@ -255,7 +300,12 @@ void LineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParameters
                     .gapwidth_t = std::get<0>(binders->get<LineGapWidth>()->interpolationFactor(zoom)),
                     .offset_t = std::get<0>(binders->get<LineOffset>()->interpolationFactor(zoom)),
                     .width_t = std::get<0>(binders->get<LineWidth>()->interpolationFactor(zoom)),
-                    .pad1 = renderingToTerrain ? 1.0f : 0.0f
+                    .pad1 = renderingToTerrain ? 1.0f : 0.0f,
+                    .dem_coords = overTerrain.demCoords,
+                    .dem_dim = overTerrain.demDim,
+                    .dem_exaggeration = overTerrain.exaggeration,
+                    .dem_encoding = overTerrain.encoding,
+                    .depth_enabled = overTerrain.encoding > 0.0f ? 1.0f : 0.0f
                 };
 
 #if !MLN_UBO_CONSOLIDATION
