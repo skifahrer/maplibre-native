@@ -7,6 +7,9 @@
 #include <mln/style/image_impl.hpp>
 #include <mln/style/layers/line_layer_properties.hpp>
 
+#include <optional>
+#include <vector>
+
 namespace mln {
 
 class BucketParameters;
@@ -93,6 +96,10 @@ public:
     SegmentVector segments;
 
     std::map<std::string, LineBinders> paintPropertyBinders;
+
+    /// A ring's edges without those its tile was cut along, or nothing when none were cut.
+    using PolygonRuns = std::optional<std::vector<GeometryCoordinates>>;
+    static PolygonRuns drawnRuns(const GeometryCoordinates& ring);
 
 private:
     void addGeometry(const GeometryCoordinates&, const GeometryTileFeature&, const CanonicalTileID&);
