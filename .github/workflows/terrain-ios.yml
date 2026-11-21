@@ -178,20 +178,20 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
-      # 175: Xcode 27's framework drew about 8% slower on the iPad; the image defaults to 26.6
-      - name: Use Xcode 26.5
+      # 177: 26.6 built the shipped e6f4433; 26.5's framework drew 21% slower, 27.1's 8%
+      - name: Use Xcode 26.6
         run: |
-          sudo xcode-select -s /Applications/Xcode_26.5.app
+          sudo xcode-select -s /Applications/Xcode_26.6.app
           xcodebuild -version
 
       - name: Restore the Bazel cache
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-ios-xcode265-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
+          key: bazel-ios-xcode266-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
           restore-keys: |
-            bazel-ios-xcode265-${{ runner.arch }}-${{ needs.check.outputs.sha }}-
-            bazel-ios-xcode265-${{ runner.arch }}-
+            bazel-ios-xcode266-${{ runner.arch }}-${{ needs.check.outputs.sha }}-
+            bazel-ios-xcode266-${{ runner.arch }}-
 
       # The same flags as upstream's ios-release, so the framework is as small as theirs.
       - name: Build the XCFramework
@@ -316,7 +316,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-ios-xcode265-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
+          key: bazel-ios-xcode266-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
 
       - name: Release
         id: release
