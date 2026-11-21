@@ -64,7 +64,7 @@ jobs:
             [ "$GITHUB_REF" = refs/heads/master ] && release=true
           fi
           tag="terrain-${sha:0:7}"
-          # workflows and docs alone change nothing in the framework; run by hand to try a workflow
+          # other workflows and docs change nothing in the framework
           from=${PR_BASE:-$BEFORE}
           # on master, against the last release: a cancelled run may have left a change unreleased
           if [ "$release" = true ] && [ -n "$BEFORE" ]; then
@@ -78,7 +78,9 @@ jobs:
             if [ -z "$files" ]; then
               echo "::notice::no file changed; nothing to build"
               build=false release=false pipeline_only=true
+            # 174: this workflow sets how the framework is built, its Xcode for one
             elif [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] && [ "$(echo "$files" | wc -l)" -lt 300 ] &&
+               ! echo "$files" | grep -qx '\.github/workflows/terrain-ios\.yml' &&
                ! echo "$files" | grep -qvE '^\.github/|\.md$'; then
               echo "::notice::only workflows or docs changed; nothing to build"
               build=false release=false pipeline_only=true
