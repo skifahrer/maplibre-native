@@ -61,6 +61,7 @@ add_library(
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_polygon_clip_edges.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_source_cover.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_view_settings.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/renderer/source_state.test.cpp
     $<$<BOOL:${MLN_WITH_WEBGPU}>:${PROJECT_SOURCE_DIR}/test/renderer/wgsl_preprocessor.test.cpp>
     ${PROJECT_SOURCE_DIR}/test/sprite/sprite_loader.test.cpp
     ${PROJECT_SOURCE_DIR}/test/sprite/sprite_parser.test.cpp
