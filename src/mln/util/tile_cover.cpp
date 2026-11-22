@@ -828,6 +828,28 @@ void eraseWithDescendants(std::set<OverscaledTileID>& alive, const OverscaledTil
         }
     }
 }
+// Whether a tile deeper than `parent`'s children lies under it.
+bool holdsDeeperThanChildren(const std::set<OverscaledTileID>& alive, const OverscaledTileID& parent, uint8_t deepest) {
+    const CanonicalTileID& top = parent.canonical;
+    for (unsigned level = parent.overscaledZ + 2u; level <= deepest; ++level) {
+        for (unsigned z = top.z; z <= level; ++z) {
+            const unsigned shift = z - top.z;
+            const uint64_t x1 = (static_cast<uint64_t>(top.x) + 1) << shift;
+            const uint64_t y0 = static_cast<uint64_t>(top.y) << shift;
+            const uint64_t y1 = (static_cast<uint64_t>(top.y) + 1) << shift;
+            const CanonicalTileID first(static_cast<uint8_t>(z), top.x << shift, 0);
+            auto it = alive.lower_bound(OverscaledTileID(static_cast<uint8_t>(level), parent.wrap, first));
+            for (; it != alive.end() && it->overscaledZ == level && it->wrap == parent.wrap && it->canonical.z == z &&
+                   it->canonical.x < x1;
+                 ++it) {
+                if (it->canonical.y >= y0 && it->canonical.y < y1) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
 } // namespace
 
 void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
@@ -863,6 +885,12 @@ void mergeFarthestTiles(std::vector<OverscaledTileID>& tiles,
             // tiles at 79° became two z11 tiles spanning the camera and the drape there drew nothing.
             const double parentSize = 1.0 / static_cast<double>(1u << parent.canonical.z);
             if (parentSize * parentSize > widths * widths * distance2(parent)) {
+                continue;
+            }
+            // 181: a parent took finer ground than its children with it, by the camera, and as a
+            // pan moved which merge came first that ground flipped between fine and coarse each
+            // frame. Only siblings merge; deeper ground merges up to them first.
+            if (holdsDeeperThanChildren(alive, parent, alive.rbegin()->overscaledZ)) {
                 continue;
             }
             eraseWithDescendants(alive, parent, alive.rbegin()->overscaledZ);
