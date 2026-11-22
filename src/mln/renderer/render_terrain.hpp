@@ -195,16 +195,6 @@ public:
                                                          uint8_t minZoom,
                                                          const std::array<double, 2>& origin);
 
-    /// `wanted`, where a tile whose DEM is not `ready` gives way to the `settled` tiles - drawn
-    /// last frame on their own DEM - that cover all of it: a merge onto a DEM still loading drew
-    /// the ground for a frame from an ancestor levels coarser, and the mountains jumped.
-    static std::set<UnwrappedTileID> keepFinerUntilReady(const std::set<UnwrappedTileID>& wanted,
-                                                         const std::set<UnwrappedTileID>& settled,
-                                                         const std::function<bool(const UnwrappedTileID&)>& ready);
-
-    /// keepFinerUntilReady for this frame's cover, with the tiles drawn last frame.
-    std::set<UnwrappedTileID> holdFinerTilesUntilReady(const std::set<UnwrappedTileID>& wanted) const;
-
     /// Tiles the mesh cover's walk splits at most, before the cap merges them down: past it the
     /// rest of the ground comes back coarser (TileCoverParameters::coarserPastTheLimit).
     static constexpr size_t meshCoverWalkLimit(TerrainLoadMode mode) {

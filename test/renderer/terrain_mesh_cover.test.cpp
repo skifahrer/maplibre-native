@@ -806,55 +806,15 @@ TEST(TerrainMeshCover, AViewOfOneZoomThatEndsOnTheGroundMayHoldTwiceTheCap) {
     EXPECT_EQ(0u, RenderTerrain::meshTileCap(0, util::deg2rad(60.0), fov, true));
 }
 
-namespace {
-std::set<UnwrappedTileID> childrenOf(const UnwrappedTileID& tile) {
-    const auto four = tile.children();
-    return {four.begin(), four.end()};
-}
-
-const auto nothingReady = [](const UnwrappedTileID&) { return false; };
-} // namespace
-
-// 181 Riki Maps TestFlight 1150: four tiles merged onto a DEM still loading, and for a frame the
-// mountains stood on an ancestor levels coarser
-TEST(TerrainMeshCover, AMergeWaitsBehindTheFinerTilesForItsDEM) {
-    const auto parent = z2(1, 1);
-    EXPECT_EQ(RenderTerrain::keepFinerUntilReady({parent}, childrenOf(parent), nothingReady), childrenOf(parent));
-}
-
-// 181
-TEST(TerrainMeshCover, AMergeOntoALoadedDEMGoesAhead) {
-    const auto parent = z2(1, 1);
-    const auto ready = [](const UnwrappedTileID&) { return true; };
-    EXPECT_EQ(RenderTerrain::keepFinerUntilReady({parent}, childrenOf(parent), ready),
-              std::set<UnwrappedTileID>{parent});
-}
-
-// 181 three of four drawn leave a quarter uncovered: the tile goes ahead on its fallback
-TEST(TerrainMeshCover, FinerTilesThatLeaveAGapDoNotHoldATile) {
-    const auto parent = z2(1, 1);
-    auto three = childrenOf(parent);
-    three.erase(three.begin());
-    EXPECT_EQ(RenderTerrain::keepFinerUntilReady({parent}, three, nothingReady),
-              std::set<UnwrappedTileID>{parent});
-}
-
-// 181 a child split into its own four still covers its quarter
-TEST(TerrainMeshCover, FinerTilesOfMixedDepthsHoldATile) {
-    const auto parent = z2(1, 1);
-    auto drawn = childrenOf(parent);
-    const auto split = *drawn.begin();
-    drawn.erase(drawn.begin());
-    const auto grandchildren = childrenOf(split);
-    drawn.insert(grandchildren.begin(), grandchildren.end());
-    EXPECT_EQ(RenderTerrain::keepFinerUntilReady({parent}, drawn, nothingReady), drawn);
-}
-
-// 181 tiles drawn elsewhere hold nothing, and a tile with nothing finer drawn goes ahead
-TEST(TerrainMeshCover, OnlyTheTilesInsideHoldATile) {
-    const auto parent = z2(1, 1);
-    const auto other = z2(2, 2);
-    auto expected = childrenOf(other);
-    expected.insert(parent);
-    EXPECT_EQ(RenderTerrain::keepFinerUntilReady({parent, other}, childrenOf(other), nothingReady), expected);
+// 181 Riki Maps TestFlight 1150: merging the farthest tile made a parent that took the fine
+// ground nearest the camera with it, nine tiles under the cap, and a pan flipped it each frame
+TEST(TerrainMeshCover, AMergeNeverTakesGroundFinerThanItsChildren) {
+    const auto at = [](uint8_t z, uint32_t x, uint32_t y) { return OverscaledTileID{z, 0, CanonicalTileID(z, x, y)}; };
+    std::vector<OverscaledTileID> tiles{at(2, 1, 0), at(2, 0, 1), at(2, 1, 1), at(3, 1, 0), at(3, 0, 1),
+                                        at(3, 1, 1), at(4, 0, 0), at(4, 1, 0), at(4, 0, 1), at(4, 1, 1)};
+    util::mergeFarthestTiles(tiles, 9, {{-1.0, -1.0}}, 0);
+    const std::set<OverscaledTileID> merged(tiles.begin(), tiles.end());
+    const std::set<OverscaledTileID> expected{
+        at(2, 1, 0), at(2, 0, 1), at(2, 1, 1), at(3, 0, 0), at(3, 1, 0), at(3, 0, 1), at(3, 1, 1)};
+    EXPECT_EQ(expected, merged);
 }

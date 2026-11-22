@@ -277,8 +277,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // built), leaving the first frame with an empty cover and no terrain -
         // permanent blankness in single-frame still renders (the render tests).
         terrain->prepareSource(orchestrator);
-        const std::set<UnwrappedTileID> wantedTileIDs = terrain->computeMeshCover(state, updateParameters);
-        const std::set<UnwrappedTileID> demTileIDs = terrain->holdFinerTilesUntilReady(wantedTileIDs);
+        const std::set<UnwrappedTileID> demTileIDs = terrain->computeMeshCover(state, updateParameters);
         const auto sides = drapeSides(*terrain, demTileIDs, state, updateParameters->terrainLoadMode);
         for (const auto& id : demTileIDs) {
             texturePool.createRenderTarget(context, id, renderTreeParameters.backgroundColor, sides.at(id));
@@ -287,11 +286,8 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         frameDrapeTargetCount = demTileIDs.size();
         // Hand the exact cover to RenderTerrain so its mesh matches this pool
         terrain->setFrameMeshCover(demTileIDs);
-        // ...and to the DEM source, which loads the levels the mesh is drawn at, and those of the
-        // tiles still waiting for their DEM behind the finer ones (holdFinerTilesUntilReady).
-        std::set<UnwrappedTileID> loadTileIDs = demTileIDs;
-        loadTileIDs.insert(wantedTileIDs.begin(), wantedTileIDs.end());
-        util::setTerrainMeshCover({loadTileIDs.begin(), loadTileIDs.end()});
+        // ...and to the DEM source, which loads the levels the mesh is drawn at.
+        util::setTerrainMeshCover({demTileIDs.begin(), demTileIDs.end()});
     } else {
         util::setTerrainMeshCover({});
         drapesHeldBack.clear();
