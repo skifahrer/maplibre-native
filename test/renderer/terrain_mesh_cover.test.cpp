@@ -805,3 +805,56 @@ TEST(TerrainMeshCover, AViewOfOneZoomThatEndsOnTheGroundMayHoldTwiceTheCap) {
     // No cap stays no cap
     EXPECT_EQ(0u, RenderTerrain::meshTileCap(0, util::deg2rad(60.0), fov, true));
 }
+
+namespace {
+std::set<UnwrappedTileID> childrenOf(const UnwrappedTileID& tile) {
+    const auto four = tile.children();
+    return {four.begin(), four.end()};
+}
+
+const auto nothingReady = [](const UnwrappedTileID&) { return false; };
+} // namespace
+
+// 181 Riki Maps TestFlight 1150: four tiles merged onto a DEM still loading, and for a frame the
+// mountains stood on an ancestor levels coarser
+TEST(TerrainMeshCover, AMergeWaitsBehindTheFinerTilesForItsDEM) {
+    const auto parent = z2(1, 1);
+    EXPECT_EQ(RenderTerrain::keepFinerUntilReady({parent}, childrenOf(parent), nothingReady), childrenOf(parent));
+}
+
+// 181
+TEST(TerrainMeshCover, AMergeOntoALoadedDEMGoesAhead) {
+    const auto parent = z2(1, 1);
+    const auto ready = [](const UnwrappedTileID&) { return true; };
+    EXPECT_EQ(RenderTerrain::keepFinerUntilReady({parent}, childrenOf(parent), ready),
+              std::set<UnwrappedTileID>{parent});
+}
+
+// 181 three of four drawn leave a quarter uncovered: the tile goes ahead on its fallback
+TEST(TerrainMeshCover, FinerTilesThatLeaveAGapDoNotHoldATile) {
+    const auto parent = z2(1, 1);
+    auto three = childrenOf(parent);
+    three.erase(three.begin());
+    EXPECT_EQ(RenderTerrain::keepFinerUntilReady({parent}, three, nothingReady),
+              std::set<UnwrappedTileID>{parent});
+}
+
+// 181 a child split into its own four still covers its quarter
+TEST(TerrainMeshCover, FinerTilesOfMixedDepthsHoldATile) {
+    const auto parent = z2(1, 1);
+    auto drawn = childrenOf(parent);
+    const auto split = *drawn.begin();
+    drawn.erase(drawn.begin());
+    const auto grandchildren = childrenOf(split);
+    drawn.insert(grandchildren.begin(), grandchildren.end());
+    EXPECT_EQ(RenderTerrain::keepFinerUntilReady({parent}, drawn, nothingReady), drawn);
+}
+
+// 181 tiles drawn elsewhere hold nothing, and a tile with nothing finer drawn goes ahead
+TEST(TerrainMeshCover, OnlyTheTilesInsideHoldATile) {
+    const auto parent = z2(1, 1);
+    const auto other = z2(2, 2);
+    auto expected = childrenOf(other);
+    expected.insert(parent);
+    EXPECT_EQ(RenderTerrain::keepFinerUntilReady({parent, other}, childrenOf(other), nothingReady), expected);
+}

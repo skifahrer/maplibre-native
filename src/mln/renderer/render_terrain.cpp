@@ -784,6 +784,71 @@ std::set<UnwrappedTileID> RenderTerrain::nearestMeshTiles(std::set<UnwrappedTile
     return {sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(maxTiles)};
 }
 
+std::set<UnwrappedTileID> RenderTerrain::keepFinerUntilReady(const std::set<UnwrappedTileID>& wanted,
+                                                             const std::set<UnwrappedTileID>& settled,
+                                                             const std::function<bool(const UnwrappedTileID&)>& ready) {
+    std::set<UnwrappedTileID> out;
+    for (const auto& tile : wanted) {
+        if (ready(tile)) {
+            out.insert(tile);
+            continue;
+        }
+        // Cover tiles never overlap, so the settled ones inside the tile cover it when their
+        // areas, a quarter a level deeper, add up to the tile's.
+        std::vector<UnwrappedTileID> finer;
+        double covered = 0.0;
+        for (const auto& drawn : settled) {
+            if (drawn.isChildOf(tile)) {
+                finer.push_back(drawn);
+                covered += std::ldexp(1.0, -2 * (drawn.canonical.z - tile.canonical.z));
+            }
+        }
+        if (covered < 1.0 - 1e-9) {
+            out.insert(tile);
+            continue;
+        }
+        out.insert(finer.begin(), finer.end());
+    }
+    return out;
+}
+
+std::set<UnwrappedTileID> RenderTerrain::holdFinerTilesUntilReady(const std::set<UnwrappedTileID>& wanted) const {
+    if (!demSource || tilesWithDrawables.empty()) {
+        return wanted;
+    }
+    const auto maxZoom = demSource->getMaxZoom();
+    uint8_t minZoom = 0;
+    if (demSource->baseImpl->type == style::SourceType::RasterDEM) {
+        if (const auto& tileset = static_cast<const style::TileSource::Impl&>(*demSource->baseImpl).tileset) {
+            minZoom = tileset->zoomRange.min;
+        }
+    }
+    const auto demTileOf = [&](const UnwrappedTileID& tile) {
+        const auto z = std::min<uint8_t>(tile.canonical.z, maxZoom);
+        return UnwrappedTileID(tile.wrap, tile.canonical.scaledTo(z));
+    };
+    std::unordered_set<UnwrappedTileID> loaded;
+    for (const auto& dem : loadedDEMTiles(demSource)) {
+        loaded.insert(dem.id);
+    }
+    // Drawn on the DEM of its own zoom (an ancestor's past the DEM's maxzoom), not a fallback.
+    std::set<UnwrappedTileID> settled;
+    for (const auto& [id, binding] : tilesWithDrawables) {
+        const UnwrappedTileID tile = id.toUnwrapped();
+        if (binding.demZoom == demTileOf(tile).canonical.z) {
+            settled.insert(tile);
+        }
+    }
+    return keepFinerUntilReady(wanted, settled, [&](const UnwrappedTileID& tile) {
+        // Shallower than the DEM goes, no DEM of its own ever comes: nothing to wait for.
+        if (tile.canonical.z < minZoom) {
+            return true;
+        }
+        const auto dem = demTileOf(tile);
+        return loaded.contains(dem) || demTextures.contains(dem);
+    });
+}
+
 std::set<UnwrappedTileID> RenderTerrain::coarsenFarMeshTiles(std::set<UnwrappedTileID> tiles,
                                                              size_t maxTiles,
                                                              uint8_t minZoom,
