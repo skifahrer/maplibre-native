@@ -339,6 +339,13 @@ public:
     /// changing nothing, when the zoom limits, the bounds or the constrain mode would cut it short.
     bool setBearingKeepingEye(double bearingDegrees);
 
+    /// Turns to `bearingDegrees` round a point on the line of sight no farther ahead, on the
+    /// ground, than `reachPerEyeHeight` times the eye's height over the terrain under it, nor
+    /// than the centre: low over the ground the camera circles near, high up it circles wide.
+    /// Returns false, changing nothing, before the renderer has reported the ground under the
+    /// eye, or when the zoom limits, the bounds or the constrain mode would cut the turn short.
+    bool setBearingAroundNearPoint(double bearingDegrees, double reachPerEyeHeight);
+
     /// Metres from the camera to where the line of sight through the centre meets the terrain,
     /// as the renderer last measured it (a frame behind a moving camera). NaN without terrain or
     /// where the line meets no ground. A gesture holds the centre at the height it started on, so

@@ -53,6 +53,28 @@ final class TurnKeepsTheEyeTests: TerrainMapTestCase {
         XCTAssertLessThan(distance(center, mapView.centerCoordinate), 5)
     }
 
+    // 182 bug: low over a ridge, a turn swung the camera round ground kilometres ahead.
+    func testATiltedTurnCirclesAPointNearerThanTheCentre() throws {
+        try loadMap()
+        mapView.rotationPivotReach = 1
+        tilt(70)
+        waitUntilFullyRendered()
+        let gesture = beginTurn()
+        let heading = mapView.camera.heading
+        let first = mapView.centerCoordinate
+        send(gesture, .changed, .pi)
+        let half = mapView.centerCoordinate
+        send(gesture, .ended, .pi)
+        // Half a turn round the pivot puts it half way between the two centres.
+        let pivot = CLLocationCoordinate2D(latitude: (first.latitude + half.latitude) / 2,
+                                           longitude: (first.longitude + half.longitude) / 2)
+        let radius = distance(pivot, first)
+        XCTAssertGreaterThan(radius, 50, "the centre goes round, not the eye alone")
+        let behind = (bearing(from: first, to: pivot) - heading + 360).truncatingRemainder(dividingBy: 360)
+        XCTAssertEqual(behind, 180, accuracy: 5, "the pivot is on the sight, before the centre")
+        XCTAssertEqual(mapView.rotationKeepsEyeAbovePitch, 84)
+    }
+
     /// Beginning, a turn first sets the centre on the terrain it looks at.
     private func beginTurn() -> ScriptedTurn {
         let gesture = ScriptedTurn()

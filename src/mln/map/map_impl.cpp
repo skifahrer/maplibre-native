@@ -573,6 +573,25 @@ bool Map::Impl::setPitchKeepingEye(double pitchDegrees) {
 }
 
 bool Map::Impl::setBearingKeepingEye(double bearingDegrees) {
+    return turnAround(bearingDegrees, 0.0);
+}
+
+bool Map::Impl::setBearingAroundNearPoint(double bearingDegrees, double reachPerEyeHeight) {
+    if (std::isnan(terrainEyeElevation)) {
+        return false;
+    }
+    const TransformState& state = transform.getState();
+    const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(state.getLatLng().latitude(),
+                                                                          state.getZoom());
+    const double distance = state.getCameraToCenterDistance();
+    const double eyeHeight = state.getCenterAltitude() + distance * metresPerPixel * std::cos(state.getPitch()) -
+                             terrainEyeElevation;
+    const double ahead = distance * std::sin(state.getPitch());
+    const double reach = std::max(0.0, reachPerEyeHeight * eyeHeight / metresPerPixel);
+    return turnAround(bearingDegrees, std::min(ahead, reach));
+}
+
+bool Map::Impl::turnAround(double bearingDegrees, double pivotAhead) {
     const TransformState& state = transform.getState();
     const CameraOptions camera = transform.getCameraOptions(std::nullopt);
     if (!camera.center || !camera.zoom) {
@@ -581,9 +600,8 @@ bool Map::Impl::setBearingKeepingEye(double bearingDegrees) {
     const double pitch = util::deg2rad(camera.pitch.value_or(0.0));
     const double from = util::deg2rad(camera.bearing.value_or(0.0));
     const double to = util::deg2rad(bearingDegrees);
-    // The centre lies sin(pitch) of the distance ahead of the eye on the ground; turning,
-    // it swings round the eye at that radius.
-    const double ahead = state.getCameraToCenterDistance() * std::sin(pitch);
+    // The eye circles the pivot and the centre, between them on the sight, goes with it.
+    const double ahead = state.getCameraToCenterDistance() * std::sin(pitch) - pivotAhead;
     const double scale = state.getScale();
     const Point<double> center = Projection::project(*camera.center, scale);
     const LatLng turned = Projection::unproject({center.x + ahead * (std::sin(to) - std::sin(from)),

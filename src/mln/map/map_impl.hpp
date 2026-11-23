@@ -205,6 +205,9 @@ public:
     bool setCenterAltitudeKeepingView(double altitudeMeters);
     bool setPitchKeepingEye(double pitchDegrees);
     bool setBearingKeepingEye(double bearingDegrees);
+    bool setBearingAroundNearPoint(double bearingDegrees, double reachPerEyeHeight);
+    /// Turns round the point `pivotAhead` pixels ahead of the eye along the old bearing.
+    bool turnAround(double bearingDegrees, double pivotAhead);
     /// Past this pitch the line of sight runs along or above the ground: the centre no longer
     /// sits on it, and only the eye's clearance moves it.
     bool looksPastTheGround() const;

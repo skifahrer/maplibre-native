@@ -557,6 +557,37 @@ TEST(TerrainCamera, BearingKeepingTheEyeTurnsWhereItStands) {
     }
 }
 
+// 182 a two-finger turn swung a camera low over a ridge round ground kilometres ahead
+TEST(TerrainCamera, BearingAroundANearPointCirclesInProportionToTheEyeHeight) {
+    TerrainCameraTest test;
+    test.map.setCenterClampedToGround(false);
+    test.map.jumpTo(CameraOptions().withZoom(11.0).withPitch(75.0).withBearing(0.0));
+    EXPECT_FALSE(test.map.setBearingAroundNearPoint(180.0, 1.0));
+    test.renderAndGetAltitude(8);
+
+    const vec3 before = test.eye();
+    const double eyeHeight = before[2] / mercatorMetre - plateauMeters;
+    const double zoom = *test.map.getCameraOptions({}).zoom;
+    ASSERT_GT(eyeHeight, 100.0);
+
+    // Half way round, the eye stands on the far side of the pivot, twice its reach away.
+    ASSERT_TRUE(test.map.setBearingAroundNearPoint(180.0, 1.0));
+    const vec3 turned = test.eye();
+    const double moved = std::hypot(turned[0] - before[0], turned[1] - before[1]) / mercatorMetre;
+    EXPECT_NEAR(moved, 2.0 * eyeHeight, 0.02 * eyeHeight);
+    EXPECT_LT(turned[1], before[1]);
+    EXPECT_NEAR(turned[2], before[2], mercatorMetre);
+    EXPECT_NEAR(*test.map.getCameraOptions({}).zoom, zoom, 1e-9);
+
+    // A reach past the centre circles the centre, as a turn without one does.
+    ASSERT_TRUE(test.map.setBearingAroundNearPoint(0.0, 1.0));
+    const LatLng center = *test.map.getCameraOptions({}).center;
+    ASSERT_TRUE(test.map.setBearingAroundNearPoint(90.0, 1000.0));
+    const LatLng kept = *test.map.getCameraOptions({}).center;
+    EXPECT_NEAR(kept.latitude(), center.latitude(), 1e-9);
+    EXPECT_NEAR(kept.longitude(), center.longitude(), 1e-9);
+}
+
 // Anchoring raises the zoom. Past the maximum zoom, jumpTo would clamp it and the view would step
 // back, so the anchor leaves the camera alone there.
 TEST(TerrainCamera, AnchoringPastMaxZoomLeavesTheCameraAlone) {
