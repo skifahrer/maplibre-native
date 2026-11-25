@@ -64,3 +64,6 @@ out.png
 **/target/
 **/*.rs.bk
 **/*.profraw
+
+# 188: ready.py imports ready_repo.py, whose bytecode would fail its own commit check
+__pycache__/
