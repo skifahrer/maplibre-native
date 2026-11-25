@@ -793,6 +793,9 @@ TEST(TerrainMeshCover, FineGroundNearbyLeavesRoomForTheFarSlopes) {
     EXPECT_TRUE(farCovered) << "the far slopes were dropped";
     const OverscaledTileID atOrigin{12, 0, CanonicalTileID(12, 0, 0)};
     EXPECT_NE(std::find(tiles.begin(), tiles.end(), atOrigin), tiles.end()) << "the ground underfoot coarsened";
+}
+
+namespace {
 class TerrainMeshBuffers : public ::testing::Test {
 protected:
     std::unique_ptr<gfx::HeadlessBackend> backend = gfx::HeadlessBackend::Create({64, 64});

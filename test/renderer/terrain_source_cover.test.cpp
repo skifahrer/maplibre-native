@@ -411,6 +411,8 @@ TEST(TerrainSourceCover, AtTheEdgeOfTheDEMAStillCameraKeepsItsMesh) {
         test.render(1);
         ASSERT_EQ(util::terrainMeshCover(), settled) << "frame " << frame;
     }
+}
+
 // A wide pitched view draws many terrain tiles, but their topology is identical.
 // Account for small non-terrain index buffers while rejecting one mesh buffer per tile/pass.
 TEST(TerrainSourceCover, MetalTerrainUploadsOneIndexBufferAcrossTilesAndCameraChanges) {

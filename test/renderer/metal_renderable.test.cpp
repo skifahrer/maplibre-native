@@ -3,6 +3,8 @@
 
 #include <mln/gfx/backend_scope.hpp>
 #include <mln/gfx/headless_backend.hpp>
+#include <mln/gfx/offscreen_texture.hpp>
+#include <mln/mtl/context.hpp>
 #include <mln/mtl/renderable_resource.hpp>
 #include <mln/mtl/renderer_backend.hpp>
 
