@@ -86,7 +86,9 @@ jobs:
           fi
           old=$(git rev-parse -q --verify "origin/$sync" || true)
           # 134: a branch already merged holds nothing to keep and predates what master settled
-          if [ -z "$old" ] || git merge-base --is-ancestor "$old" origin/master; then
+          # 187: nor does one holding only its booking, whose old master would conflict again
+          if [ -z "$old" ] || git merge-base --is-ancestor "$old" origin/master ||
+             git diff --quiet "$(git merge-base "$old" origin/master)" "$old"; then
             git checkout -q -B "$sync" origin/master
           else
             git checkout -q -B "$sync" "$old"
@@ -96,6 +98,9 @@ jobs:
           conflict=""
           for branch in $BRANCHES; do
             if ! git merge -q --no-edit -m "Merge upstream $branch into $sync" "refs/upstream/$branch"; then
+              # 187: what to merge by hand, on the run's page
+              { echo "### $branch conflicts in"; git diff --name-only --diff-filter=U | sed 's/^/- /'; } \
+                >> "$GITHUB_STEP_SUMMARY"
               git merge --abort
               conflict="upstream's $branch conflicts with $sync"
               break
