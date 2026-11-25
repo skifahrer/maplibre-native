@@ -76,6 +76,13 @@ MLN_EXPORT
  */
 @property (nonatomic, assign) float minimumZoomLevel;
 
+/**
+ Whether a plain line layer stands on the terrain over every other layer, buildings and
+ ridges too, instead of being draped. Dashed, patterned and gradient lines stay draped, and
+ other layer types ignore it. The default is `NO`.
+ */
+@property (nonatomic, assign, getter=isDrawnOverTerrain) BOOL drawnOverTerrain;
+
 @end
 
 NS_ASSUME_NONNULL_END

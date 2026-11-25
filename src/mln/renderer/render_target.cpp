@@ -154,6 +154,18 @@ RenderTarget::DrapeCoverage RenderTarget::computeDrapeCoverage(RenderOrchestrato
             if (!drawable.getEnabled() || !drawable.getTileID()) {
                 return;
             }
+            // A drawable that spans several tiles (an image) adds each of them that overlaps
+            // this target; the others contribute nothing to it.
+            if (const auto& data = drawable.getData()) {
+                for (const auto& tile : data->drapeCover()) {
+                    if (PaintParameters::tilesOverlap(tile, *drapeTileID)) {
+                        group.addDrawn(tile, drapedDataID(drawable));
+                    }
+                }
+                if (!data->drapeCover().empty()) {
+                    return;
+                }
+            }
             const UnwrappedTileID unwrapped = drawable.getTileID()->toUnwrapped();
             if (!PaintParameters::tilesOverlap(unwrapped, *drapeTileID)) {
                 return; // contributes nothing to this target
@@ -163,10 +175,24 @@ RenderTarget::DrapeCoverage RenderTarget::computeDrapeCoverage(RenderOrchestrato
         for (const auto& tile : tileGroup.getEmptyTileIDs()) {
             group.addEmpty(tile);
         }
+        const terrain::DrapeGroupFallback fallback = group.fallback();
         std::size_t groupHash = group.contentHash();
         util::hash_combine(groupHash, layerHash);
         coverage.contentHash += groupHash;
-        coverage.groups.push_back(group.fallback());
+        coverage.groups.push_back(fallback);
+        // The layer's style revision: an app animating a draped layer (a line-gradient
+        // reveal) changes its look without changing which tiles cover the target. Counted only
+        // where the layer covers this target, so a change under other tiles leaves it alone.
+        std::size_t revisionHash = 0;
+        if (fallback.deficit >= 0 && parameters.drapeLayerRevisions) {
+            if (const auto it = parameters.drapeLayerRevisions->find(layerGroup.getName());
+                it != parameters.drapeLayerRevisions->end()) {
+                revisionHash = std::hash<std::string>{}(layerGroup.getName());
+                util::hash_combine(revisionHash, it->second);
+                coverage.contentHash += revisionHash;
+            }
+        }
+        coverage.groupRevisions.push_back(revisionHash);
     });
     return coverage;
 }
@@ -207,6 +233,12 @@ void RenderTarget::renderDrapedLayerGroups(RenderOrchestrator& orchestrator, Pai
             if (const auto& tileID = drawable.getTileID()) {
                 const UnwrappedTileID unwrapped = tileID->toUnwrapped();
                 overlaps = PaintParameters::tilesOverlap(unwrapped, *drapeTileID);
+                // An image spans the tiles of its cover, not only its own
+                if (const auto& data = drawable.getData(); data && !overlaps) {
+                    for (const auto& tile : data->drapeCover()) {
+                        overlaps = overlaps || PaintParameters::tilesOverlap(tile, *drapeTileID);
+                    }
+                }
             }
             drawable.setEnabled(drawable.getEnabled() && overlaps);
         });
@@ -321,7 +353,7 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
         // above the target where those were one, then count as worse for good. The
         // target's lifetime bounds staleness: when its terrain tile leaves the cover it
         // is destroyed.
-        if (contentComing && coverage.worseThan(bakedCoverage)) {
+        if (contentComing && !coverage.revisionChangedFrom(bakedCoverage) && coverage.worseThan(bakedCoverage)) {
             // Keeping the already-baked (better) content: record that at this
             // signature the decision was to hold, so future identical frames skip
             // the scan too, until the content has come (see above). A real change

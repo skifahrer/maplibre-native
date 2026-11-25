@@ -386,6 +386,12 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             std::size_t drapedGroupCount = 0;
             std::vector<std::pair<UnwrappedTileID, std::size_t>> drapedTiles;
             drapedTiles.reserve(1024);
+            // Layer id -> revision of its style (RenderLayer::styleRevision), from this frame's tree.
+            layerIdentities.clear();
+            for (const auto& item : renderTree.getLayerRenderItemMap()) {
+                const RenderLayer& layer = item.layer.get();
+                layerIdentities.emplace(layer.getID(), static_cast<std::uintptr_t>(layer.styleRevision));
+            }
             orchestrator.visitLayerGroups([&](LayerGroupBase& layerGroup) {
                 if (layerGroup.getType() != LayerGroupBase::Type::TileLayerGroup ||
                     !layerGroup.shouldRenderToTerrain()) {
@@ -393,6 +399,13 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                 }
                 drapedGroupCount++;
                 const std::size_t layerHash = std::hash<std::string>{}(layerGroup.getName());
+                // The layer's style object is replaced when the app changes its paint or layout
+                // (setPaintProperty and the like) - not on zoom, fades or transitions. Folding it
+                // in re-bakes, only under that layer's tiles, a drape the app is animating (a
+                // replay revealing a route by its line-gradient), which otherwise showed a stale
+                // bake until something else invalidated it.
+                const auto found = layerIdentities.find(layerGroup.getName());
+                const std::uintptr_t layerIdentity = found != layerIdentities.end() ? found->second : 0;
                 static_cast<TileLayerGroup&>(layerGroup).visitDrawables([&](const gfx::Drawable& drawable) {
                     if (!drawable.getEnabled() || !drawable.getTileID()) {
                         return;
@@ -403,11 +416,19 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                     util::hash_combine(h, tile.canonical.z);
                     util::hash_combine(h, tile.canonical.x);
                     util::hash_combine(h, tile.canonical.y);
+                    util::hash_combine(h, layerIdentity);
                     // Fold the identity of the drawn data so new data under the same covering-tile
                     // id re-renders the drape instead of serving the stale bake until the next zoom.
                     util::hash_combine(h, RenderTarget::drapedDataID(drawable));
                     util::hash_combine(h, layerHash);
                     util::hash_combine(signature, h);
+                    // A drawable that spans several tiles (an image) counts under each of them
+                    if (const auto& data = drawable.getData(); data && !data->drapeCover().empty()) {
+                        for (const auto& coverTile : data->drapeCover()) {
+                            drapedTiles.emplace_back(coverTile, h);
+                        }
+                        return;
+                    }
                     drapedTiles.emplace_back(tile, h);
                 });
             });
@@ -449,6 +470,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                 });
             }
             parameters.perTargetDrapeSignature = &perTargetDrapeSignature;
+            parameters.drapeLayerRevisions = &layerIdentities;
         }
         // Latch whether the drape cover had targets this frame, for the re-bake trigger above.
         terrainHadCoverLastFrame = frameDrapeTargetCount > 0;
@@ -775,10 +797,13 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     // DEM, so this is the channel; whether the camera acts on it is the map's call
     // (Map::setCenterClampedToGround). Gated so a still map does not post a message a frame.
     auto* terrain = orchestrator.getRenderTerrain();
-    // A reloaded style drops the centre to sea level: report as the first terrain did.
-    if (terrain != reportedTerrain) {
-        reportedTerrain = terrain;
+    // A style swap removes the terrain and the app sets it back before a frame is drawn without
+    // it: the same heights, held back as reported, left the centre at sea level. Report again.
+    if (reportedTerrain != updateParameters->terrain) {
+        reportedTerrain = updateParameters->terrain;
         lastReportedCenterElevation = std::numeric_limits<double>::quiet_NaN();
+        lastReportedEyeElevation = std::numeric_limits<double>::quiet_NaN();
+        eyeElevationTile.reset();
     }
     // Only once a DEM tile covers the spot: ground not loaded yet is not sea level.
     if (terrain) {

@@ -59,6 +59,54 @@ void LineBucket::addFeature(const GeometryTileFeature& feature,
     }
 }
 
+namespace {
+
+// Only an edge the tile was cut along lies wholly beyond one side; drawn, a wide line or a 3D
+// drape shows it as a band along the tile's border.
+bool beyondOneSide(const GeometryCoordinate& a, const GeometryCoordinate& b) {
+    return (a.x < 0 && b.x < 0) || (a.x > util::EXTENT && b.x > util::EXTENT) || (a.y < 0 && b.y < 0) ||
+           (a.y > util::EXTENT && b.y > util::EXTENT);
+}
+
+} // namespace
+
+LineBucket::PolygonRuns LineBucket::drawnRuns(const GeometryCoordinates& ring) {
+    GeometryCoordinates closed = ring;
+    if (closed.front() != closed.back()) {
+        closed.push_back(closed.front());
+    }
+    const std::size_t edges = closed.size() - 1;
+    std::vector<bool> drawn(edges);
+    std::size_t kept = 0;
+    for (std::size_t i = 0; i < edges; ++i) {
+        drawn[i] = !beyondOneSide(closed[i], closed[i + 1]);
+        kept += drawn[i] ? 1 : 0;
+    }
+    if (kept == edges) {
+        return std::nullopt;
+    }
+
+    std::vector<GeometryCoordinates> runs;
+    if (kept == 0) {
+        return runs;
+    }
+    std::size_t start = 0;
+    while (drawn[start] || !drawn[(start + 1) % edges]) {
+        ++start;
+    }
+    for (std::size_t step = 1; step <= edges; ++step) {
+        const std::size_t edge = (start + step) % edges;
+        if (!drawn[edge]) {
+            continue;
+        }
+        if (!drawn[(edge + edges - 1) % edges]) {
+            runs.push_back({closed[edge]});
+        }
+        runs.back().push_back(closed[edge + 1]);
+    }
+    return runs;
+}
+
 void LineBucket::addGeometry(const GeometryCoordinates& coordinates,
                              const GeometryTileFeature& feature,
                              const CanonicalTileID& canonical) {
@@ -138,6 +186,16 @@ void LineBucket::addGeometry(const GeometryCoordinates& coordinates,
     options.roundLimit = layout.get<LineRoundLimit>();
     options.overscaling = overscaling;
 
+    if (options.type == FeatureType::Polygon) {
+        if (auto runs = drawnRuns(coordinates)) {
+            options.type = FeatureType::LineString;
+            options.beginCap = LineCapType::Butt;
+            for (const auto& run : *runs) {
+                generator.generate(run, options);
+            }
+            return;
+        }
+    }
     generator.generate(coordinates, options);
 }
 

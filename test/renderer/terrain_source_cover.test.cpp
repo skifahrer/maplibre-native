@@ -245,6 +245,12 @@ void expectOnlyTheTilesNearestTheCamera(const TerrainSourceCoverTest::Options& o
     EXPECT_EQ(test.parcelTiles, nearestTheCamera);
 }
 
+// Whether a tile holds a point given in normalized web-mercator.
+bool tileHolds(const CanonicalTileID& id, const std::array<double, 2>& point) {
+    const double tiles = std::pow(2.0, id.z);
+    return id.x == static_cast<uint32_t>(point[0] * tiles) && id.y == static_cast<uint32_t>(point[1] * tiles);
+}
+
 } // namespace
 
 // A source whose minzoom is deeper than the far field is covered at that minzoom out to the
@@ -274,13 +280,11 @@ TEST(TerrainSourceCover, TheDEMSourceLoadsTheMeshCover) {
     test.settleDEM();
     const auto turned = util::terrainMeshCover();
     // 137 The ground under the eye is loaded as well: it is often behind the view the mesh covers.
+    // 172 So is the ground under the centre, whose height the centre clamp needs (upstream #5039).
     const auto eye = test.cameraGround();
-    const auto underTheEye = [&](const CanonicalTileID& id) {
-        const double tiles = std::pow(2.0, id.z);
-        return id.x == static_cast<uint32_t>(eye[0] * tiles) && id.y == static_cast<uint32_t>(eye[1] * tiles);
-    };
+    const auto centre = test.mapCentre();
     for (const auto& id : test.demTiles) {
-        EXPECT_TRUE(underTheEye(id) ||
+        EXPECT_TRUE(tileHolds(id, eye) || tileHolds(id, centre) ||
                     std::any_of(turned.begin(),
                                 turned.end(),
                                 [&](const UnwrappedTileID& tile) {
@@ -288,6 +292,20 @@ TEST(TerrainSourceCover, TheDEMSourceLoadsTheMeshCover) {
                                 }))
             << int(id.z) << "/" << id.x << "/" << id.y;
     }
+}
+
+// 172 the DEM kept only the last of the ground tiles it asks for beside the mesh cover, so with
+// the centre's added (upstream #5039) the tile under the eye, often behind the view, went unloaded
+TEST(TerrainSourceCover, TheDEMLoadsTheGroundUnderTheEyeAndUnderTheCentre) {
+    TerrainSourceCoverTest test({.demMinZoom = 0, .demMaxZoom = 13, .mode = TerrainLoadMode::Performance});
+    test.settleDEM();
+    const auto loaded = [&](const std::array<double, 2>& point) {
+        return std::any_of(test.demTiles.begin(), test.demTiles.end(), [&](const CanonicalTileID& id) {
+            return id.z == 13 && tileHolds(id, point);
+        });
+    };
+    EXPECT_TRUE(loaded(test.cameraGround())) << "the ground under the eye";
+    EXPECT_TRUE(loaded(test.mapCentre())) << "the ground under the centre";
 }
 
 // Without terrain there is no mesh to size the cap from, and the source keeps its whole cover.

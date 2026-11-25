@@ -21,7 +21,10 @@ const std::array<AttributeInfo, 8> LineShaderSource::attributes = {
     AttributeInfo{6, gfx::AttributeDataType::Float2, lineUBOCount + 1, idLineOffsetVertexAttribute},
     AttributeInfo{7, gfx::AttributeDataType::Float2, lineUBOCount + 1, idLineWidthVertexAttribute},
 };
-const std::array<TextureInfo, 0> LineShaderSource::textures = {};
+const std::array<TextureInfo, 2> LineShaderSource::textures = {
+    TextureInfo{0, idLineDEMTexture},
+    TextureInfo{1, idLineDepthTexture},
+};
 
 //
 // Line gradient

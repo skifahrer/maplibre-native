@@ -2,6 +2,8 @@
 #include <mln/test/stub_file_source.hpp>
 #include <mln/test/map_adapter.hpp>
 
+#include <mln/gfx/backend_scope.hpp>
+#include <mln/gfx/context.hpp>
 #include <mln/gfx/headless_frontend.hpp>
 #include <mln/map/bound_options.hpp>
 #include <mln/map/camera.hpp>
@@ -10,6 +12,7 @@
 #include <mln/math/angles.hpp>
 #include <mln/style/layer.hpp>
 #include <mln/style/layers/fill_layer.hpp>
+#include <mln/style/layers/raster_layer.hpp>
 #include <mln/style/sources/geojson_source.hpp>
 #include <mln/style/style.hpp>
 #include <mln/style/terrain.hpp>
@@ -554,6 +557,37 @@ TEST(TerrainCamera, BearingKeepingTheEyeTurnsWhereItStands) {
     }
 }
 
+// 182 a two-finger turn swung a camera low over a ridge round ground kilometres ahead
+TEST(TerrainCamera, BearingAroundANearPointCirclesInProportionToTheEyeHeight) {
+    TerrainCameraTest test;
+    test.map.setCenterClampedToGround(false);
+    test.map.jumpTo(CameraOptions().withZoom(11.0).withPitch(75.0).withBearing(0.0));
+    EXPECT_FALSE(test.map.setBearingAroundNearPoint(180.0, 1.0));
+    test.renderAndGetAltitude(8);
+
+    const vec3 before = test.eye();
+    const double eyeHeight = before[2] / mercatorMetre - plateauMeters;
+    const double zoom = *test.map.getCameraOptions({}).zoom;
+    ASSERT_GT(eyeHeight, 100.0);
+
+    // Half way round, the eye stands on the far side of the pivot, twice its reach away.
+    ASSERT_TRUE(test.map.setBearingAroundNearPoint(180.0, 1.0));
+    const vec3 turned = test.eye();
+    const double moved = std::hypot(turned[0] - before[0], turned[1] - before[1]) / mercatorMetre;
+    EXPECT_NEAR(moved, 2.0 * eyeHeight, 0.02 * eyeHeight);
+    EXPECT_LT(turned[1], before[1]);
+    EXPECT_NEAR(turned[2], before[2], mercatorMetre);
+    EXPECT_NEAR(*test.map.getCameraOptions({}).zoom, zoom, 1e-9);
+
+    // A reach past the centre circles the centre, as a turn without one does.
+    ASSERT_TRUE(test.map.setBearingAroundNearPoint(0.0, 1.0));
+    const LatLng center = *test.map.getCameraOptions({}).center;
+    ASSERT_TRUE(test.map.setBearingAroundNearPoint(90.0, 1000.0));
+    const LatLng kept = *test.map.getCameraOptions({}).center;
+    EXPECT_NEAR(kept.latitude(), center.latitude(), 1e-9);
+    EXPECT_NEAR(kept.longitude(), center.longitude(), 1e-9);
+}
+
 // Anchoring raises the zoom. Past the maximum zoom, jumpTo would clamp it and the view would step
 // back, so the anchor leaves the camera alone there.
 TEST(TerrainCamera, AnchoringPastMaxZoomLeavesTheCameraAlone) {
@@ -763,16 +797,25 @@ struct TerrainTransitionTest {
 
     // Eases west onto the 2000 m plateau; `whileRunning` is called after every frame of the
     // transition. Returns once the transition has finished and a few more frames rendered.
+    // The transition runs on the clock, so it lasts about 40 frames of this machine instead of a
+    // fixed time: with slow frames (software GL) a 1.5 s ease ended within its first frame, and a
+    // test that acts mid-transition never got the frame it acts on.
     template <typename Fn>
     bool easeWest(Fn whileRunning) {
+        const auto frameStart = Clock::now();
+        renderFrame();
+        const auto frameTime = std::chrono::duration_cast<Milliseconds>(Clock::now() - frameStart);
+        constexpr int framesPerTransition = 40;
+        const Milliseconds duration = std::max(Milliseconds(1500), frameTime * framesPerTransition);
+
         bool finished = false;
-        AnimationOptions animation(Milliseconds(1500));
+        AnimationOptions animation(duration);
         animation.transitionFinishFn = [&] {
             finished = true;
         };
         map.easeTo(CameraOptions().withCenter(westTarget), animation);
 
-        const auto deadline = Clock::now() + Seconds(20);
+        const auto deadline = Clock::now() + duration * 4 + Seconds(20);
         while (!finished && Clock::now() < deadline) {
             renderFrame();
             whileRunning(finished);
@@ -823,6 +866,25 @@ TEST(TerrainCamera, ClampDoesNotApplyAfterTerrainRemoval) {
     EXPECT_NEAR(test.altitude(), 0.0, 0.001);
 }
 
+// A style loaded over a draped map takes the terrain away, and an app sets it back from the load
+// callback, before a frame is drawn without it. The map brought its centre back to sea level when
+// the terrain went. The renderer never saw it go: it had reported the height under that centre
+// already and said nothing more, so the centre stayed at sea level, the camera inside the ground
+// with nothing in view, until the view moved. A terrain that is set again is told its heights again.
+TEST(TerrainCamera, ATerrainSetAgainBeforeTheNextFrameClampsAgain) {
+    TerrainTransitionTest test;
+    ASSERT_TRUE(test.settleOnPlateau());
+    const auto camera = test.map.getCameraOptions({});
+
+    test.map.getStyle().setTerrain(nullptr);
+    test.map.getStyle().setTerrain(std::make_unique<style::Terrain>("dem", 1.0f));
+    // The app puts the camera back where it was; the centre's height is not its to set.
+    test.map.jumpTo(CameraOptions().withCenter(camera.center).withZoom(camera.zoom));
+    ASSERT_NEAR(test.altitude(), 0.0, 0.001);
+
+    EXPECT_TRUE(test.settleOnPlateau());
+}
+
 // A drape target is drawn into only by the source tiles that overlap its own tile, so the
 // masks it draws follow those tiles and not every tile the source covers.
 TEST(TerrainDrape, MasksAreDrawnOnlyForTilesOverlappingTheTarget) {
@@ -854,6 +916,55 @@ TEST(TerrainDrape, FlatTerrainLooksLikeTheFlatMap) {
     }
     // Only pixels on a colour edge may differ.
     EXPECT_GT(same, pixels * 95 / 100) << same << " of " << pixels << " pixels match";
+}
+
+// A paint change runs as a transition on a continuous map, 300 ms unless the style says otherwise.
+// A drape was baked on the frame of the change, where the transition starts, and not again: a
+// basemap dimmed by its raster paint (the same tiles, another look) stayed as bright as it was
+// until the view moved. The drape ends on the paint the transition ends on.
+TEST(TerrainDrape, APaintTransitionEndsOnTheNewPaint) {
+    util::RunLoop loop;
+    auto fileSource = std::make_shared<StubFileSource>(ResourceOptions::Default(), ClientOptions());
+    const std::string demTile = makeSeaLevelDEMTile();
+    const std::string quadrantsTile = makeQuadrantsTile();
+    fileSource->tileResponse = [&](const Resource& resource) {
+        Response res;
+        res.data = std::make_shared<std::string>(resource.url.find("/dem/") != std::string::npos ? demTile
+                                                                                                 : quadrantsTile);
+        return res;
+    };
+    HeadlessFrontend frontend{{256, 256}, 1};
+    MapAdapter map(frontend,
+                   MapObserver::nullObserver(),
+                   fileSource,
+                   MapOptions().withMapMode(MapMode::Continuous).withSize(frontend.getSize()));
+    map.getStyle().loadJSON(drapedRasterStyle);
+    map.jumpTo(CameraOptions().withCenter(LatLng{46.0, 10.0}).withZoom(8.6).withPitch(0.0));
+
+    // Renders until the frame is on the side asked for, bright or dark, for ten seconds at most.
+    // Three quarters of a quadrants tile are red, green or both, so the mean of each pixel's
+    // brighter channel is about 190 as served, and 0 with the brightness turned all the way down.
+    const auto renderUntil = [&](bool bright) {
+        double mean = bright ? 0.0 : 255.0;
+        const auto deadline = Clock::now() + Seconds(10);
+        while ((mean > 128.0) != bright && Clock::now() < deadline) {
+            loop.runOnce();
+            frontend.renderFrame();
+            gfx::BackendScope guard{*frontend.getBackend()};
+            const PremultipliedImage image = frontend.readStillImage();
+            const size_t pixels = static_cast<size_t>(image.size.width) * image.size.height;
+            uint64_t sum = 0;
+            for (size_t i = 0; i < pixels; ++i) {
+                sum += std::max(image.data[i * 4], image.data[i * 4 + 1]);
+            }
+            mean = pixels > 0 ? static_cast<double>(sum) / static_cast<double>(pixels) : mean;
+        }
+        return mean;
+    };
+    ASSERT_GT(renderUntil(true), 128.0) << "the raster is draped";
+
+    static_cast<style::RasterLayer*>(map.getStyle().getLayer("quadrants"))->setRasterBrightnessMax(0.0f);
+    EXPECT_LT(renderUntil(false), 128.0) << "the raster is dark once the transition has ended";
 }
 
 // The depth pass (the symbol-occlusion depth texture) is a function of the camera and the mesh
@@ -1322,7 +1433,8 @@ TEST(TerrainCamera, AnAnimatedZoomDoesNotCarryTheEyeUnderTheGround) {
     const auto clearance = [&] {
         const auto location = map.getFreeCameraOptions().getLocation();
         EXPECT_TRUE(location.has_value());
-        return location ? location->altitude - rampMeters(location->location.latitude()) : 0.0;
+        const auto ground = location ? map.getTerrainElevation(location->location) : std::nullopt;
+        return ground ? location->altitude - *ground : -std::numeric_limits<double>::infinity();
     };
 
     // The center on the ridge line looking north, the climb behind the camera, the eye settled over it.
@@ -2003,6 +2115,76 @@ TEST(TerrainDEMTextures, ATextureIsMadeOnlyForTilesRelatedToTheMeshTileSet) {
     EXPECT_GT(stats.numDEMTexturesCreated, 0) << "the mesh tiles have no DEM texture";
     EXPECT_LE(stats.numDEMTexturesCreated, static_cast<int>(demTiles.size()))
         << "a texture was made twice for a tile";
+}
+
+// A tile's edge vertices read the DEM's 2 px border, which the neighbouring tile backfills when it
+// loads (RenderRasterDEMSource::onTileChanged). A tile whose neighbour arrives after the tile's
+// texture was made must have that texture sent again, or its edge keeps the stand-in border (a copy
+// of its own last column) and steps against the neighbour, which the skirts show as a vertical riser.
+TEST(TerrainDEMTextures, ANeighbourLoadingLaterRefreshesTheTexturesOfTheTilesItBackfills) {
+    util::RunLoop loop;
+    auto fileSource = std::make_shared<StubFileSource>(ResourceOptions::Default(), ClientOptions());
+    const std::string tile = makeFlatDEMTile();
+    // Tiles in odd columns are held back until released, so the tiles in even columns are loaded, and
+    // have their textures, before the neighbours that backfill them
+    bool holdOddColumns = true;
+    std::set<std::string> requestedOdd;
+    std::set<std::string> demTiles;
+    fileSource->tileResponse = [&](const Resource& resource) -> std::optional<Response> {
+        const auto lastDash = resource.url.rfind('-');
+        const auto firstDash = resource.url.rfind('-', lastDash - 1);
+        const int column = std::stoi(resource.url.substr(firstDash + 1, lastDash - firstDash - 1));
+        if (column % 2 == 1) {
+            requestedOdd.insert(resource.url);
+            if (holdOddColumns) {
+                return std::nullopt;
+            }
+        }
+        demTiles.insert(resource.url);
+        Response res;
+        res.data = std::make_shared<std::string>(tile);
+        return res;
+    };
+    HeadlessFrontend frontend{{512, 512}, 1};
+    MapAdapter map(frontend,
+                   MapObserver::nullObserver(),
+                   fileSource,
+                   MapOptions().withMapMode(MapMode::Continuous).withSize(frontend.getSize()));
+    map.getStyle().loadJSON(terrainStyle);
+    map.jumpTo(CameraOptions().withCenter(LatLng{0.0, 0.0}).withZoom(2.5).withPitch(0.0));
+
+    // A Continuous map renders as tiles arrive (a still waits for every tile, so it could not show
+    // a tile that loads after the others), and the counters are read from the backend's context.
+    gfx::RenderingStats stats;
+    const auto renderUntilQuiet = [&] {
+        constexpr int maxFrames = 200;
+        constexpr int quietFrames = 10;
+        std::size_t seen = 0;
+        int quiet = 0;
+        for (int frame = 0; frame < maxFrames && quiet < quietFrames; ++frame) {
+            loop.runOnce();
+            const int before = stats.numDEMTexturesCreated;
+            {
+                gfx::BackendScope guard{*frontend.getBackend()};
+                stats = frontend.getBackend()->getContext().renderingStats();
+            }
+            quiet = demTiles.size() == seen && stats.numDEMTexturesCreated == before ? quiet + 1 : 0;
+            seen = demTiles.size();
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        return quiet == quietFrames;
+    };
+
+    ASSERT_TRUE(renderUntilQuiet()) << "the even columns kept arriving";
+    ASSERT_GT(stats.numDEMTexturesCreated, 0) << "the tiles in the even columns have no texture";
+    ASSERT_FALSE(requestedOdd.empty()) << "the view has no tile in an odd column, so nothing backfills";
+    // 161 a row that came after its neighbours' textures backfills them too: count from here
+    const int refreshedBefore = stats.numDEMTexturesRefreshed;
+
+    holdOddColumns = false;
+    ASSERT_TRUE(renderUntilQuiet()) << "the odd columns kept arriving";
+    EXPECT_GT(stats.numDEMTexturesRefreshed, refreshedBefore)
+        << "a tile backfilled by a neighbour that loaded after its texture was made kept the stale texture";
 }
 
 namespace {

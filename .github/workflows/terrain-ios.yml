@@ -17,6 +17,10 @@ on:
         type: choice
         options: [apple, intel]
         default: apple
+      attempt:
+        description: Queued by keep-in-queue beside an attempt still waiting for a Mac
+        type: boolean
+        default: false
 
 permissions:
   actions: write
@@ -25,8 +29,9 @@ permissions:
 
 # 107: master too, where the newest merge carries every change since the last release
 # 146: by branch, so a pull request's run and a dispatch on its branch stop each other
+# 183: an attempt keep-in-queue adds is a group of its own, or it would stop the one waiting
 concurrency:
-  group: terrain-ios-${{ github.head_ref || github.ref_name }}
+  group: terrain-ios-${{ github.head_ref || github.ref_name }}${{ inputs.attempt && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 env:
@@ -64,7 +69,7 @@ jobs:
             [ "$GITHUB_REF" = refs/heads/master ] && release=true
           fi
           tag="terrain-${sha:0:7}"
-          # workflows and docs alone change nothing in the framework; run by hand to try a workflow
+          # other workflows and docs change nothing in the framework
           from=${PR_BASE:-$BEFORE}
           # on master, against the last release: a cancelled run may have left a change unreleased
           if [ "$release" = true ] && [ -n "$BEFORE" ]; then
@@ -78,7 +83,9 @@ jobs:
             if [ -z "$files" ]; then
               echo "::notice::no file changed; nothing to build"
               build=false release=false pipeline_only=true
+            # 174: this workflow sets how the framework is built, its Xcode for one
             elif [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] && [ "$(echo "$files" | wc -l)" -lt 300 ] &&
+               ! echo "$files" | grep -qx '\.github/workflows/terrain-ios\.yml' &&
                ! echo "$files" | grep -qvE '^\.github/|\.md$'; then
               echo "::notice::only workflows or docs changed; nothing to build"
               build=false release=false pipeline_only=true
@@ -118,51 +125,65 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=pending -f context=terrain-ios \
             -f target_url="$RUN_URL" -f description="Building and testing on a simulator" || true
 
-  # The arm64 pool drops a job it cannot take within about 15 minutes; this run then
-  # starts again on Apple silicon (147: never Intel, whose simulator fails occlusion).
-  # 153: a build still queued keeps its place; starting again put it at the back.
-  again-if-no-mac:
+  # The arm64 pool drops a job no Mac takes within about 15 minutes, so before that another
+  # attempt joins the queue on Apple silicon (147: never Intel, whose simulator fails occlusion).
+  # 183: one attempt always waits; this one keeps its place until the pool drops it.
+  keep-in-queue:
     needs: check
     if: needs.check.outputs.build == 'true' && inputs.runner != 'intel'
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
       BRANCH: ${{ github.head_ref || github.ref_name }}
+      SHA: ${{ needs.check.outputs.sha }}
       FORCE: ${{ inputs.force || false }}
     steps:
-      - name: Start again if no Apple silicon Mac takes the build
+      - name: Queue another attempt before the pool drops this one
         run: |
           build() {
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
-              -q ".jobs[] | select(.name == \"build\") | \"\\(.status) \\(.conclusion) \\(.runner_id // 0)\""
+              -q '.jobs[] | select(.name == "build") | "\(.status) \(.runner_id // 0)"' || true
           }
-          # until a Mac takes the build or the pool drops it
-          while :; do
-            sleep 60
-            read -r status conclusion runner <<< "$(build)"
+          # any attempt at this commit, this one too, that a Mac has taken
+          taken() {
+            for run in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/terrain-ios.yml/runs?head_sha=$SHA&per_page=50" \
+                           -q '.workflow_runs[] | select(.status != "completed") | .id' || true); do
+              gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
+                -q '.jobs[] | select(.name == "build" and .status == "in_progress") | .id' | grep -q . && return 0
+            done
+            return 1
+          }
+          start=$(date +%s)
+          while [ $(($(date +%s) - start)) -lt 600 ]; do
+            sleep 30
+            read -r status runner <<< "$(build)"
             case "$status" in
               queued | waiting | pending | "") ;;
-              completed) [ "$conclusion" = cancelled ] && [ "$runner" = 0 ] && break; exit 0 ;;
+              # dropped early: the next attempt goes now
+              completed) [ "$runner" = 0 ] && break; exit 0 ;;
               *) echo "build taken by runner $runner"; exit 0 ;;
             esac
           done
-          # a pull request merged meanwhile has no branch left; master's own run builds it
-          if ! gh api "repos/$GITHUB_REPOSITORY/branches/$BRANCH" --silent 2>/dev/null; then
-            echo "::notice::$BRANCH is gone; master's run builds it"
-            gh run cancel "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY"
+          if taken; then
+            echo "another attempt has a Mac"
             exit 0
           fi
-          echo "::warning::no Apple silicon Mac took the build; starting this run again"
+          # a merged pull request has no branch left, and a moved one has a run of its own
+          head=$(gh api "repos/$GITHUB_REPOSITORY/branches/$BRANCH" -q .commit.sha 2> /dev/null || true)
+          if [ "$head" != "$SHA" ]; then
+            echo "::notice::$BRANCH is gone or has moved on; its own run builds it"
+            exit 0
+          fi
+          echo "::notice::no Apple silicon Mac yet; another attempt joins the queue"
           gh workflow run terrain-ios.yml -R "$GITHUB_REPOSITORY" --ref "$BRANCH" \
-            -f runner=apple -f force="$FORCE"
-          gh run cancel "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY"
+            -f runner=apple -f force="$FORCE" -f attempt=true
 
   build:
     needs: check
     if: needs.check.outputs.build == 'true'
-    # Apple silicon: Intel runs the core's timing tests 5-10x slower. A run no arm64 Mac
-    # takes is started again by again-if-no-mac.
+    # Apple silicon: Intel runs the core's timing tests 5-10x slower. While no arm64 Mac
+    # takes it, keep-in-queue keeps another attempt waiting.
     runs-on: ${{ inputs.runner == 'intel' && 'macos-26-intel' || 'macos-26' }}
     timeout-minutes: 240
     env:
@@ -170,20 +191,54 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
+      # 183: of the attempts Macs take, the oldest run builds; the others stop
+      - name: Take the build from the other attempts
+        id: take
+        env:
+          ATTEMPT: ${{ inputs.attempt || false }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          stop() {
+            echo "::notice::$1"
+            gh run cancel "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY"
+            sleep 300
+            exit 1
+          }
+          if [ "$ATTEMPT" = true ] &&
+             [ "$(gh api "repos/$GITHUB_REPOSITORY/branches/$BRANCH" -q .commit.sha 2> /dev/null)" != "$SHA" ]; then
+            stop "$BRANCH has moved on; its own run builds it"
+          fi
+          for run in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/terrain-ios.yml/runs?head_sha=$SHA&per_page=50" \
+                         -q ".workflow_runs[] | select(.status != \"completed\" and .id != $GITHUB_RUN_ID) | .id" || true); do
+            started=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
+                        -q '[.jobs[] | select(.name == "build" and .status == "in_progress")] | length' || echo 0)
+            if [ "$started" -gt 0 ] && [ "$run" -lt "$GITHUB_RUN_ID" ]; then
+              stop "run $run has the build"
+            fi
+            gh run cancel "$run" -R "$GITHUB_REPOSITORY" || true
+          done
+          echo "won=true" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.check.outputs.ref }}
           submodules: recursive
           persist-credentials: false
 
+      # 177: 26.6 built the shipped e6f4433; 26.5's framework drew 21% slower, 27.1's 8%
+      - name: Use Xcode 26.6
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcodebuild -version
+
       - name: Restore the Bazel cache
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-ios-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
+          key: bazel-ios-xcode266-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
           restore-keys: |
-            bazel-ios-${{ runner.arch }}-${{ needs.check.outputs.sha }}-
-            bazel-ios-${{ runner.arch }}-
+            bazel-ios-xcode266-${{ runner.arch }}-${{ needs.check.outputs.sha }}-
+            bazel-ios-xcode266-${{ runner.arch }}-
 
       # The same flags as upstream's ios-release, so the framework is as small as theirs.
       - name: Build the XCFramework
@@ -213,17 +268,39 @@ jobs:
           ls -la out
           du -sh x/MapLibre.xcframework/ios-arm64/MapLibre.framework/MapLibre
 
+      # 171: Bazel's default iPhone 15 is no device iOS 27 takes
+      - name: Pick an iPhone the simulator's iOS takes
+        run: |
+          xcrun simctl list runtimes
+          echo "SDK $(xcrun --sdk iphonesimulator --show-sdk-version) $(xcrun --sdk iphonesimulator --show-sdk-build-version)"
+          xcrun simctl list runtimes -j | python3 -c '
+          import json, re, sys
+          ios = [r for r in json.load(sys.stdin)["runtimes"] if r["platform"] == "iOS" and r["isAvailable"]]
+          for r in ios:
+              r["phones"] = [d["name"] for d in r["supportedDeviceTypes"] if d["productFamily"] == "iPhone"]
+              print("iOS", r["version"], r["buildversion"], "takes", r["phones"], file=sys.stderr)
+          # a version two runtimes share must take the iPhone in both: Bazel picks either
+          def ok(v):
+              names = [set(p for p in r["phones"] if re.fullmatch(r"iPhone \d+", p)) for r in ios if r["version"] == v]
+              return set.intersection(*names)
+          v = max((r["version"] for r in ios if ok(r["version"])), key=lambda v: [int(n) for n in v.split(".")])
+          plain = sorted(ok(v), key=lambda p: -int(p.split()[1]))
+          version = v
+          print(f"SIMULATOR=--ios_simulator_device={plain[0]}")
+          print(f"SIMULATOR_IOS=--ios_simulator_version={version}")
+          ' >> "$GITHUB_ENV"
+
       # not opt, whose NDEBUG drops the assertions upstream's tests expect to throw
       - name: Test ours on a simulator
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE $BAZEL_TEST --//:renderer=metal //platform/ios/riki-test:riki_test
+          bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" "$SIMULATOR_IOS" --//:renderer=metal //platform/ios/riki-test:riki_test
 
       - name: Test upstream's iOS on a simulator
         if: success() || failure()
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE $BAZEL_TEST --//:renderer=metal //platform/ios/test:ios_test
+          bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" "$SIMULATOR_IOS" --//:renderer=metal //platform/ios/test:ios_test
 
       # each group alone: beside the others, xcodebuild missed the simulator Bazel had just made
       - name: Test the core's terrain camera
@@ -232,7 +309,7 @@ jobs:
           FILTER: "*TerrainCamera*"
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE $BAZEL_TEST $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
+          bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" "$SIMULATOR_IOS" $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
             //platform/ios/test/core:CppUnitTests
 
       - name: Test the core's tile and mesh cover
@@ -241,7 +318,7 @@ jobs:
           FILTER: "*TileCover*:*MeshCover*:*TerrainSourceCover*"
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE $BAZEL_TEST $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
+          bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" "$SIMULATOR_IOS" $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
             //platform/ios/test/core:CppUnitTests
 
       - name: Test the core's drape, elevation, fog, view settings, label heights and layer order
@@ -250,7 +327,7 @@ jobs:
           FILTER: "*Terrain*:*Fog*:*StyleParsedLayers*:*SymbolZOffset*:Scheduler.Reply*:RenderingStats.*:*LayersBySource*:Retiring.*:DrapeBudget.*-*TerrainCamera*:*MeshCover*:*TerrainSourceCover*"
         run: |
           # shellcheck disable=SC2086
-          bazel test $BAZEL_CACHE $BAZEL_TEST $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
+          bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" "$SIMULATOR_IOS" $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \
             //platform/ios/test/core:CppUnitTests
 
       # A test app that crashes takes its unflushed output with it; its crash report names the test.
@@ -282,11 +359,11 @@ jobs:
 
       # Kept under 6 GB by Bazel, inside the repository's 10 GB of Actions cache.
       - name: Save the Bazel cache
-        if: always()
+        if: always() && steps.take.outputs.won == 'true'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-ios-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
+          key: bazel-ios-xcode266-${{ runner.arch }}-${{ needs.check.outputs.sha }}-${{ github.run_id }}
 
       - name: Release
         id: release
@@ -315,7 +392,7 @@ jobs:
           retention-days: 7
 
       - name: Mark the commit done
-        if: always()
+        if: always() && steps.take.outputs.won == 'true'
         env:
           STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
         run: |

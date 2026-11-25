@@ -254,9 +254,9 @@ void RenderColorReliefLayer::update(gfx::ShaderRegistry& shaders,
     if (!staticDataSharedVertices) {
         staticDataSharedVertices = std::make_shared<ColorReliefVertexVector>(RenderStaticData::rasterVertices());
     }
-    const auto staticDataIndices = RenderStaticData::quadTriangleIndices();
     if (!staticDataSharedIndices) {
-        staticDataSharedIndices = std::make_shared<gfx::IndexVector<gfx::Triangles>>(staticDataIndices);
+        staticDataSharedIndices = std::make_shared<gfx::IndexVector<gfx::Triangles>>(
+            RenderStaticData::quadTriangleIndices());
     }
     const auto staticDataSegments = RenderStaticData::rasterSegments();
 
