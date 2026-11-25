@@ -805,3 +805,16 @@ TEST(TerrainMeshCover, AViewOfOneZoomThatEndsOnTheGroundMayHoldTwiceTheCap) {
     // No cap stays no cap
     EXPECT_EQ(0u, RenderTerrain::meshTileCap(0, util::deg2rad(60.0), fov, true));
 }
+
+// 181 Riki Maps TestFlight 1150: merging the farthest tile made a parent that took the fine
+// ground nearest the camera with it, nine tiles under the cap, and a pan flipped it each frame
+TEST(TerrainMeshCover, AMergeNeverTakesGroundFinerThanItsChildren) {
+    const auto at = [](uint8_t z, uint32_t x, uint32_t y) { return OverscaledTileID{z, 0, CanonicalTileID(z, x, y)}; };
+    std::vector<OverscaledTileID> tiles{at(2, 1, 0), at(2, 0, 1), at(2, 1, 1), at(3, 1, 0), at(3, 0, 1),
+                                        at(3, 1, 1), at(4, 0, 0), at(4, 1, 0), at(4, 0, 1), at(4, 1, 1)};
+    util::mergeFarthestTiles(tiles, 9, {{-1.0, -1.0}}, 0);
+    const std::set<OverscaledTileID> merged(tiles.begin(), tiles.end());
+    const std::set<OverscaledTileID> expected{
+        at(2, 1, 0), at(2, 0, 1), at(2, 1, 1), at(3, 0, 0), at(3, 1, 0), at(3, 0, 1), at(3, 1, 1)};
+    EXPECT_EQ(expected, merged);
+}

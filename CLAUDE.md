@@ -8,16 +8,28 @@ mapeditor-fe: change all eight together. Each repo's own rules follow.
 1. **Book a ticket before any code**: push a branch `<kind>/<description>` with an empty
    `chore: book ticket` commit and open a draft PR titled with a sentence on the work. Its number
    is the ticket; never guess one. Book in each repo the work changes. Kinds: `feature`, `bug`,
-   `perf`, `plan`, `docs`, `dependency`, `chore` (`feature/saved-points-sync`).
-2. **Code with its tests**, then run the repo's local checks on what you changed.
+   `hang`, `perf`, `plan`, `docs`, `dependency`, `chore` (`feature/saved-points-sync`). Its
+   description starts `Before ready:` and the checks to run, so whoever picks it up runs them:
+   `tools/ready.py --mark`, and what a machine without the tools must leave to one with them.
+2. **Code with its tests**, then run `tools/ready.py`: the repo's checks on what you changed.
 3. **Push only the branch** (`git push origin HEAD`); never commit, push, merge or cherry-pick into
    the default branch.
-4. **Mark the PR ready once all work is pushed**, without waiting for CI: title it
-   `<ticket> <sentence>` (`1470 Tracks and saved features move to a container of their own`), say
-   briefly what it does, and mention @skifahrer on the description's last line.
+4. **Mark the PR ready once all work is pushed** and `tools/ready.py` ends `Ready.`, without
+   waiting for CI: title it `<ticket> <sentence>` (`1470 Tracks and saved features move to a
+   container of their own`), say briefly what it does, and mention @skifahrer on the
+   description's last line.
 5. **CI red**: fix it in that PR, or in your next one once it is merged. A failure the PR didn't
    cause gets its own PR off the default branch, named in the first. Never switch a test or lint
    off.
+
+## Ready
+
+`tools/ready.py` checks the branch, its commits and the PR's words, then runs `tools/ready_repo.py`,
+the repo's own checks, for what changed: lint, format, unit tests, and what the repo adds. Exit 0
+is ready, 1 a fault, 2 a check left for another machine by name. Without `gh`, pass `--request`
+with the PR's JSON. `tools/ready.py` and `tools/test-ready.py` are the same in all eight repos:
+change them in all, and the sha256 of the two, in order, here:
+sha256 `980c87958bed4dd1e27d51bf79747a6b5ddcc55eeed67c16e3ab543f1436ce2e`.
 
 ## Tests
 
@@ -34,6 +46,7 @@ first change that needs it.
 | maplibre-native | gtest (`test/`) | `platform/ios/riki-test` on the simulator, `render-test/` |
 | maptiles | `unittest`, `node --test` | Playwright (`workers/tests/browser.mjs`) |
 | mapeditor-fe | Vitest + Testing Library | Playwright (`e2e/`) |
+| mapeditor-fe `server/` | PHPUnit (`server/tests`) | Playwright projects `web`, `web-under-path` |
 | mapicons | `unittest` | Playwright for Python on `osmcat/web` |
 | traffic-signs | `unittest` (`tests/`) | Playwright for Python on `viewer/` |
 | ferrostar | `cargo nextest`, XCTest, JUnit | snapshot tests (iOS, Android) |

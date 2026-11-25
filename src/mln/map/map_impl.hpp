@@ -120,6 +120,13 @@ public:
     bool loading = false;
     bool rendererFullyLoaded;
     std::unique_ptr<StillImageRequest> stillImageRequest;
+    /// The center's height in the camera the renderer was last given, and in the frame being drawn.
+    /// In still mode the terrain clamp moves the center during the frame that reports the ground
+    /// under it, after that frame's camera was taken; the still image then waits for a frame drawn
+    /// from the moved one.
+    double renderedCenterAltitude = 0.0;
+    double frameCenterAltitude = 0.0;
+    int stillFramesForCenterClamp = 0;
 
     double tileLodMinRadius = 3;
     double tileLodScale = 1;
@@ -198,6 +205,9 @@ public:
     bool setCenterAltitudeKeepingView(double altitudeMeters);
     bool setPitchKeepingEye(double pitchDegrees);
     bool setBearingKeepingEye(double bearingDegrees);
+    bool setBearingAroundNearPoint(double bearingDegrees, double reachPerEyeHeight);
+    /// Turns round the point `pivotAhead` pixels ahead of the eye along the old bearing.
+    bool turnAround(double bearingDegrees, double pivotAhead);
     /// Past this pitch the line of sight runs along or above the ground: the centre no longer
     /// sits on it, and only the eye's clearance moves it.
     bool looksPastTheGround() const;

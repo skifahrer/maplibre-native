@@ -1115,7 +1115,7 @@ TEST(TileCover, KeepTilesWithinAnInfiniteReachKeepsAll) {
 }
 
 namespace {
-// The merge as it was: each merged parent drops its descendants by walking the whole set.
+// The merge walking the whole set, as it was before 159 looked descendants up.
 std::vector<OverscaledTileID> mergeByWalkingTheSet(std::vector<OverscaledTileID> tiles,
                                                    size_t maxTiles,
                                                    const std::array<double, 2>& origin,
@@ -1136,6 +1136,11 @@ std::vector<OverscaledTileID> mergeByWalkingTheSet(std::vector<OverscaledTileID>
             const OverscaledTileID parent = tile.scaledTo(tile.overscaledZ - 1);
             const double parentSize = 1.0 / static_cast<double>(1u << parent.canonical.z);
             if (parentSize * parentSize > widths * widths * distance2(parent)) continue;
+            // 181: only siblings merge
+            if (std::any_of(alive.begin(), alive.end(), [&](const OverscaledTileID& id) {
+                    return id.overscaledZ > parent.overscaledZ + 1 && id.isChildOf(parent);
+                }))
+                continue;
             std::erase_if(alive, [&](const OverscaledTileID& id) { return id == parent || id.isChildOf(parent); });
             alive.insert(parent);
             farthest.emplace(distance2(parent), parent);

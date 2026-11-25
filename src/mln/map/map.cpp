@@ -791,6 +791,17 @@ bool Map::setBearingKeepingEye(double bearingDegrees) {
     return moved;
 }
 
+bool Map::setBearingAroundNearPoint(double bearingDegrees, double reachPerEyeHeight) {
+    impl->settleCenterAwaitingSeaLevel();
+    const bool moved = impl->setBearingAroundNearPoint(bearingDegrees, reachPerEyeHeight);
+    if (moved) {
+        impl->noteCameraSet();
+        impl->cameraMutated = true;
+    }
+    impl->onUpdate();
+    return moved;
+}
+
 double Map::getSightGroundDistance() const {
     return impl->getSightGroundDistance();
 }

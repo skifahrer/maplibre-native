@@ -201,9 +201,9 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
     if (!staticDataSharedVertices) {
         staticDataSharedVertices = std::make_shared<HillshadeVertexVector>(RenderStaticData::rasterVertices());
     }
-    const auto staticDataIndices = RenderStaticData::quadTriangleIndices();
     if (!staticDataSharedIndices) {
-        staticDataSharedIndices = std::make_shared<gfx::IndexVector<gfx::Triangles>>(staticDataIndices);
+        staticDataSharedIndices = std::make_shared<gfx::IndexVector<gfx::Triangles>>(
+            RenderStaticData::quadTriangleIndices());
     }
     const auto staticDataSegments = RenderStaticData::rasterSegments();
 
@@ -299,8 +299,10 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
             hillshadePrepareBuilder->setVertexAttributes(getPrepareVertexAttributes());
             hillshadePrepareBuilder->setRawVertices(
                 {}, staticDataSharedVertices->elements(), gfx::AttributeDataType::Short2);
-            hillshadePrepareBuilder->setSegments(
-                gfx::Triangles(), staticDataIndices.vector(), staticDataSegments.data(), staticDataSegments.size());
+            hillshadePrepareBuilder->setSegments(gfx::Triangles(),
+                                                 staticDataSharedIndices->vector(),
+                                                 staticDataSegments.data(),
+                                                 staticDataSegments.size());
 
             std::shared_ptr<gfx::Texture2D> texture = context.createTexture2D();
             texture->setImage(bucket.getDEMData().getImagePtr());

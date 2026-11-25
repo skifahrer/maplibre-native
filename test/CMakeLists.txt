@@ -25,9 +25,11 @@ add_library(
     ${PROJECT_SOURCE_DIR}/test/renderer/fill_bucket.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/feature_tracking.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/hillshade_drawable_current.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/renderer/hillshade_layer.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/image_manager.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/placement_pace.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/pattern_atlas.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/renderer/raster_bucket.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/renderable.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/vertex_layout.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/color_relief.test.cpp
@@ -56,8 +58,10 @@ add_library(
     ${PROJECT_SOURCE_DIR}/test/renderer/drape_budget.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_mesh_cover.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_line_edges.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/renderer/terrain_polygon_clip_edges.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_source_cover.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_view_settings.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/renderer/source_state.test.cpp
     $<$<BOOL:${MLN_WITH_WEBGPU}>:${PROJECT_SOURCE_DIR}/test/renderer/wgsl_preprocessor.test.cpp>
     ${PROJECT_SOURCE_DIR}/test/sprite/sprite_loader.test.cpp
     ${PROJECT_SOURCE_DIR}/test/sprite/sprite_parser.test.cpp

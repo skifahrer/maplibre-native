@@ -1115,6 +1115,16 @@ of north, the map will automatically snap to exact north.
 @property (nonatomic) CGFloat rotationKeepsEyeAbovePitch;
 
 /**
+ How far ahead, in multiples of the camera's height over the terrain under it, a rotation
+ gesture below `rotationKeepsEyeAbovePitch` turns round a point on the line of sight.
+
+ Low over the ground the camera then circles near, and high up it circles wide, instead of
+ round ground that can lie kilometres ahead. The default value is 0, which turns round the
+ point between the fingers.
+ */
+@property (nonatomic) CGFloat rotationPivotReach;
+
+/**
  A Boolean value that determines whether the user will receive haptic feedback
  for certain interactions with the map.
 
