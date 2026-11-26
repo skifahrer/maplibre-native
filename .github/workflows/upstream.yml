@@ -90,12 +90,19 @@ jobs:
             git checkout -q -B "$sync" origin/master
           else
             git checkout -q -B "$sync" "$old"
+            # 187: one holding only its booking takes master first, or its old master conflicts
+            if git diff --quiet "$(git merge-base "$old" origin/master)" "$old"; then
+              git merge -q --no-edit -m "Merge master into $sync" origin/master
+            fi
           fi
 
           # 90: kept on the branch, so a conflict resolved there by hand stays resolved
           conflict=""
           for branch in $BRANCHES; do
-            if ! git merge -q --no-edit -m "Merge upstream $branch into $sync" "refs/upstream/$branch"; then
+            if ! git merge -q --no-edit -m "Merge upstream $branch into $sync" "refs/upstream/$branch" > /dev/null; then
+              # 187: what to merge by hand, on the run's page
+              { echo "### $branch conflicts in"; git diff --name-only --diff-filter=U | sed 's/^/- /'; } \
+                >> "$GITHUB_STEP_SUMMARY"
               git merge --abort
               conflict="upstream's $branch conflicts with $sync"
               break
