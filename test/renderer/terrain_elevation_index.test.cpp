@@ -647,8 +647,9 @@ TEST(TerrainElevationIndex, QueryingFeaturesPicksTheSlopeUnderThePixel) {
     const ScreenCoordinate onSurface = test.map.pixelForLatLngOnTerrain(patch);
     const ScreenCoordinate atSeaLevel = test.map.pixelForLatLng(patch);
     const ScreenCoordinate atCentreHeight = test.map.pixelForLatLng(patch, *centreHeight);
-    // Each candidate pixel is further from the next than the patch is wide
-    ASSERT_GT(std::hypot(onSurface.x - atSeaLevel.x, onSurface.y - atSeaLevel.y), 20.0);
+    // Each candidate pixel is further from the next than the patch, about 3 px, is wide
+    // 173: heights scale at the centre's latitude (#5045), which brought this under 20 px
+    ASSERT_GT(std::hypot(onSurface.x - atSeaLevel.x, onSurface.y - atSeaLevel.y), 10.0);
     ASSERT_GT(std::hypot(onSurface.x - atCentreHeight.x, onSurface.y - atCentreHeight.y), 10.0);
 
     const RenderedQueryOptions options{std::vector<std::string>{"patch"}};
