@@ -987,9 +987,7 @@ TEST(TileCover, GroundNearerThanTheCentreDrawsFiner) {
 
     const auto tiles = util::tileCover(params, 12, zoomRange);
     ASSERT_GT(transform.getState().getPitch(), util::deg2rad(78.0));
-    const auto finer = std::count_if(tiles.begin(), tiles.end(), [](const auto& id) {
-        return id.canonical.z > 12;
-    });
+    const auto finer = std::count_if(tiles.begin(), tiles.end(), [](const auto& id) { return id.canonical.z > 12; });
     EXPECT_GT(finer, 0);
     EXPECT_LT(tiles.size(), 200u);
 }
