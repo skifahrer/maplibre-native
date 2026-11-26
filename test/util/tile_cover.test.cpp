@@ -987,9 +987,7 @@ TEST(TileCover, GroundNearerThanTheCentreDrawsFiner) {
 
     const auto tiles = util::tileCover(params, 12, zoomRange);
     ASSERT_GT(transform.getState().getPitch(), util::deg2rad(78.0));
-    const auto finer = std::count_if(tiles.begin(), tiles.end(), [](const auto& id) {
-        return id.canonical.z > 12;
-    });
+    const auto finer = std::count_if(tiles.begin(), tiles.end(), [](const auto& id) { return id.canonical.z > 12; });
     EXPECT_GT(finer, 0);
     EXPECT_LT(tiles.size(), 200u);
 }
@@ -1196,19 +1194,21 @@ TEST(TileCover, MergeFarthestTilesGrowsWithTheCoverNotItsSquare) {
     // 159: each merge walked the whole set, so a 3D cover held a frame for 0.4 s; four times the
     // tiles took eleven to fourteen times as long. Without the walk it takes about five.
     const std::array<double, 2> origin{{30000.5 / 65536.0, 20000.5 / 65536.0}};
-    const auto timed = [&](uint32_t side) {
-        const auto tiles = squareOfTiles(side);
-        double best = std::numeric_limits<double>::infinity();
-        for (int attempt = 0; attempt < 3; ++attempt) {
-            auto merged = tiles;
-            const auto start = std::chrono::steady_clock::now();
-            util::mergeFarthestTiles(merged, tiles.size() / 16, origin, 0);
-            best = std::min(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
-        }
-        return best;
+    const auto timed = [&](const std::vector<OverscaledTileID>& tiles) {
+        auto merged = tiles;
+        const auto start = std::chrono::steady_clock::now();
+        util::mergeFarthestTiles(merged, tiles.size() / 16, origin, 0);
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     };
-    const double small = timed(128);
-    const double large = timed(256);
+    // 193: a busy runner slowed one size alone to 8.6; taken in turns, both see the same load
+    const auto smallTiles = squareOfTiles(128);
+    const auto largeTiles = squareOfTiles(256);
+    double small = std::numeric_limits<double>::infinity();
+    double large = std::numeric_limits<double>::infinity();
+    for (int attempt = 0; attempt < 9; ++attempt) {
+        small = std::min(small, timed(smallTiles));
+        large = std::min(large, timed(largeTiles));
+    }
     EXPECT_LT(large / small, 8.0) << "128² tiles " << small << " s, 256² tiles " << large << " s";
 }
 
