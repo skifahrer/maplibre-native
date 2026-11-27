@@ -1881,8 +1881,7 @@ struct EyeLeavesTheMountain {
     // for the rest of the steps. `steps` is still the longest it runs.
     void renderUntilQuiet(int steps, int quietSteps = 100) {
         const auto read = [&] {
-            return std::array<double, 3>{
-                centerAltitude(), eyeAltitude(), map.getCameraOptions().zoom.value_or(0.0)};
+            return std::array<double, 3>{centerAltitude(), eyeAltitude(), map.getCameraOptions().zoom.value_or(0.0)};
         };
         const auto same = [](const std::array<double, 3>& a, const std::array<double, 3>& b) {
             for (size_t i = 0; i < a.size(); ++i) {
@@ -2113,8 +2112,7 @@ TEST(TerrainDEMTextures, ATextureIsMadeOnlyForTilesRelatedToTheMeshTileSet) {
     // 137 Here the DEM loads the mesh's own cover, merged to reach the horizon, so every tile it
     // holds is related to the mesh: what is left to hold is one texture a tile.
     EXPECT_GT(stats.numDEMTexturesCreated, 0) << "the mesh tiles have no DEM texture";
-    EXPECT_LE(stats.numDEMTexturesCreated, static_cast<int>(demTiles.size()))
-        << "a texture was made twice for a tile";
+    EXPECT_LE(stats.numDEMTexturesCreated, static_cast<int>(demTiles.size())) << "a texture was made twice for a tile";
 }
 
 // A tile's edge vertices read the DEM's 2 px border, which the neighbouring tile backfills when it
@@ -2274,4 +2272,84 @@ TEST(TerrainDrape, AnEmptiedSourceIsCleared) {
 
     test.setArea(noFeaturesGeoJSON);
     EXPECT_FALSE(test.fillAtCentre());
+}
+
+namespace {
+
+const char* hillshadeTerrainStyle = R"STYLE({
+  "version": 8,
+  "sources": {
+    "dem": {
+      "type": "raster-dem",
+      "tiles": ["http://example.com/{z}-{x}-{y}.png"],
+      "encoding": "mapbox",
+      "maxzoom": 2,
+      "tileSize": 64
+    }
+  },
+  "terrain": {"source": "dem", "exaggeration": 1.0},
+  "layers": [{"id": "shade", "type": "hillshade", "source": "dem"}]
+})STYLE";
+
+const char* noTerrainStyle = R"STYLE({
+  "version": 8,
+  "sources": {
+    "dem": {
+      "type": "raster-dem",
+      "tiles": ["http://example.com/{z}-{x}-{y}.png"],
+      "encoding": "mapbox",
+      "maxzoom": 2,
+      "tileSize": 64
+    }
+  },
+  "layers": []
+})STYLE";
+
+gfx::RenderingStats renderFrames(TerrainCameraTest& test, int frames) {
+    gfx::RenderingStats stats;
+    for (int i = 0; i < frames; ++i) {
+        test.loop.runOnce();
+        stats = test.frontend.render(test.map).stats;
+    }
+    return stats;
+}
+
+} // namespace
+
+// 197 a drape target is counted when its tile enters the cover and again when it leaves
+TEST(TerrainCounters, DrapeTargetsAreMadeAndFreedWithTheCover) {
+    TerrainCameraTest test;
+    const auto shown = renderFrames(test, 8);
+    ASSERT_GT(shown.numDrapeTargetsMade, 0) << "no drape target was made";
+    EXPECT_EQ(shown.numDrapeTargetsFreed, 0) << "a still cover freed a target";
+
+    test.map.getStyle().loadJSON(noTerrainStyle);
+    const auto gone = renderFrames(test, 4);
+    EXPECT_EQ(gone.numDrapeTargetsFreed, shown.numDrapeTargetsMade) << "terrain off keeps targets";
+}
+
+// 197 a frame adds the surface tiles times one mesh, and a depth pass that again
+TEST(TerrainCounters, TerrainVerticesFollowTheTilesDrawn) {
+    TerrainCameraTest test;
+    const auto before = renderFrames(test, 8);
+    ASSERT_GT(before.numTerrainTiles, 0) << "no terrain tile was drawn";
+    ASSERT_GT(before.numTerrainVertices, 0) << "terrain drew no vertices";
+
+    const auto after = renderFrames(test, 1);
+    const int64_t added = after.numTerrainVertices - before.numTerrainVertices;
+    const int64_t passes = 1 + (after.numDepthPasses - before.numDepthPasses);
+    ASSERT_GT(added, 0) << "a frame drew no terrain vertices";
+    EXPECT_EQ(added % (static_cast<int64_t>(after.numTerrainTiles) * passes), 0)
+        << "the vertices are not whole meshes per tile and pass";
+}
+
+// 197 a hillshade tile's slopes are prepared once, so still frames prepare none
+TEST(TerrainCounters, HillshadePreparesOncePerTile) {
+    TerrainCameraTest test;
+    test.map.getStyle().loadJSON(hillshadeTerrainStyle);
+    const auto settled = renderFrames(test, 12);
+    ASSERT_GT(settled.numHillshadePrepares, 0) << "no hillshade prepare pass was counted";
+
+    const auto still = renderFrames(test, 4);
+    EXPECT_EQ(still.numHillshadePrepares, settled.numHillshadePrepares) << "still frames prepared again";
 }

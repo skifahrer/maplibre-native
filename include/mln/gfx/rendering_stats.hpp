@@ -100,6 +100,14 @@ struct RenderingStats {
     /// misses); panning a static terrain scene should keep this at 0
     int numDrapeTargetsRendered = 0;
 
+    /// 197 Drape targets made, and freed as their tile left the cover or resized; totals
+    int numDrapeTargetsMade = 0;
+    int numDrapeTargetsFreed = 0;
+    /// 197 Hillshade prepare passes drawn, one DEM tile's slopes each; a total
+    int numHillshadePrepares = 0;
+    /// 197 Terrain mesh vertices the surface and depth passes drew; a total
+    int64_t numTerrainVertices = 0;
+
     /// Number of terrain drape targets that ran the full per-target coverage scan
     /// this frame (i.e. did not hit the global-signature fast path). Should be ~0
     /// on a static scene; if it stays high, the short-circuit is not engaging

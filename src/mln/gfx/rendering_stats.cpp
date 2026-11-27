@@ -67,6 +67,10 @@ RenderingStats& RenderingStats::operator+=(const RenderingStats& r) {
     stencilClears += r.stencilClears;
     stencilUpdates += r.stencilUpdates;
     numDrapeTargetsRendered += r.numDrapeTargetsRendered;
+    numDrapeTargetsMade += r.numDrapeTargetsMade;
+    numDrapeTargetsFreed += r.numDrapeTargetsFreed;
+    numHillshadePrepares += r.numHillshadePrepares;
+    numTerrainVertices += r.numTerrainVertices;
     numDrapeCoverageScans += r.numDrapeCoverageScans;
     numDrapeMasksDrawn += r.numDrapeMasksDrawn;
     numDrapeMasksSkipped += r.numDrapeMasksSkipped;
@@ -134,6 +138,10 @@ std::string RenderingStats::toString(std::string_view sep) const {
     optionalStatLine(ss, stencilClears, "stencilClears", sep);
     optionalStatLine(ss, stencilUpdates, "stencilUpdates", sep);
     optionalStatLine(ss, numDrapeTargetsRendered, "numDrapeTargetsRendered", sep);
+    optionalStatLine(ss, numDrapeTargetsMade, "numDrapeTargetsMade", sep);
+    optionalStatLine(ss, numDrapeTargetsFreed, "numDrapeTargetsFreed", sep);
+    optionalStatLine(ss, numHillshadePrepares, "numHillshadePrepares", sep);
+    optionalStatLine(ss, numTerrainVertices, "numTerrainVertices", sep);
     optionalStatLine(ss, numDrapeCoverageScans, "numDrapeCoverageScans", sep);
     optionalStatLine(ss, numDrapeMasksDrawn, "numDrapeMasksDrawn", sep);
     optionalStatLine(ss, numDrapeMasksSkipped, "numDrapeMasksSkipped", sep);

@@ -87,6 +87,11 @@
   _memUniformBuffers = stats.memUniformBuffers;
   _stencilClears = stats.stencilClears;
   _stencilUpdates = stats.stencilUpdates;
+  _numDrapeTargetsRendered = stats.numDrapeTargetsRendered;
+  _numDrapeTargetsMade = stats.numDrapeTargetsMade;
+  _numDrapeTargetsFreed = stats.numDrapeTargetsFreed;
+  _numHillshadePrepares = stats.numHillshadePrepares;
+  _numTerrainVertices = stats.numTerrainVertices;
   _numDrapeTargetsDeferred = stats.numDrapeTargetsDeferred;
   _numNewTileBuildsDeferred = stats.numNewTileBuildsDeferred;
   _numTerrainCoverPendingFrames = stats.numTerrainCoverPendingFrames;
