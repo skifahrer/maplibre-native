@@ -110,8 +110,7 @@ TEST(TerrainMeshCover, OverTheBudgetTheFarTilesMergeIntoTheirParents) {
     auto tiles = overscaled(wholeZ2());
     util::mergeFarthestTiles(tiles, 7, {{0.1, 0.1}}, 0);
     const std::set<OverscaledTileID> merged(tiles.begin(), tiles.end());
-    const std::set<OverscaledTileID> expected{
-        z2o(0, 0), z2o(1, 0), z2o(0, 1), z2o(1, 1), z1(1, 0), z1(0, 1), z1(1, 1)};
+    const std::set<OverscaledTileID> expected{z2o(0, 0), z2o(1, 0), z2o(0, 1), z2o(1, 1), z1(1, 0), z1(0, 1), z1(1, 1)};
     EXPECT_EQ(expected, merged);
 }
 
@@ -507,8 +506,8 @@ void mixedCover(const CanonicalTileID& tile,
                 std::mt19937& random,
                 std::set<UnwrappedTileID>& out) {
     const double side = 1.0 / (1 << tile.z);
-    const double gap = std::max(
-        0.0, std::hypot((tile.x + 0.5) * side - focus[0], (tile.y + 0.5) * side - focus[1]) - side);
+    const double gap = std::max(0.0,
+                                std::hypot((tile.x + 0.5) * side - focus[0], (tile.y + 0.5) * side - focus[1]) - side);
     const int wanted = std::max(2, static_cast<int>(deepest - std::log2(1 + gap * 64)));
     if (tile.z >= wanted) {
         if (random() % 7 != 0) out.emplace(0, tile);
@@ -746,7 +745,6 @@ TEST(TerrainMeshCover, ARidgeHidesOnlyTheWayItLies) {
     EXPECT_TRUE(hidden(cover, 1600, {{z14(1, 0), {2000, 2200}}, {z14(0, -3), {1000, 1500}}}).empty());
 }
 
-
 // 136 a tile spanning a valley and a ridge hides by its ridge, not by its valley floor
 TEST(TerrainMeshCover, ARidgeAcrossATilesFarSideHidesTheGroundBehindIt) {
     const std::set<UnwrappedTileID> cover{z14(0, -1), z14(0, -3)};
@@ -787,9 +785,8 @@ TEST(TerrainMeshCover, FineGroundNearbyLeavesRoomForTheFarSlopes) {
     const std::array<double, 2> origin{{0.5 / 4096, 0.5 / 4096}};
     util::mergeFarthestTiles(tiles, 24, origin, 0);
     EXPECT_LE(tiles.size(), 24u);
-    const bool farCovered = std::any_of(tiles.begin(), tiles.end(), [&](const OverscaledTileID& id) {
-        return id == far || far.isChildOf(id);
-    });
+    const bool farCovered = std::any_of(
+        tiles.begin(), tiles.end(), [&](const OverscaledTileID& id) { return id == far || far.isChildOf(id); });
     EXPECT_TRUE(farCovered) << "the far slopes were dropped";
     const OverscaledTileID atOrigin{12, 0, CanonicalTileID(12, 0, 0)};
     EXPECT_NE(std::find(tiles.begin(), tiles.end(), atOrigin), tiles.end()) << "the ground underfoot coarsened";
@@ -886,9 +883,19 @@ TEST(TerrainMeshCover, AViewOfOneZoomThatEndsOnTheGroundMayHoldTwiceTheCap) {
 // 181 Riki Maps TestFlight 1150: merging the farthest tile made a parent that took the fine
 // ground nearest the camera with it, nine tiles under the cap, and a pan flipped it each frame
 TEST(TerrainMeshCover, AMergeNeverTakesGroundFinerThanItsChildren) {
-    const auto at = [](uint8_t z, uint32_t x, uint32_t y) { return OverscaledTileID{z, 0, CanonicalTileID(z, x, y)}; };
-    std::vector<OverscaledTileID> tiles{at(2, 1, 0), at(2, 0, 1), at(2, 1, 1), at(3, 1, 0), at(3, 0, 1),
-                                        at(3, 1, 1), at(4, 0, 0), at(4, 1, 0), at(4, 0, 1), at(4, 1, 1)};
+    const auto at = [](uint8_t z, uint32_t x, uint32_t y) {
+        return OverscaledTileID{z, 0, CanonicalTileID(z, x, y)};
+    };
+    std::vector<OverscaledTileID> tiles{at(2, 1, 0),
+                                        at(2, 0, 1),
+                                        at(2, 1, 1),
+                                        at(3, 1, 0),
+                                        at(3, 0, 1),
+                                        at(3, 1, 1),
+                                        at(4, 0, 0),
+                                        at(4, 1, 0),
+                                        at(4, 0, 1),
+                                        at(4, 1, 1)};
     util::mergeFarthestTiles(tiles, 9, {{-1.0, -1.0}}, 0);
     const std::set<OverscaledTileID> merged(tiles.begin(), tiles.end());
     const std::set<OverscaledTileID> expected{
