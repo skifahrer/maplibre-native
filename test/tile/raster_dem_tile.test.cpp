@@ -1,5 +1,7 @@
 #include <mln/test/util.hpp>
 #include <algorithm>
+#include <chrono>
+#include <thread>
 #include <mln/test/fake_file_source.hpp>
 #include <mln/tile/raster_dem_tile.hpp>
 #include <mln/tile/raster_tile.hpp>
@@ -252,18 +254,38 @@ TEST(RasterDEMTile, TerrainBackfillWithoutATargetPreparesAfresh) {
     EXPECT_FALSE(tile.getBucket()->borderChanged);
 }
 
+namespace {
+class ErrorRecorder : public TileObserver {
+public:
+    std::string error;
+    void onTileError(Tile&, std::exception_ptr err) override {
+        try {
+            std::rethrow_exception(err);
+        } catch (const std::exception& e) {
+            error = e.what();
+        }
+    }
+};
+} // namespace
+
 // 196 the worker makes the slopes with the bucket, so a new tile costs the frame no prepare pass
 TEST(RasterDEMTile, TheWorkerMakesTheSlopes) {
     RasterDEMTileTest test;
     auto fileSource = std::static_pointer_cast<FakeFileSource>(test.fileSource);
     RasterDEMTile tile(OverscaledTileID(3, 2, 1), "testSource", test.tileParameters, test.tileset);
+    ErrorRecorder errors;
+    tile.setObserver(&errors);
     tile.setNecessity(TileNecessity::Required);
     Response response;
     response.data = std::make_shared<std::string>(encodePNG(PremultipliedImage({16, 16})));
     ASSERT_TRUE(fileSource->respond(Resource::Tile, response));
-    for (int turn = 0; turn < 100 && !tile.isLoaded(); turn++) {
+    // the parse runs on a worker thread and answers through the loop, which runOnce does not wait for
+    const auto giveUp = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!tile.getBucket() && errors.error.empty() && std::chrono::steady_clock::now() < giveUp) {
         test.loop.runOnce();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+    ASSERT_EQ(errors.error, "");
     ASSERT_NE(tile.getBucket(), nullptr);
     ASSERT_TRUE(tile.getBucket()->slopes);
     EXPECT_EQ(tile.getBucket()->slopes->size, Size(18, 18));
