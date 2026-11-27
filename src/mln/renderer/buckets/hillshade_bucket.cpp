@@ -1,6 +1,7 @@
 #include <mln/renderer/buckets/hillshade_bucket.hpp>
 #include <mln/renderer/layers/render_hillshade_layer.hpp>
 #include <mln/gfx/context.hpp>
+#include <mln/geometry/hillshade_slopes.hpp>
 
 namespace mln {
 
@@ -22,6 +23,17 @@ const DEMData& HillshadeBucket::getDEMData() const {
 
 DEMData& HillshadeBucket::getDEMData() {
     return demdata;
+}
+
+void HillshadeBucket::makeSlopes(uint8_t zoom) {
+    slopesZoom = zoom;
+    slopes = std::make_shared<PremultipliedImage>(HillshadeSlopes::make(demdata, zoom));
+}
+
+void HillshadeBucket::remakeSlopeEdges() {
+    if (!slopes) return;
+    HillshadeSlopes::remakeEdges(*slopes, demdata, slopesZoom);
+    slopesChanged = true;
 }
 
 void HillshadeBucket::upload([[maybe_unused]] gfx::UploadPass& uploadPass) {
