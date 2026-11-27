@@ -180,19 +180,12 @@ int frameBuffersAfterSettling(const char* layerType, const CameraOptions& camera
 
 } // namespace
 
-// A tile's prepare target (and its frame buffer and DEM texture) is released once the tile has left the
-// cover: the layer tells the renderer to drop it. Otherwise the renderer keeps every target the layer ever
-// made, long after the tile's bucket is gone, and a long pan runs the device out of memory.
-// Two places do this release (the layer's request to the renderer, and the renderer's own sweep of targets
-// only its list still holds), so the test fails only when both are broken.
-TEST(HillshadeLayer, PrepareTargetsOfTilesThatLeftTheCoverAreReleased) {
+// 196 the slopes come from the tile worker, so the layer holds no prepare target or frame buffer of
+// its own, where it settled or after a visit elsewhere: no more than a color relief layer holds
+TEST(HillshadeLayer, HoldsNoPrepareTargets) {
     const int colorReliefHere = frameBuffersAfterSettling("color-relief", secondView, nullptr);
-    const int hillshadeHere = frameBuffersAfterSettling("hillshade", secondView, nullptr);
-    // The test only means something if the layer holds targets at all
-    ASSERT_GT(hillshadeHere, colorReliefHere);
-
-    // After a visit to another place, the layer holds what a layer that started here holds.
-    EXPECT_LE(frameBuffersAfterSettling("hillshade", secondView, &firstView), hillshadeHere);
+    EXPECT_EQ(frameBuffersAfterSettling("hillshade", secondView, nullptr), colorReliefHere);
+    EXPECT_EQ(frameBuffersAfterSettling("hillshade", secondView, &firstView), colorReliefHere);
 }
 
 // The elevation tile of a color relief tile only has to be uploaded once.

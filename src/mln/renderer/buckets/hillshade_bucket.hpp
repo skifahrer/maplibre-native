@@ -47,6 +47,15 @@ public:
     /// hillshade prepare texture, which needs NEAREST filtering where this needs Linear.
     std::shared_ptr<gfx::Texture2D> colorReliefDEMTexture;
 
+    /// The slopes the hillshade draws from, made on the tile worker; null where they were not.
+    std::shared_ptr<PremultipliedImage> slopes;
+    std::shared_ptr<gfx::Texture2D> slopesTexture;
+    /// A backfill remade the slopes' edges since `slopesTexture` was filled.
+    bool slopesChanged = false;
+
+    void makeSlopes(uint8_t zoom);
+    void remakeSlopeEdges();
+
     TileMask mask{{0, 0, 0}};
 
     const DEMData& getDEMData() const;
@@ -74,6 +83,7 @@ public:
 private:
     DEMData demdata;
     bool prepared = false;
+    uint8_t slopesZoom = 0;
 };
 
 } // namespace mln
