@@ -1930,7 +1930,12 @@ void RenderTerrain::generateMesh(gfx::Context& /*context*/) {
                        .vertexCount = vertices.size() / 4,
                        .indexCount = indices.size(),
                        .vertices = std::move(vertices),
-                       .indices = std::move(indices)};
+                       .indices = std::make_shared<gfx::IndexVectorBase>(std::move(indices))};
+    // The topology never changes. Drop its CPU copy after the first GPU upload.
+    // The uploaded buffer belongs to that renderer's context: this mesh must be dropped
+    // with the context, not reused after context replacement. RenderOrchestrator owns
+    // RenderTerrain within Renderer::Impl; context replacement recreates the renderer.
+    mesh->indices->release();
 }
 
 std::shared_ptr<gfx::Texture2D> RenderTerrain::createDEMTexture(gfx::Context& context, const DEMData& demData) {
@@ -1971,7 +1976,7 @@ std::unique_ptr<gfx::Drawable> RenderTerrain::createDrawableForTile(gfx::Context
     // Ensure mesh is generated
     const auto& terrainMesh = getMesh(context);
 
-    if (terrainMesh.vertices.empty() || terrainMesh.indices.empty()) {
+    if (terrainMesh.vertices.empty() || terrainMesh.indexCount == 0) {
         Log::Error(Event::Render, "Terrain mesh is empty, cannot create drawable");
         return nullptr;
     }
@@ -2041,8 +2046,7 @@ std::unique_ptr<gfx::Drawable> RenderTerrain::createDrawableForTile(gfx::Context
                           terrainMesh.vertexCount, // vertex count
                           terrainMesh.indexCount); // index count
 
-    std::vector<uint16_t> indexData = terrainMesh.indices;
-    builder->setSegments(gfx::Triangles(), std::move(indexData), segments.data(), segments.size());
+    builder->setSegments(gfx::Triangles(), terrainMesh.indices, segments.data(), segments.size());
 
     // Set the DEM texture
     if (demTexture) {
@@ -2148,7 +2152,7 @@ void RenderTerrain::rebuildInstancedDepthDrawable(gfx::Context& context, gfx::Sh
     }
 
     const auto& depthMeshRef = getDepthMesh(context);
-    if (depthMeshRef.vertices.empty() || depthMeshRef.indices.empty()) {
+    if (depthMeshRef.vertices.empty() || depthMeshRef.indexCount == 0) {
         return;
     }
     auto shader = context.getGenericShader(shaders, "TerrainDepthShader");
@@ -2172,8 +2176,7 @@ void RenderTerrain::rebuildInstancedDepthDrawable(gfx::Context& context, gfx::Sh
 
     SegmentVector segs;
     segs.emplace_back(0, 0, depthMeshRef.vertexCount, depthMeshRef.indexCount);
-    std::vector<uint16_t> idx = depthMeshRef.indices;
-    builder->setSegments(gfx::Triangles(), std::move(idx), segs.data(), segs.size());
+    builder->setSegments(gfx::Triangles(), depthMeshRef.indices, segs.data(), segs.size());
 
     // Per-instance index attribute (divisor 1). Its element count is the instance count the
     // GL backend draws (drawInstanced uses instanceAttrs->getMinCount()).
