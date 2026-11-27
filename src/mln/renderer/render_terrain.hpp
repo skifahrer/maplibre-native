@@ -476,9 +476,14 @@ public:
 
     const TerrainMesh& getMesh(gfx::Context& context);
 
-    /// Mesh used by the instanced depth pass. Aliased to the full terrain mesh for now;
-    /// the coarser depth-only mesh optimization from the source PR can be pulled separately.
+    /// The mesh the depth pass draws, coarser than the surface's: it only decides what hides labels.
     const TerrainMesh& getDepthMesh(gfx::Context& context);
+
+    /// Grid cells per side of the depth pass's mesh.
+    static constexpr size_t DEPTH_MESH_SIZE = 32;
+
+    /// A tile's grid of `gridSize` cells per side, with the skirts `skirts` asks for.
+    static TerrainMesh buildMesh(size_t gridSize, TerrainSkirtLength skirts);
 
     /**
      * @brief Get the layer group for terrain drawables
@@ -487,6 +492,8 @@ public:
 
     /// 197 The vertices one draw of every surface tile takes: tiles times the mesh.
     int64_t surfaceVertices() const;
+    /// 197 The vertices the depth pass draws: the surface tiles times the depth mesh.
+    int64_t depthVertices() const;
 
     /**
      * @brief Render the terrain depth pass: the terrain meshes drawn with the
@@ -548,6 +555,7 @@ private:
 
     // Terrain mesh (shared across all tiles)
     std::optional<TerrainMesh> mesh;
+    std::optional<TerrainMesh> depthMesh;
     // The skirt setting the cached mesh was built with. update() drops the mesh and every
     // tile drawable built from it when the map's setting no longer matches.
     TerrainSkirtLength meshSkirtLength = TerrainSkirtLength::Auto;

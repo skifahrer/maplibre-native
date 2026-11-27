@@ -2328,7 +2328,7 @@ TEST(TerrainCounters, DrapeTargetsAreMadeAndFreedWithTheCover) {
     EXPECT_EQ(gone.numDrapeTargetsFreed, shown.numDrapeTargetsMade) << "terrain off keeps targets";
 }
 
-// 197 a frame adds the surface tiles times one mesh, and a depth pass that again
+// 197 a frame adds a mesh per surface tile, and a depth pass a depth mesh per tile
 TEST(TerrainCounters, TerrainVerticesFollowTheTilesDrawn) {
     TerrainCameraTest test;
     const auto before = renderFrames(test, 8);
@@ -2337,10 +2337,8 @@ TEST(TerrainCounters, TerrainVerticesFollowTheTilesDrawn) {
 
     const auto after = renderFrames(test, 1);
     const int64_t added = after.numTerrainVertices - before.numTerrainVertices;
-    const int64_t passes = 1 + (after.numDepthPasses - before.numDepthPasses);
     ASSERT_GT(added, 0) << "a frame drew no terrain vertices";
-    EXPECT_EQ(added % (static_cast<int64_t>(after.numTerrainTiles) * passes), 0)
-        << "the vertices are not whole meshes per tile and pass";
+    EXPECT_EQ(added % after.numTerrainTiles, 0) << "the vertices are not whole meshes per tile";
 }
 
 // 197 a hillshade tile's slopes are prepared once, so still frames prepare none
