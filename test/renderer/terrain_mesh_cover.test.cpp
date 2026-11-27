@@ -807,7 +807,8 @@ protected:
 struct TestTerrainIndexBuffer : gfx::IndexBufferBase {};
 } // namespace
 
-TEST_F(TerrainMeshBuffers, SurfaceAndDepthTilesShareTheSameTopology) {
+// 199 3CA1 each pass's tiles share one topology; the depth pass's is the coarser grid
+TEST_F(TerrainMeshBuffers, EachPassesTilesShareOneTopology) {
     const auto& mesh = terrain.getMesh(context);
     ASSERT_TRUE(mesh.indices);
     EXPECT_TRUE(mesh.indices->isReleased());
@@ -817,14 +818,18 @@ TEST_F(TerrainMeshBuffers, SurfaceAndDepthTilesShareTheSameTopology) {
     for (const auto index : mesh.indices->vector()) {
         EXPECT_LT(index, mesh.vertexCount);
     }
+    const auto& depth = terrain.getDepthMesh(context);
+    EXPECT_EQ(depth.indexCount, 6u * (32u * 32u + 4u * 32u));
+    EXPECT_NE(depth.indices, mesh.indices);
     for (int tile = 0; tile < 64; ++tile) {
         EXPECT_EQ(mesh.indices, terrain.getMesh(context).indices);
-        EXPECT_EQ(mesh.indices, terrain.getDepthMesh(context).indices);
+        EXPECT_EQ(depth.indices, terrain.getDepthMesh(context).indices);
     }
 }
 
+// 199 3CA1 later depth tiles reuse the depth mesh's one upload once its CPU copy is freed
 TEST_F(TerrainMeshBuffers, LaterTilesReuseTheUploadAfterTheCpuCopyIsFreed) {
-    const auto indexes = terrain.getMesh(context).indices;
+    const auto indexes = terrain.getDepthMesh(context).indices;
     const auto count = indexes->elements();
     // Simulate the backend's first upload, which stores the GPU resource on the vector.
     auto buffer = std::make_unique<TestTerrainIndexBuffer>();
@@ -838,6 +843,29 @@ TEST_F(TerrainMeshBuffers, LaterTilesReuseTheUploadAfterTheCpuCopyIsFreed) {
     EXPECT_EQ(depth.indices->getBuffer(), uploaded);
     EXPECT_FALSE(depth.indices->getDirty());
     EXPECT_EQ(depth.indexCount, count);
+}
+
+// 199 3CA1 the depth pass's tile is a sixteenth of the surface's grid, skirts included
+TEST(TerrainMeshBuild, TheDepthGridIsASixteenthOfTheSurface) {
+    const auto surface = RenderTerrain::buildMesh(128, TerrainSkirtLength::Auto);
+    const auto depth = RenderTerrain::buildMesh(RenderTerrain::DEPTH_MESH_SIZE, TerrainSkirtLength::Auto);
+    EXPECT_EQ(surface.vertexCount, 129u * 129u + 6u * 129u);
+    EXPECT_EQ(depth.vertexCount, 33u * 33u + 6u * 33u);
+    EXPECT_LT(depth.vertexCount * 13, surface.vertexCount);
+    EXPECT_EQ(depth.indexCount, 6u * (32u * 32u + 4u * 32u));
+}
+
+// 199 3CA1 without skirts both grids are bare, and every corner of a tile is still on the grid
+TEST(TerrainMeshBuild, WithoutSkirtsTheGridIsBareAndReachesTheTileEdges) {
+    const auto bare = RenderTerrain::buildMesh(32, TerrainSkirtLength::None);
+    EXPECT_EQ(bare.vertexCount, 33u * 33u);
+    EXPECT_EQ(bare.indexCount, 6u * 32u * 32u);
+    const auto& v = bare.vertices;
+    EXPECT_EQ(v[0], 0);
+    EXPECT_EQ(v[1], 0);
+    const size_t last = (bare.vertexCount - 1) * 4;
+    EXPECT_EQ(v[last], util::EXTENT);
+    EXPECT_EQ(v[last + 1], util::EXTENT);
 }
 
 // The cap is for the far tiles a steep pitch or a wide field of view pulls in. A view with one

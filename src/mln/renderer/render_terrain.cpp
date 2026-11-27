@@ -921,6 +921,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
     if (updateParameters && updateParameters->terrainSkirtLength != meshSkirtLength) {
         meshSkirtLength = updateParameters->terrainSkirtLength;
         mesh.reset();
+        depthMesh.reset();
         if (layerGroup) {
             layerGroup->clearDrawables();
         }
@@ -1826,19 +1827,23 @@ const RenderTerrain::TerrainMesh& RenderTerrain::getMesh(gfx::Context& context) 
     return *mesh;
 }
 
-const RenderTerrain::TerrainMesh& RenderTerrain::getDepthMesh(gfx::Context& context) {
-    // The instanced depth pass reuses the full terrain mesh; the source PR's coarser
-    // depth-only mesh (getDepthMesh/buildMesh) is a separable optimization not pulled here.
-    return getMesh(context);
+const RenderTerrain::TerrainMesh& RenderTerrain::getDepthMesh(gfx::Context& /*context*/) {
+    if (!depthMesh) {
+        depthMesh = buildMesh(DEPTH_MESH_SIZE, meshSkirtLength);
+    }
+    return *depthMesh;
 }
 
 void RenderTerrain::generateMesh(gfx::Context& /*context*/) {
+    mesh = buildMesh(MESH_SIZE, meshSkirtLength);
+}
+
+RenderTerrain::TerrainMesh RenderTerrain::buildMesh(const size_t gridSize, const TerrainSkirtLength skirts) {
     // A regular grid mesh (reused for every tile, displaced by the DEM in the
     // vertex shader) plus a skirt: each tile edge is duplicated into a curtain
     // that the shader drops by u_ele_delta, hiding the cracks between neighbouring
     // tiles at different zoom levels. Ported from maplibre-gl-js Terrain
     // getTerrainMesh()/_buildSkirts(). TerrainSkirtLength::None builds the bare grid.
-    const size_t gridSize = MESH_SIZE;
     const size_t vps = gridSize + 1; // vertices per side
     const float step = static_cast<float>(util::EXTENT) / static_cast<float>(gridSize);
 
@@ -1877,7 +1882,7 @@ void RenderTerrain::generateMesh(gfx::Context& /*context*/) {
     }
 
     // Skirts are baked into the shared mesh; TerrainSkirtLength::None leaves the bare grid.
-    if (meshSkirtLength != TerrainSkirtLength::None) {
+    if (skirts != TerrainSkirtLength::None) {
         // Top/bottom skirt rows (reference the grid's top/bottom edge rows)
         const auto extent = static_cast<float>(util::EXTENT);
         const uint16_t offsetTop = static_cast<uint16_t>(vertices.size() / 4);
@@ -1933,17 +1938,18 @@ void RenderTerrain::generateMesh(gfx::Context& /*context*/) {
         }
     }
 
-    mesh = TerrainMesh{.vertexBuffer = nullptr, // created when building the drawable
-                       .indexBuffer = nullptr,  // created when building the drawable
-                       .vertexCount = vertices.size() / 4,
-                       .indexCount = indices.size(),
-                       .vertices = std::move(vertices),
-                       .indices = std::make_shared<gfx::IndexVectorBase>(std::move(indices))};
+    auto built = TerrainMesh{.vertexBuffer = nullptr, // created when building the drawable
+                             .indexBuffer = nullptr,  // created when building the drawable
+                             .vertexCount = vertices.size() / 4,
+                             .indexCount = indices.size(),
+                             .vertices = std::move(vertices),
+                             .indices = std::make_shared<gfx::IndexVectorBase>(std::move(indices))};
     // The topology never changes. Drop its CPU copy after the first GPU upload.
     // The uploaded buffer belongs to that renderer's context: this mesh must be dropped
     // with the context, not reused after context replacement. RenderOrchestrator owns
     // RenderTerrain within Renderer::Impl; context replacement recreates the renderer.
-    mesh->indices->release();
+    built.indices->release();
+    return built;
 }
 
 std::shared_ptr<gfx::Texture2D> RenderTerrain::createDEMTexture(gfx::Context& context, const DEMData& demData) {
@@ -1982,7 +1988,7 @@ std::unique_ptr<gfx::Drawable> RenderTerrain::createDrawableForTile(gfx::Context
                                                                     std::shared_ptr<gfx::Texture2D> mapTexture,
                                                                     bool depthPass) {
     // Ensure mesh is generated
-    const auto& terrainMesh = getMesh(context);
+    const auto& terrainMesh = depthPass ? getDepthMesh(context) : getMesh(context);
 
     if (terrainMesh.vertices.empty() || terrainMesh.indexCount == 0) {
         Log::Error(Event::Render, "Terrain mesh is empty, cannot create drawable");
