@@ -25,6 +25,7 @@ add_library(
     ${PROJECT_SOURCE_DIR}/test/renderer/fill_bucket.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/feature_tracking.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/hillshade_drawable_current.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/renderer/group_by_layout.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/hillshade_layer.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/image_manager.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/placement_pace.test.cpp
@@ -42,6 +43,7 @@ add_library(
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_elevation_index.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_first_frame.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_fill_pattern_drape.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/renderer/terrain_fill_outline_drape.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_pattern_crossfade.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_drape_resolution.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/terrain_drape_zoom_out.test.cpp
@@ -94,6 +96,7 @@ add_library(
     ${PROJECT_SOURCE_DIR}/test/style/conversion/property_value.test.cpp
     ${PROJECT_SOURCE_DIR}/test/style/conversion/source_options.test.cpp
     ${PROJECT_SOURCE_DIR}/test/style/conversion/stringify.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/style/conversion/terrain.test.cpp
     ${PROJECT_SOURCE_DIR}/test/style/conversion/tileset.test.cpp
     ${PROJECT_SOURCE_DIR}/test/style/expression/dependency.test.cpp
     ${PROJECT_SOURCE_DIR}/test/style/expression/expression.test.cpp
@@ -191,6 +194,7 @@ if(MLN_WITH_OPENGL)
             ${PROJECT_SOURCE_DIR}/test/gl/bucket.test.cpp
             ${PROJECT_SOURCE_DIR}/test/gl/enum.test.cpp
             ${PROJECT_SOURCE_DIR}/test/gl/context.test.cpp
+            ${PROJECT_SOURCE_DIR}/test/gl/drawable.test.cpp
             ${PROJECT_SOURCE_DIR}/test/gl/gl_functions.test.cpp
             ${PROJECT_SOURCE_DIR}/test/gl/object.test.cpp
             ${PROJECT_SOURCE_DIR}/test/gl/resource_pool.test.cpp
