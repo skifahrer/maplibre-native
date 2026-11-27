@@ -485,6 +485,12 @@ public:
     /// A tile's grid of `gridSize` cells per side, with the skirts `skirts` asks for.
     static TerrainMesh buildMesh(size_t gridSize, TerrainSkirtLength skirts);
 
+    /// The surface's grid of `gridSize` cells per side, one shared by every tile drawing it.
+    const TerrainMesh& getMesh(gfx::Context& context, size_t gridSize);
+
+    /// Cells per side for a tile `edge` points long on screen, now drawn with `current` (0: none).
+    static size_t meshGridFor(double edge, size_t current);
+
     /**
      * @brief Get the layer group for terrain drawables
      */
@@ -551,6 +557,9 @@ private:
     // Terrain mesh (shared across all tiles)
     std::optional<TerrainMesh> mesh;
     std::optional<TerrainMesh> depthMesh;
+    std::map<size_t, TerrainMesh> coarserMeshes;
+    // The grid each tile's drawable was built with
+    std::map<OverscaledTileID, size_t> boundGrids;
     // The skirt setting the cached mesh was built with. update() drops the mesh and every
     // tile drawable built from it when the map's setting no longer matches.
     TerrainSkirtLength meshSkirtLength = TerrainSkirtLength::Auto;
@@ -730,7 +739,8 @@ private:
                                                          const OverscaledTileID& tileID,
                                                          std::shared_ptr<gfx::Texture2D> demTexture,
                                                          std::shared_ptr<gfx::Texture2D> mapTexture,
-                                                         bool depthPass = false);
+                                                         bool depthPass = false,
+                                                         size_t gridSize = MESH_SIZE);
 };
 
 } // namespace mln
