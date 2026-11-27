@@ -9,13 +9,14 @@ final class RenderingStatsTimesTests: TerrainMapTestCase {
     private var counters: (made: Int32, freed: Int32, drapes: Int32, vertices: Int64) = (0, 0, 0, 0)
 
     func mapViewDidFinishRenderingFrame(_: MLNMapView, fullyRendered _: Bool,
-                                        renderingStats: MLNRenderingStats) {
+                                        renderingStats: MLNRenderingStats)
+    {
         frames.append((renderingStats.drawableWaitTime, renderingStats.gpuTime))
         counters = (renderingStats.numDrapeTargetsMade, renderingStats.numDrapeTargetsFreed,
                     renderingStats.numDrapeTargetsRendered, renderingStats.numTerrainVertices)
     }
 
-    // 142 after a few frames the GPU has a time, and neither is a second or more
+    /// 142 after a few frames the GPU has a time, and neither is a second or more
     func testFramesReportTheirWaitAndGpuTime() throws {
         try loadMap(terrain: false)
         for step in 0 ..< 12 {
@@ -33,7 +34,7 @@ final class RenderingStatsTimesTests: TerrainMapTestCase {
         }
     }
 
-    // 151 frames drawn back to back each bring a GPU time, not one held over many frames
+    /// 151 frames drawn back to back each bring a GPU time, not one held over many frames
     func testGpuTimeFollowsFramesDrawnBackToBack() throws {
         try loadMap()
         tilt(70)
@@ -51,7 +52,7 @@ final class RenderingStatsTimesTests: TerrainMapTestCase {
                              "the GPU time stayed one value over \(times.count - changes) frames")
     }
 
-    // 197 a tilted terrain map hands the app its drape targets, re-renders and vertices
+    /// 197 a tilted terrain map hands the app its drape targets, re-renders and vertices
     func testTerrainCountersReachTheApp() throws {
         try loadMap()
         tilt(60)
