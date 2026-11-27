@@ -142,6 +142,8 @@ MLN_CORE_SOURCE = [
     "src/mln/geometry/debug_font_data.hpp",
     "src/mln/geometry/dem_data.cpp",
     "src/mln/geometry/dem_data.hpp",
+    "src/mln/geometry/hillshade_slopes.cpp",
+    "src/mln/geometry/hillshade_slopes.hpp",
     "src/mln/geometry/feature_index.cpp",
     "src/mln/geometry/feature_index.hpp",
     "src/mln/geometry/line_atlas.cpp",
