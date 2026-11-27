@@ -176,6 +176,10 @@ bool RenderTerrain::takeExaggeration(const Immutable<style::Terrain::Impl>& chan
     if (changed->sourceID != impl->sourceID || changed->plane != impl->plane) {
         return false;
     }
+    // the ground stands higher or lower under a still camera: what hides labels moved
+    if (changed->exaggeration != impl->exaggeration) {
+        depthDirty = true;
+    }
     impl = changed;
     return true;
 }
