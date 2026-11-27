@@ -2341,13 +2341,11 @@ TEST(TerrainCounters, TerrainVerticesFollowTheTilesDrawn) {
     EXPECT_EQ(added % after.numTerrainTiles, 0) << "the vertices are not whole meshes per tile";
 }
 
-// 197 a hillshade tile's slopes are prepared once, so still frames prepare none
-TEST(TerrainCounters, HillshadePreparesOncePerTile) {
+// 197 the worker makes the slopes, so a hillshade over terrain draws no prepare pass
+TEST(TerrainCounters, HillshadeDrawsNoPreparePass) {
     TerrainCameraTest test;
     test.map.getStyle().loadJSON(hillshadeTerrainStyle);
     const auto settled = renderFrames(test, 12);
-    ASSERT_GT(settled.numHillshadePrepares, 0) << "no hillshade prepare pass was counted";
-
-    const auto still = renderFrames(test, 4);
-    EXPECT_EQ(still.numHillshadePrepares, settled.numHillshadePrepares) << "still frames prepared again";
+    ASSERT_GT(settled.numTerrainTiles, 0) << "no terrain tile was drawn";
+    EXPECT_EQ(settled.numHillshadePrepares, 0) << "the hillshade prepared its slopes on the GPU";
 }
