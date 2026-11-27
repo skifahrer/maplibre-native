@@ -52,14 +52,18 @@ TEST(HillshadeSlopes, CoversTheTileAndItsRing) {
 
 // 196 the prepare shader's numbers: Sobel sums scaled to world slope, east in red, south in green
 TEST(HillshadeSlopes, PlaneEncodesAsTheShaderDoes) {
-    const auto plane = [](uint32_t x, uint32_t y) { return 1000.0 + 3.0 * x + 5.0 * y; };
+    const auto plane = [](uint32_t x, uint32_t y) {
+        return 1000.0 + 3.0 * x + 5.0 * y;
+    };
     const DEMData dem(terrarium(4, plane), Tileset::RasterEncoding::Terrarium);
     EXPECT_TRUE(sameEverywhere(HillshadeSlopes::make(dem, 22), {168, 194, 255, 255}));
 }
 
 // 196 under z15 the shader steepens the slope, as it does here
 TEST(HillshadeSlopes, LowZoomsAreExaggerated) {
-    const auto plane = [](uint32_t x, uint32_t y) { return 1000.0 + 120.0 * x + 200.0 * y; };
+    const auto plane = [](uint32_t x, uint32_t y) {
+        return 1000.0 + 120.0 * x + 200.0 * y;
+    };
     const DEMData dem(terrarium(4, plane), Tileset::RasterEncoding::Terrarium);
     EXPECT_TRUE(sameEverywhere(HillshadeSlopes::make(dem, 12), {130, 132, 255, 255}));
 }
