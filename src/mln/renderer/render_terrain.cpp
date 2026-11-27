@@ -105,8 +105,8 @@ DEMSubTileOffset demSubTileOffset(const CanonicalTileID& child, const CanonicalT
 /// Pixel i holds the height of its cell, centred at (i + 0.5) / dim, where hillshade and
 /// color-relief draw it (gl-js #8420), so a point maps to pixel coordinate uv * dim - 0.5.
 /// Within half a pixel of the tile's edge that reaches into the backfilled border.
-float sampleDEM(const DEMData& demData, const DEMSubTileOffset& off, float x, float y,
-                std::optional<float> plane = std::nullopt) {
+float sampleDEM(
+    const DEMData& demData, const DEMSubTileOffset& off, float x, float y, std::optional<float> plane = std::nullopt) {
     const float xInDem = (off.dx * util::EXTENT + x) / off.scale;
     const float yInDem = (off.dy * util::EXTENT + y) / off.scale;
     const auto dim = static_cast<float>(demData.dim);
@@ -201,8 +201,7 @@ std::set<UnwrappedTileID> dilatedCover(const util::TileCoverParameters& coverPar
     // RenderTerrain::dilateCover leaves out ground a tile of another zoom already covers.
     std::set<UnwrappedTileID> neighbours;
     const auto ring = RenderTerrain::dilateCover(out);
-    std::set_difference(
-        ring.begin(), ring.end(), out.begin(), out.end(), std::inserter(neighbours, neighbours.end()));
+    std::set_difference(ring.begin(), ring.end(), out.begin(), out.end(), std::inserter(neighbours, neighbours.end()));
     if (!neighbours.empty()) {
         const auto kept = util::frustumCull(coverParams, neighbours);
         out.insert(kept.begin(), kept.end());
@@ -278,13 +277,14 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     const auto viewCover = [&]() {
         std::set<UnwrappedTileID> cover;
         const double zoom = util::clamp<double>(state.getZoom() + zoomShift, state.getMinZoom(), state.getMaxZoom());
-        const int32_t overscaledZoom = util::coveringZoomLevel(zoom, style::SourceType::RasterDEM, terrainCoverTileSize);
+        const int32_t overscaledZoom = util::coveringZoomLevel(
+            zoom, style::SourceType::RasterDEM, terrainCoverTileSize);
         if (overscaledZoom < static_cast<int32_t>(zoomRange.min)) {
             return cover;
         }
         const int32_t idealZoom = std::min<int32_t>(zoomRange.max, overscaledZoom);
-        for (const auto& id : util::tileCover(
-                 walk, static_cast<uint8_t>(idealZoom), zoomRange, static_cast<uint8_t>(overscaledZoom))) {
+        for (const auto& id :
+             util::tileCover(walk, static_cast<uint8_t>(idealZoom), zoomRange, static_cast<uint8_t>(overscaledZoom))) {
             cover.insert(id.toUnwrapped());
         }
         return dilatedCover(coverParams, std::move(cover));
@@ -315,9 +315,8 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     if (demWithRanges) {
         if (const auto eye = state.getFreeCameraOptions().getLocation()) {
             const double latRad = util::deg2rad(eye->location.latitude());
-            const std::array<double, 2> at{
-                eye->location.longitude() / 360.0 + 0.5,
-                0.5 - std::log(std::tan(M_PI / 4.0 + latRad / 2.0)) / (2.0 * M_PI)};
+            const std::array<double, 2> at{eye->location.longitude() / 360.0 + 0.5,
+                                           0.5 - std::log(std::tan(M_PI / 4.0 + latRad / 2.0)) / (2.0 * M_PI)};
             const double metresPerUnit = util::M2PI * util::EARTH_RADIUS_M * std::cos(latRad);
             const double exaggeration = getExaggeration();
             const auto plane = getPlane();
@@ -355,8 +354,8 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     }
 
     // Whatever the merge could not fit (parents stop at the DEM's minzoom): keep those nearest the
-    // camera, drop the farthest (the horizon tiles a high tilt pulls in). Nearest the camera, not the map centre: at a steep tilt the centre is
-    // far ahead, and the tiles right under the camera - the bottom corners of the screen, the
+    // camera, drop the farthest (the horizon tiles a high tilt pulls in). Nearest the camera, not the map centre: at a
+    // steep tilt the centre is far ahead, and the tiles right under the camera - the bottom corners of the screen, the
     // biggest on it - would rank as far and be dropped, showing the skirts of the tiles behind
     // them as streaks. Per-mode cap (TerrainLoadBudget::maxMeshTiles): Quality keeps
     // a generous cap so terrain render distance stays long; Balanced/Performance trade distance
@@ -564,9 +563,10 @@ double RenderTerrain::screenEdge(const UnwrappedTileID& id, const TransformState
         const double w = std::max(clip[3], 1.0);
         return std::array<double, 2>{{(clip[0] / w + 1) / 2 * size.width, (1 - clip[1] / w) / 2 * size.height}};
     };
-    const std::array<std::array<double, 2>, 4> corners{
-        {onScreen(west, north), onScreen(west + side, north), onScreen(west + side, north + side),
-         onScreen(west, north + side)}};
+    const std::array<std::array<double, 2>, 4> corners{{onScreen(west, north),
+                                                        onScreen(west + side, north),
+                                                        onScreen(west + side, north + side),
+                                                        onScreen(west, north + side)}};
     double longest = 0.0;
     for (std::size_t i = 0; i < 4; ++i) {
         const auto& a = corners[i];
@@ -773,7 +773,9 @@ std::set<UnwrappedTileID> RenderTerrain::nearestMeshTiles(std::set<UnwrappedTile
     // distance is kept, so the ground is whole out to there and the cover grows outwards from
     // the camera. By centre, a big far tile could outrank smaller ones in front of it, which
     // left a hole with a ridge behind it.
-    const auto tileDist2 = [&](const UnwrappedTileID& id) { return nearestPointDist2(id, origin); };
+    const auto tileDist2 = [&](const UnwrappedTileID& id) {
+        return nearestPointDist2(id, origin);
+    };
 
     // Ties go by tile ID, so the same view keeps the same tiles from one call to the next.
     std::vector<UnwrappedTileID> sorted(tiles.begin(), tiles.end());
@@ -1598,10 +1600,12 @@ std::optional<RenderTerrain::SightGround> RenderTerrain::getSightGround(const Tr
     // The point of the line at `altitude`, which lies (altitude - centre)·tan(pitch) nearer the camera.
     const auto pointAt = [&](double altitude) {
         const double shift = (altitude - centreAltitude) * std::tan(pitch) / metresPerPixel;
-        return Projection::unproject(
-            {projected.x - shift * std::sin(bearing), projected.y + shift * std::cos(bearing)}, scale);
+        return Projection::unproject({projected.x - shift * std::sin(bearing), projected.y + shift * std::cos(bearing)},
+                                     scale);
     };
-    const auto above = [&](double altitude) { return altitude - elevationAt(pointAt(altitude), sampleZoom); };
+    const auto above = [&](double altitude) {
+        return altitude - elevationAt(pointAt(altitude), sampleZoom);
+    };
 
     // From just under the camera down to as far beyond the centre as the camera is before it.
     const double top = centreAltitude + 0.95 * sight * std::cos(pitch);
