@@ -492,6 +492,7 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
     // Render-once (hillshade prepare) target baked; skip it on subsequent frames.
     if (renderOnce) {
         renderedOnce = true;
+        context.renderingStats().numHillshadePrepares++;
     }
 
     // This target now holds valid content, so it may be deferred by the drape budget later.

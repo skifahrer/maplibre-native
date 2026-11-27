@@ -282,7 +282,8 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         for (const auto& id : demTileIDs) {
             texturePool.createRenderTarget(context, id, renderTreeParameters.backgroundColor, sides.at(id));
         }
-        texturePool.removeStaleRenderTargets(demTileIDs);
+        context.renderingStats().numDrapeTargetsFreed += static_cast<int>(
+            texturePool.removeStaleRenderTargets(demTileIDs));
         frameDrapeTargetCount = demTileIDs.size();
         // Hand the exact cover to RenderTerrain so its mesh matches this pool
         terrain->setFrameMeshCover(demTileIDs);
@@ -294,7 +295,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         drapeGrowthHeldBack = false;
         // The pool persists across frames, so release the drape targets when
         // terrain is disabled instead of holding their textures indefinitely
-        texturePool.removeStaleRenderTargets({});
+        context.renderingStats().numDrapeTargetsFreed += static_cast<int>(texturePool.removeStaleRenderTargets({}));
     }
     texturePool.releaseRetired(drapesFreedPerFrame);
 
@@ -538,6 +539,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     if (const auto* terrain = orchestrator.getRenderTerrain()) {
         if (const auto& group = terrain->getLayerGroup()) {
             context.renderingStats().numTerrainTiles = static_cast<int>(group->getDrawableCount());
+            context.renderingStats().numTerrainVertices += terrain->surfaceVertices();
         }
     }
 
@@ -873,8 +875,8 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         }
     } else if (!std::isnan(lastReportedSightGround[2])) {
         // Terrain taken off a loaded style: the sight meets no ground any more.
-        lastReportedSightGround = {{std::numeric_limits<double>::quiet_NaN(), 0.0,
-                                    std::numeric_limits<double>::quiet_NaN()}};
+        lastReportedSightGround = {
+            {std::numeric_limits<double>::quiet_NaN(), 0.0, std::numeric_limits<double>::quiet_NaN()}};
         observer->onTerrainSightGroundChanged(0.0, 0.0, std::numeric_limits<double>::quiet_NaN());
     }
 
@@ -990,7 +992,8 @@ void Renderer::Impl::reduceMemoryUse() {
     assert(gfx::BackendScope::exists());
     // The drape targets are the largest reclaimable GPU allocation (one
     // tile-sized texture per terrain tile); they are rebuilt on the next frame
-    texturePool.removeStaleRenderTargets({});
+    backend.getContext().renderingStats().numDrapeTargetsFreed += static_cast<int>(
+        texturePool.removeStaleRenderTargets({}));
     texturePool.releaseRetired(0);
     backend.getContext().reduceMemoryUsage();
 }

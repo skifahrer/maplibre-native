@@ -490,6 +490,11 @@ public:
      */
     const LayerGroupBasePtr& getLayerGroup() const { return layerGroup; }
 
+    /// 197 The vertices one draw of every surface tile takes: tiles times the mesh.
+    int64_t surfaceVertices() const;
+    /// 197 The vertices the depth pass draws: the surface tiles times the depth mesh.
+    int64_t depthVertices() const;
+
     /**
      * @brief Render the terrain depth pass: the terrain meshes drawn with the
      * depth-packing shader into a viewport-sized render target, sampled by the

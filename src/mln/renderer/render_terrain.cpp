@@ -1747,6 +1747,7 @@ void RenderTerrain::renderDepth(RenderOrchestrator& orchestrator,
 #endif
     depthRenderTarget->render(orchestrator, renderTree, parameters);
     parameters.context.renderingStats().numDepthPasses++;
+    parameters.context.renderingStats().numTerrainVertices += depthVertices();
     lastDepthProjMatrix = proj;
     depthDirty = false;
 }
@@ -1825,6 +1826,20 @@ const RenderTerrain::TerrainMesh& RenderTerrain::getMesh(gfx::Context& context) 
         generateMesh(context);
     }
     return *mesh;
+}
+
+int64_t RenderTerrain::surfaceVertices() const {
+    if (!layerGroup || !mesh) {
+        return 0;
+    }
+    return static_cast<int64_t>(layerGroup->getDrawableCount()) * static_cast<int64_t>(mesh->vertexCount);
+}
+
+int64_t RenderTerrain::depthVertices() const {
+    if (!layerGroup || !depthMesh) {
+        return 0;
+    }
+    return static_cast<int64_t>(layerGroup->getDrawableCount()) * static_cast<int64_t>(depthMesh->vertexCount);
 }
 
 const RenderTerrain::TerrainMesh& RenderTerrain::getDepthMesh(gfx::Context& /*context*/) {
