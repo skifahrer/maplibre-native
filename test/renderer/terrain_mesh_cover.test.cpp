@@ -960,3 +960,11 @@ TEST(TerrainMeshBuild, ATippedViewsTilesAllKeepTheFullGrid) {
         EXPECT_TRUE(grids.contains(RenderTerrain::meshGridFor(1000.0, 0)));
     }
 }
+
+// 201 3CB1 tiles on different grids count their own grid's vertices, not the full grid's
+TEST_F(TerrainMeshBuffers, TilesCountTheirOwnGridsVertices) {
+    const auto full = static_cast<int64_t>(terrain.getMesh(context).vertexCount);
+    const auto coarse = static_cast<int64_t>(terrain.getMesh(context, 64).vertexCount);
+    EXPECT_EQ(terrain.verticesOfGrids({128, 64, 64}), full + 2 * coarse);
+    EXPECT_LT(terrain.verticesOfGrids({64}), full) << "a coarser tile counted as a full one";
+}

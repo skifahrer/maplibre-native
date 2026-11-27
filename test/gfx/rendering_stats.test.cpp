@@ -39,3 +39,19 @@ TEST(RenderingStats, WaitAndGpuTimeArePrinted) {
     EXPECT_NE(printed.find("gpuTime"), std::string::npos);
 }
 #endif
+
+// 197 the terrain counters add up over frames, and the vertices pass 2^31
+TEST(RenderingStats, TerrainCountersAddUp) {
+    gfx::RenderingStats total;
+    gfx::RenderingStats frame;
+    frame.numDrapeTargetsMade = 3;
+    frame.numDrapeTargetsFreed = 2;
+    frame.numHillshadePrepares = 5;
+    frame.numTerrainVertices = int64_t{1} << 31;
+    total += frame;
+    total += frame;
+    EXPECT_EQ(total.numDrapeTargetsMade, 6);
+    EXPECT_EQ(total.numDrapeTargetsFreed, 4);
+    EXPECT_EQ(total.numHillshadePrepares, 10);
+    EXPECT_EQ(total.numTerrainVertices, int64_t{1} << 32);
+}

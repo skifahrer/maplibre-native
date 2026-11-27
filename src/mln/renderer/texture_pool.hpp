@@ -22,7 +22,8 @@ public:
                             uint32_t size = 0);
 
     /// Targets of tiles not in the set leave the pool at once, to be freed by `releaseRetired`.
-    void removeStaleRenderTargets(const std::set<UnwrappedTileID>& currentTiles);
+    /// The targets whose tile left the cover go; returns how many.
+    std::size_t removeStaleRenderTargets(const std::set<UnwrappedTileID>& currentTiles);
 
     /// Frees at most `count` targets that left the pool, every one when `count` is 0.
     std::size_t releaseRetired(std::size_t count) { return retired.release(count); }

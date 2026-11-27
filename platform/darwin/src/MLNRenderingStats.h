@@ -107,6 +107,17 @@ MLN_EXPORT
 /// Number of stencil buffer updates
 @property (readonly, nonatomic) int stencilUpdates;
 
+/// Terrain drape targets re-rendered, total over all the frames
+@property (readonly, nonatomic) int numDrapeTargetsRendered;
+/// Terrain drape targets made, total over all the frames
+@property (readonly, nonatomic) int numDrapeTargetsMade;
+/// Terrain drape targets freed as their tile left the cover or changed size, a total
+@property (readonly, nonatomic) int numDrapeTargetsFreed;
+/// Hillshade prepare passes drawn, one DEM tile each, total over all the frames
+@property (readonly, nonatomic) int numHillshadePrepares;
+/// Terrain mesh vertices the surface and depth passes drew, total over all the frames
+@property (readonly, nonatomic) int64_t numTerrainVertices;
+
 /// Terrain drape targets whose re-render the per-frame load budget deferred, total over all
 /// the frames. Each deferral asks for a follow-up frame.
 @property (readonly, nonatomic) int numDrapeTargetsDeferred;

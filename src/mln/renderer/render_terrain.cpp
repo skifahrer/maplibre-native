@@ -1757,6 +1757,7 @@ void RenderTerrain::renderDepth(RenderOrchestrator& orchestrator,
 #endif
     depthRenderTarget->render(orchestrator, renderTree, parameters);
     parameters.context.renderingStats().numDepthPasses++;
+    parameters.context.renderingStats().numTerrainVertices += depthVertices();
     lastDepthProjMatrix = proj;
     depthDirty = false;
 }
@@ -1860,6 +1861,38 @@ size_t RenderTerrain::meshGridFor(const double edge, const size_t current) {
     }
     // past a step by a fifth before it moves, so a tile standing on one does not flip each frame
     return plain > current ? std::max(current, pick(1.2)) : std::min(current, pick(1.0 / 1.2));
+}
+
+int64_t RenderTerrain::surfaceVertices() const {
+    if (!layerGroup) {
+        return 0;
+    }
+    std::vector<size_t> grids;
+    grids.reserve(tilesWithDrawables.size());
+    for (const auto& [tileID, drawn] : tilesWithDrawables) {
+        const auto bound = boundGrids.find(tileID);
+        grids.push_back(bound == boundGrids.end() ? MESH_SIZE : bound->second);
+    }
+    return verticesOfGrids(grids);
+}
+
+int64_t RenderTerrain::verticesOfGrids(const std::vector<size_t>& grids) const {
+    int64_t vertices = 0;
+    for (const size_t grid : grids) {
+        if (grid == MESH_SIZE) {
+            vertices += mesh ? static_cast<int64_t>(mesh->vertexCount) : 0;
+        } else if (const auto coarser = coarserMeshes.find(grid); coarser != coarserMeshes.end()) {
+            vertices += static_cast<int64_t>(coarser->second.vertexCount);
+        }
+    }
+    return vertices;
+}
+
+int64_t RenderTerrain::depthVertices() const {
+    if (!layerGroup || !depthMesh) {
+        return 0;
+    }
+    return static_cast<int64_t>(layerGroup->getDrawableCount()) * static_cast<int64_t>(depthMesh->vertexCount);
 }
 
 const RenderTerrain::TerrainMesh& RenderTerrain::getDepthMesh(gfx::Context& /*context*/) {
