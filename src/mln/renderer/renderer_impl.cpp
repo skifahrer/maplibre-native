@@ -286,7 +286,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         for (const auto& id : demTileIDs) {
             texturePool.createRenderTarget(context, id, renderTreeParameters.backgroundColor, sides.at(id));
             texturePool.getRenderTarget(id)->setFar(
-                isFarDrape(id.canonical.z, nearestZoom, updateParameters->farDrapeLevels));
+                isFarDrape(id.canonical.z, nearestZoom, farDrapeLevels(updateParameters->farDrapeLevels)));
         }
         context.renderingStats().numDrapeTargetsFreed += static_cast<int>(
             texturePool.removeStaleRenderTargets(demTileIDs));
