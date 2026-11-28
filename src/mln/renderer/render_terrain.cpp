@@ -922,6 +922,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         meshSkirtLength = updateParameters->terrainSkirtLength;
         mesh.reset();
         depthMesh.reset();
+        coarserMeshes.clear();
         if (layerGroup) {
             layerGroup->clearDrawables();
         }
@@ -931,6 +932,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         }
         tilesWithDrawables.clear();
         boundDrapes.clear();
+        boundGrids.clear();
     }
 
     // If we don't have a DEM source, we can't create terrain drawables
@@ -1043,6 +1045,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         if (!currentTiles.contains(it->first)) {
             drawableDemCoords.erase(it->first);
             boundDrapes.erase(it->first);
+            boundGrids.erase(it->first);
             it = tilesWithDrawables.erase(it);
         } else {
             ++it;
@@ -1092,9 +1095,14 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
     for (const auto& unwrapped : meshTiles) {
         const OverscaledTileID tileID(unwrapped.canonical.z, unwrapped.wrap, unwrapped.canonical);
 
+        const auto bound = boundGrids.find(tileID);
+        const size_t boundGrid = bound == boundGrids.end() ? 0 : bound->second;
+        const size_t grid = meshGridFor(screenEdge(unwrapped, state), boundGrid);
+
         // A drape target remade at another size leaves the drawable sampling the old texture.
         if (const auto target = texturePool.getRenderTarget(unwrapped);
-            target && tilesWithDrawables.contains(tileID) && boundDrapes[tileID] != target->getTexture().get()) {
+            target && tilesWithDrawables.contains(tileID) &&
+            (boundDrapes[tileID] != target->getTexture().get() || boundGrid != grid)) {
             const auto ofTile = [&](gfx::Drawable& drawable) {
                 return drawable.getTileID() && *drawable.getTileID() == tileID;
             };
@@ -1215,11 +1223,13 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         if (!renderTarget) {
             continue;
         }
-        auto drawable = createDrawableForTile(context, shaders, tileID, demTexture, renderTarget->getTexture());
+        auto drawable = createDrawableForTile(
+            context, shaders, tileID, demTexture, renderTarget->getTexture(), /*depthPass=*/false, grid);
         if (drawable) {
             lg->addDrawable(std::move(drawable));
             tilesWithDrawables[tileID] = binding;
             boundDrapes[tileID] = renderTarget->getTexture().get();
+            boundGrids[tileID] = grid;
 #if !MLN_RENDER_BACKEND_OPENGL
             // Non-GL backends: one depth drawable per tile (no instancing path there).
             if (depthLg) {
@@ -1828,11 +1838,54 @@ const RenderTerrain::TerrainMesh& RenderTerrain::getMesh(gfx::Context& context) 
     return *mesh;
 }
 
+const RenderTerrain::TerrainMesh& RenderTerrain::getMesh(gfx::Context& context, const size_t gridSize) {
+    if (gridSize == MESH_SIZE) {
+        return getMesh(context);
+    }
+    auto found = coarserMeshes.find(gridSize);
+    if (found == coarserMeshes.end()) {
+        found = coarserMeshes.emplace(gridSize, buildMesh(gridSize, meshSkirtLength)).first;
+    }
+    return found->second;
+}
+
+size_t RenderTerrain::meshGridFor(const double edge, const size_t current) {
+    const auto pick = [edge](double margin) -> size_t {
+        if (edge >= 128.0 * margin) return MESH_SIZE;
+        if (edge >= 64.0 * margin) return MESH_SIZE / 2;
+        return DEPTH_MESH_SIZE;
+    };
+    const size_t plain = pick(1.0);
+    if (current == 0 || plain == current) {
+        return plain;
+    }
+    // past a step by a fifth before it moves, so a tile standing on one does not flip each frame
+    return plain > current ? std::max(current, pick(1.2)) : std::min(current, pick(1.0 / 1.2));
+}
+
 int64_t RenderTerrain::surfaceVertices() const {
-    if (!layerGroup || !mesh) {
+    if (!layerGroup) {
         return 0;
     }
-    return static_cast<int64_t>(layerGroup->getDrawableCount()) * static_cast<int64_t>(mesh->vertexCount);
+    std::vector<size_t> grids;
+    grids.reserve(tilesWithDrawables.size());
+    for (const auto& [tileID, drawn] : tilesWithDrawables) {
+        const auto bound = boundGrids.find(tileID);
+        grids.push_back(bound == boundGrids.end() ? MESH_SIZE : bound->second);
+    }
+    return verticesOfGrids(grids);
+}
+
+int64_t RenderTerrain::verticesOfGrids(const std::vector<size_t>& grids) const {
+    int64_t vertices = 0;
+    for (const size_t grid : grids) {
+        if (grid == MESH_SIZE) {
+            vertices += mesh ? static_cast<int64_t>(mesh->vertexCount) : 0;
+        } else if (const auto coarser = coarserMeshes.find(grid); coarser != coarserMeshes.end()) {
+            vertices += static_cast<int64_t>(coarser->second.vertexCount);
+        }
+    }
+    return vertices;
 }
 
 int64_t RenderTerrain::depthVertices() const {
@@ -2001,9 +2054,10 @@ std::unique_ptr<gfx::Drawable> RenderTerrain::createDrawableForTile(gfx::Context
                                                                     const OverscaledTileID& tileID,
                                                                     std::shared_ptr<gfx::Texture2D> demTexture,
                                                                     std::shared_ptr<gfx::Texture2D> mapTexture,
-                                                                    bool depthPass) {
+                                                                    bool depthPass,
+                                                                    size_t gridSize) {
     // Ensure mesh is generated
-    const auto& terrainMesh = depthPass ? getDepthMesh(context) : getMesh(context);
+    const auto& terrainMesh = depthPass ? getDepthMesh(context) : getMesh(context, gridSize);
 
     if (terrainMesh.vertices.empty() || terrainMesh.indexCount == 0) {
         Log::Error(Event::Render, "Terrain mesh is empty, cannot create drawable");

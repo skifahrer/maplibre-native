@@ -902,3 +902,69 @@ TEST(TerrainMeshCover, AMergeNeverTakesGroundFinerThanItsChildren) {
         at(2, 1, 0), at(2, 0, 1), at(2, 1, 1), at(3, 0, 0), at(3, 1, 0), at(3, 0, 1), at(3, 1, 1)};
     EXPECT_EQ(expected, merged);
 }
+
+// 201 3CB1 a tile's grid follows its edge on screen: 128 cells from 128 points, 64 from 64, else 32
+TEST(TerrainMeshBuild, AGridFollowsTheTilesSizeOnScreen) {
+    EXPECT_EQ(RenderTerrain::meshGridFor(300.0, 0), 128u);
+    EXPECT_EQ(RenderTerrain::meshGridFor(100.0, 0), 64u);
+    EXPECT_EQ(RenderTerrain::meshGridFor(40.0, 0), 32u);
+    EXPECT_EQ(RenderTerrain::meshGridFor(300.0, 32), 128u) << "a tile that grew a lot goes straight to 128";
+    EXPECT_EQ(RenderTerrain::meshGridFor(40.0, 128), 32u) << "and one that shrank a lot to 32";
+}
+
+// 201 3CB1 a tile moves to another grid only a fifth past the step, so a pan does not flip it
+TEST(TerrainMeshBuild, AGridMovesOnlyAFifthPastTheStep) {
+    EXPECT_EQ(RenderTerrain::meshGridFor(140.0, 64), 64u);
+    EXPECT_EQ(RenderTerrain::meshGridFor(155.0, 64), 128u);
+    EXPECT_EQ(RenderTerrain::meshGridFor(120.0, 128), 128u);
+    EXPECT_EQ(RenderTerrain::meshGridFor(105.0, 128), 64u);
+    EXPECT_EQ(RenderTerrain::meshGridFor(60.0, 64), 64u);
+    EXPECT_EQ(RenderTerrain::meshGridFor(52.0, 64), 32u);
+    EXPECT_EQ(RenderTerrain::meshGridFor(70.0, 32), 32u);
+    EXPECT_EQ(RenderTerrain::meshGridFor(78.0, 32), 64u);
+}
+
+// 201 3CB1 each grid is built once and shared by every tile drawing it; 128 is the surface's own
+TEST_F(TerrainMeshBuffers, EachGridIsBuiltOnceAndShared) {
+    const auto& coarse = terrain.getMesh(context, 64);
+    EXPECT_EQ(coarse.vertexCount, 65u * 65u + 6u * 65u);
+    EXPECT_EQ(coarse.indices, terrain.getMesh(context, 64).indices);
+    EXPECT_NE(coarse.indices, terrain.getMesh(context, 32).indices);
+    EXPECT_EQ(terrain.getMesh(context, 128).indices, terrain.getMesh(context).indices);
+}
+
+namespace {
+// Tiles of each grid in the cover a `pitch`-tipped iPad-sized view at z14 meshes, as the terrain walks it.
+std::map<size_t, int> gridsOfATippedView(double pitch, TileLodMode lod) {
+    Transform transform;
+    transform.resize({1024, 768});
+    transform.jumpTo(CameraOptions().withCenter(LatLng{49.17, 20.11}).withZoom(14.0).withPitch(pitch));
+    util::TileCoverParameters walk{.transformState = transform.getState()};
+    walk.tileLodMode = lod;
+    walk.tileLodOrigin = RenderTerrain::meshTileCapOrigin(transform.getState());
+    const RenderTerrain terrain{makeMutable<style::Terrain::Impl>("dem", 1.0f)};
+    std::map<size_t, int> grids;
+    for (const auto& id : util::tileCover(walk, 14, {0, 16}, 14)) {
+        ++grids[RenderTerrain::meshGridFor(terrain.screenEdge(id.toUnwrapped(), transform.getState()), 0)];
+    }
+    return grids;
+}
+} // namespace
+
+// 201 3CB1 the cover's level of detail keeps every tile of a tipped iPad view over 128 points,
+// so at about two points a cell each keeps the full grid and draws as before
+TEST(TerrainMeshBuild, ATippedViewsTilesAllKeepTheFullGrid) {
+    for (const auto lod : {TileLodMode::Default, TileLodMode::Distance, TileLodMode::Adaptive}) {
+        const auto grids = gridsOfATippedView(60.0, lod);
+        EXPECT_EQ(grids.size(), 1u) << "lod " << static_cast<int>(lod);
+        EXPECT_TRUE(grids.contains(RenderTerrain::meshGridFor(1000.0, 0)));
+    }
+}
+
+// 201 3CB1 tiles on different grids count their own grid's vertices, not the full grid's
+TEST_F(TerrainMeshBuffers, TilesCountTheirOwnGridsVertices) {
+    const auto full = static_cast<int64_t>(terrain.getMesh(context).vertexCount);
+    const auto coarse = static_cast<int64_t>(terrain.getMesh(context, 64).vertexCount);
+    EXPECT_EQ(terrain.verticesOfGrids({128, 64, 64}), full + 2 * coarse);
+    EXPECT_LT(terrain.verticesOfGrids({64}), full) << "a coarser tile counted as a full one";
+}
