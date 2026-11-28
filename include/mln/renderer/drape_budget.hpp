@@ -2,6 +2,7 @@
 
 #include <mln/map/mode.hpp>
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -42,6 +43,13 @@ inline uint8_t farDrapeLevels(uint8_t set, const char* forced) {
 inline uint8_t farDrapeLevels(uint8_t set) {
     static const char* const forced = std::getenv("MLN_FAR_DRAPE_LEVELS");
     return farDrapeLevels(set, forced);
+}
+
+/// 204 Texels kept for drapes whose tile left the cover: what the cover leaves of the budget,
+/// and never under an eighth of it, so a cover that fills the budget still keeps some.
+inline std::size_t keptDrapeTexels(std::size_t budget, std::size_t coverTexels) {
+    const std::size_t left = budget > coverTexels ? budget - coverTexels : 0;
+    return std::max(left, budget / 8);
 }
 
 /// 158: `MLN_DRAPE_MEGATEXELS=32` sets it for a run, to weigh memory against sharpness.

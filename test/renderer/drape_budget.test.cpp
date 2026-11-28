@@ -45,3 +45,10 @@ TEST(DrapeBudget, ARunCanAskForFarDrapes) {
     }
     EXPECT_EQ(farDrapeLevels(0, nullptr), 0);
 }
+
+// 204 2CB1 kept drapes take what the cover leaves, and an eighth of the budget when it leaves less
+TEST(DrapeBudget, KeptDrapesHaveAReserve) {
+    EXPECT_EQ(keptDrapeTexels(800, 200), 600u);
+    EXPECT_EQ(keptDrapeTexels(800, 750), 100u);
+    EXPECT_EQ(keptDrapeTexels(800, 900), 100u) << "a cover over the budget left nothing to keep";
+}
