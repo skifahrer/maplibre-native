@@ -36,6 +36,14 @@ TEST(KTX2Image, IsToldFromOtherImages) {
     EXPECT_FALSE(util::isKTX2(""));
 }
 
+// 205 5MB2 `MLN_KTX2_RGBA=1` turns ASTC off for a run; any other value leaves it as the GPU has it.
+TEST(KTX2Image, RGBACanBeForced) {
+    EXPECT_TRUE(util::astcTexturesFor(true, nullptr));
+    EXPECT_TRUE(util::astcTexturesFor(true, "0"));
+    EXPECT_FALSE(util::astcTexturesFor(true, "1"));
+    EXPECT_FALSE(util::astcTexturesFor(false, nullptr));
+}
+
 // 205 Each of Basis's formats decodes to the photo's pixels where the GPU takes no ASTC.
 TEST(KTX2Image, DecodesToRGBA) {
     for (const char* name : {"halves-uastc", "halves-etc1s", "halves-xuastc6", "halves-xuastc8"}) {

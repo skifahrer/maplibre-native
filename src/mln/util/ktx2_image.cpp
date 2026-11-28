@@ -36,6 +36,10 @@ bool astcTextures() {
     return astc;
 }
 
+bool astcTexturesFor(bool gpuDrawsASTC, const char* forcedRGBA) {
+    return gpuDrawsASTC && !(forcedRGBA && std::strcmp(forcedRGBA, "1") == 0);
+}
+
 std::variant<PremultipliedImage, std::shared_ptr<ASTCImage>> decodeKTX2(const std::string& data, bool toASTC) {
     initTranscoder();
     basist::ktx2_transcoder ktx2;
