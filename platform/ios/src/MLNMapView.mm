@@ -2434,8 +2434,8 @@ public:
       // Near and past the horizon the head turns: the eye stays where it stands.
       BOOL turned = oldCamera.pitch > self.rotationKeepsEyeAbovePitch
                         ? self.mbglMap.setBearingKeepingEye(newDegrees)
-                        : self.rotationPivotReach > 0 &&
-                              self.mbglMap.setBearingAroundNearPoint(newDegrees, self.rotationPivotReach);
+                        : self.rotationPivotReach > 0 && self.mbglMap.setBearingAroundNearPoint(
+                                                             newDegrees, self.rotationPivotReach);
       if (!turned) {
         self.mbglMap.jumpTo(mln::CameraOptions()
                                 .withBearing(newDegrees)
@@ -2467,7 +2467,8 @@ public:
     CGFloat velocity = rotate.velocity;
     CGFloat decelerationRate = self.decelerationRate;
     // Drift eases round the anchor; where the turn kept the eye it would swing away at the end.
-    BOOL keptEye = self.camera.pitch > self.rotationKeepsEyeAbovePitch || self.rotationPivotReach > 0;
+    BOOL keptEye =
+        self.camera.pitch > self.rotationKeepsEyeAbovePitch || self.rotationPivotReach > 0;
     if (!keptEye && decelerationRate != MLNMapViewDecelerationRateImmediate && fabs(velocity) > 3) {
       CGFloat radians = self.angle + rotate.rotation;
       CGFloat newRadians = radians + velocity * decelerationRate * 0.1;
@@ -3321,14 +3322,15 @@ static void *windowScreenContext = &windowScreenContext;
 
 - (void)setCompilesShadersAsynchronously:(BOOL)compilesShadersAsynchronously {
 #if MLN_RENDER_BACKEND_METAL
-  static_cast<mln::mtl::RendererBackend&>(_mbglView->getRendererBackend())
+  static_cast<mln::mtl::RendererBackend &>(_mbglView->getRendererBackend())
       .setCompilesShadersAsynchronously(compilesShadersAsynchronously);
 #endif
 }
 
 - (BOOL)compilesShadersAsynchronously {
 #if MLN_RENDER_BACKEND_METAL
-  return static_cast<mln::mtl::RendererBackend&>(_mbglView->getRendererBackend()).compilesShadersAsynchronously();
+  return static_cast<mln::mtl::RendererBackend &>(_mbglView->getRendererBackend())
+      .compilesShadersAsynchronously();
 #else
   return NO;
 #endif
