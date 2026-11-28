@@ -324,7 +324,7 @@ jobs:
       - name: Test the core's drape, elevation, fog, view settings, label heights and layer order
         if: success() || failure()
         env:
-          FILTER: "*Terrain*:*Fog*:*StyleParsedLayers*:*SymbolZOffset*:Scheduler.Reply*:RenderingStats.*:*LayersBySource*:Retiring.*:DrapeBudget.*-*TerrainCamera*:*MeshCover*:*TerrainSourceCover*"
+          FILTER: "*Terrain*:*Fog*:*StyleParsedLayers*:*SymbolZOffset*:Scheduler.Reply*:RenderingStats.*:*LayersBySource*:Retiring.*:DrapeBudget.*:HillshadeSlopes.*-*TerrainCamera*:*MeshCover*:*TerrainSourceCover*"
         run: |
           # shellcheck disable=SC2086
           bazel test $BAZEL_CACHE $BAZEL_TEST "$SIMULATOR" "$SIMULATOR_IOS" $BAZEL_FLAGS "--test_env=GTEST_FILTER=$FILTER" \

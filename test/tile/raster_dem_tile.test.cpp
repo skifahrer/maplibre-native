@@ -1,4 +1,7 @@
 #include <mln/test/util.hpp>
+#include <algorithm>
+#include <chrono>
+#include <thread>
 #include <mln/test/fake_file_source.hpp>
 #include <mln/tile/raster_dem_tile.hpp>
 #include <mln/tile/raster_tile.hpp>
@@ -10,6 +13,7 @@
 #include <mln/annotation/annotation_manager.hpp>
 #include <mln/renderer/tile_parameters.hpp>
 #include <mln/renderer/buckets/hillshade_bucket.hpp>
+#include <mln/geometry/hillshade_slopes.hpp>
 #include <mln/renderer/image_manager.hpp>
 #include <mln/text/glyph_manager.hpp>
 #include <mln/gfx/dynamic_texture_atlas.hpp>
@@ -248,4 +252,81 @@ TEST(RasterDEMTile, TerrainBackfillWithoutATargetPreparesAfresh) {
 
     EXPECT_FALSE(tile.getBucket()->renderTargetPrepared);
     EXPECT_FALSE(tile.getBucket()->borderChanged);
+}
+
+namespace {
+class ErrorRecorder : public TileObserver {
+public:
+    std::string error;
+    void onTileError(Tile&, std::exception_ptr err) override {
+        try {
+            std::rethrow_exception(err);
+        } catch (const std::exception& e) {
+            error = e.what();
+        }
+    }
+};
+} // namespace
+
+// 196 the worker makes the slopes with the bucket, so a new tile costs the frame no prepare pass
+TEST(RasterDEMTile, TheWorkerMakesTheSlopes) {
+    RasterDEMTileTest test;
+    auto fileSource = std::static_pointer_cast<FakeFileSource>(test.fileSource);
+    RasterDEMTile tile(OverscaledTileID(3, 2, 1), "testSource", test.tileParameters, test.tileset);
+    ErrorRecorder errors;
+    tile.setObserver(&errors);
+    tile.setNecessity(TileNecessity::Required);
+    Response response;
+    response.data = std::make_shared<std::string>(encodePNG(PremultipliedImage({16, 16})));
+    ASSERT_TRUE(fileSource->respond(Resource::Tile, response));
+    // the parse runs on a worker thread and answers through the loop, which runOnce does not wait for
+    const auto giveUp = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!tile.getBucket() && errors.error.empty() && std::chrono::steady_clock::now() < giveUp) {
+        test.loop.runOnce();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_EQ(errors.error, "");
+    ASSERT_NE(tile.getBucket(), nullptr);
+    ASSERT_TRUE(tile.getBucket()->slopes);
+    EXPECT_EQ(tile.getBucket()->slopes->size, Size(18, 18));
+}
+
+// 196 a backfill remakes the slopes' edges from the new border and marks them for upload
+TEST(RasterDEMTile, BackfillRemakesTheSlopesEdges) {
+    RasterDEMTileTest test;
+    RasterDEMTile tile(OverscaledTileID(1, 0, 0), "testSource", test.tileParameters, test.tileset);
+    RasterDEMTile right(OverscaledTileID(1, 1, 0), "testSource", test.tileParameters, test.tileset);
+    PremultipliedImage steep({16, 16});
+    for (size_t i = 0; i < steep.bytes(); i += 4) {
+        steep.data[i] = 1;
+        steep.data[i + 1] = static_cast<uint8_t>((i / 4) % 16 * 15);
+        steep.data[i + 3] = 255;
+    }
+    tile.onParsed(std::make_unique<HillshadeBucket>(PremultipliedImage({16, 16}), Tileset::RasterEncoding::Mapbox), 0);
+    right.onParsed(std::make_unique<HillshadeBucket>(std::move(steep), Tileset::RasterEncoding::Mapbox), 0);
+    auto* bucket = tile.getBucket();
+    bucket->makeSlopes(1);
+    const auto before = bucket->slopes->clone();
+
+    tile.backfillBorder(right, DEMTileNeighbors::Right);
+
+    EXPECT_TRUE(bucket->slopesChanged);
+    const auto fresh = HillshadeSlopes::make(bucket->getDEMData(), 1);
+    ASSERT_EQ(bucket->slopes->bytes(), fresh.bytes());
+    EXPECT_TRUE(std::equal(fresh.data.get(), fresh.data.get() + fresh.bytes(), bucket->slopes->data.get()));
+    EXPECT_FALSE(std::equal(before.data.get(), before.data.get() + before.bytes(), fresh.data.get()));
+}
+
+// 196 a bucket made without slopes keeps the prepare pass and gets none on a backfill
+TEST(RasterDEMTile, BackfillWithoutSlopesLeavesThemOut) {
+    RasterDEMTileTest test;
+    RasterDEMTile tile(OverscaledTileID(1, 0, 0), "testSource", test.tileParameters, test.tileset);
+    RasterDEMTile right(OverscaledTileID(1, 1, 0), "testSource", test.tileParameters, test.tileset);
+    tile.onParsed(std::make_unique<HillshadeBucket>(PremultipliedImage({16, 16}), Tileset::RasterEncoding::Mapbox), 0);
+    right.onParsed(std::make_unique<HillshadeBucket>(PremultipliedImage({16, 16}), Tileset::RasterEncoding::Mapbox), 0);
+
+    tile.backfillBorder(right, DEMTileNeighbors::Right);
+
+    EXPECT_FALSE(tile.getBucket()->slopes);
+    EXPECT_FALSE(tile.getBucket()->slopesChanged);
 }

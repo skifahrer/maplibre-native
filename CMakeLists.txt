@@ -519,6 +519,8 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/geometry/debug_font_data.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/geometry/dem_data.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/geometry/dem_data.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/geometry/hillshade_slopes.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/geometry/hillshade_slopes.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/geometry/feature_index.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/geometry/feature_index.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/geometry/line_atlas.cpp

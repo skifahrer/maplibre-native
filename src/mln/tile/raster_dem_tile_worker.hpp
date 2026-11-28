@@ -16,7 +16,8 @@ public:
 
     void parse(const std::shared_ptr<const std::string>& data,
                uint64_t correlationID,
-               Tileset::RasterEncoding encoding);
+               Tileset::RasterEncoding encoding,
+               uint8_t zoom);
 
 private:
     ActorRef<RasterDEMTile> parent;

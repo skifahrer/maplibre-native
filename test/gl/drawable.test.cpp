@@ -16,6 +16,7 @@
 #include <mln/shaders/gl/shader_program_gl.hpp>
 #include <mln/shaders/program_parameters.hpp>
 #include <mln/shaders/segment.hpp>
+#include <mln/util/constants.hpp>
 
 using namespace mln;
 
@@ -35,6 +36,7 @@ TEST(DrawableGL, DrawsWithReplacedIndexBuffer) {
     RenderStaticData staticData{std::make_unique<gfx::ShaderRegistry>()};
     LineAtlas lineAtlas;
     PatternAtlas patternAtlas;
+    TexturePool texturePool{util::tileSize_I};
     PaintParameters parameters{context,
                                1,
                                backend,
@@ -46,6 +48,7 @@ TEST(DrawableGL, DrawsWithReplacedIndexBuffer) {
                                staticData,
                                lineAtlas,
                                patternAtlas,
+                               texturePool,
                                0,
                                0,
                                1,

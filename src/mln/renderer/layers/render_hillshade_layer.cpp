@@ -261,7 +261,19 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
         }
         setRenderTileBucketID(tileID, bucket.getID());
 
-        if (!bucket.renderTargetPrepared) {
+        if (bucket.slopes) {
+            // Made on the tile worker: a plain texture, no render target or prepare pass.
+            if (!bucket.slopesTexture) {
+                bucket.slopesTexture = context.createTexture2D();
+                bucket.slopesTexture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Linear,
+                                                               .wrapU = gfx::TextureWrapType::Clamp,
+                                                               .wrapV = gfx::TextureWrapType::Clamp});
+                bucket.slopesTexture->setImage(bucket.slopes);
+            } else if (bucket.slopesChanged) {
+                bucket.slopesTexture->setImage(bucket.slopes);
+            }
+            bucket.slopesChanged = false;
+        } else if (!bucket.renderTargetPrepared) {
             // Set up tile render target
             // One pixel wider than the tile on every side: the ring holds derivatives computed
             // from the DEM's 2px border, so the hillshade draw's bilinear filter has a real
@@ -336,6 +348,8 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
             currentRenderTargets.emplace_back(bucket.renderTarget);
         }
 
+        const auto slopesTexture = bucket.slopes ? bucket.slopesTexture : bucket.renderTarget->getTexture();
+
         // Set up tile drawable
         std::shared_ptr<HillshadeVertexVector> vertices;
         std::shared_ptr<gfx::IndexVector<gfx::Triangles>> indices;
@@ -394,7 +408,7 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
                                             std::move(indices),
                                             segments->data(),
                                             segments->size());
-            drawable.setTexture(bucket.renderTarget->getTexture(), idHillshadeImageTexture);
+            drawable.setTexture(slopesTexture, idHillshadeImageTexture);
 
             return true;
         };
@@ -410,7 +424,7 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
         hillshadeBuilder->setVertexAttributes(buildVertexAttributes());
         hillshadeBuilder->setRawVertices({}, vertices->elements(), gfx::AttributeDataType::Short2);
         hillshadeBuilder->setSegments(gfx::Triangles(), indices->vector(), segments->data(), segments->size());
-        hillshadeBuilder->setTexture(bucket.renderTarget->getTexture(), idHillshadeImageTexture);
+        hillshadeBuilder->setTexture(slopesTexture, idHillshadeImageTexture);
 
         hillshadeBuilder->flush(context);
 

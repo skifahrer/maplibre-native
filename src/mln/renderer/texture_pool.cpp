@@ -22,6 +22,7 @@ void TexturePool::createRenderTarget(gfx::Context& context,
             return;
         }
         retired.add(std::move(it->second));
+        context.renderingStats().numDrapeTargetsFreed++;
     }
     // Drape targets render several overlapping draped tiles (a parent standing in for missing
     // children beside already-loaded children); the stencil clips them against each other,
@@ -31,17 +32,21 @@ void TexturePool::createRenderTarget(gfx::Context& context,
     renderTarget->setClearColor(backgroundColor);
     renderTarget->setDrapeTileID(id);
     renderTargets[id] = std::move(renderTarget);
+    context.renderingStats().numDrapeTargetsMade++;
 }
 
-void TexturePool::removeStaleRenderTargets(const std::set<UnwrappedTileID>& currentTiles) {
+std::size_t TexturePool::removeStaleRenderTargets(const std::set<UnwrappedTileID>& currentTiles) {
+    std::size_t removed = 0;
     for (auto it = renderTargets.begin(); it != renderTargets.end();) {
         if (!currentTiles.contains(it->first)) {
             retired.add(std::move(it->second));
             it = renderTargets.erase(it);
+            ++removed;
         } else {
             ++it;
         }
     }
+    return removed;
 }
 
 std::shared_ptr<RenderTarget> TexturePool::getRenderTarget(const UnwrappedTileID& id) const {
