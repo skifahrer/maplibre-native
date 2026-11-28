@@ -221,6 +221,7 @@ void Map::Impl::onUpdate() {
                                .tileLodMode = tileLodMode,
                                .terrainLoadMode = terrainLoadMode,
                                .terrainSkirtLength = terrainSkirtLength,
+                               .farDrapeLevels = farDrapeLevels,
                                .debugAboveGroundLog = debugAboveGroundLog,
                                .transitionTargetCenter = centerClampedToGround && !transitionIsFling
                                                              ? transform.getTransitionTargetCenter()

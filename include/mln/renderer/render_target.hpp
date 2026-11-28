@@ -122,6 +122,10 @@ public:
     /// Frames in a row this target was deferred by the drape budget.
     uint32_t getFramesHeld() const { return framesHeld; }
 
+    /// 203 A far drape draws only the groups drawn in far drapes; a change draws it again.
+    void setFar(bool value);
+    bool isFar() const { return far; }
+
 protected:
     void renderDrapedLayerGroups(RenderOrchestrator&, PaintParameters&);
 
@@ -151,6 +155,8 @@ protected:
         /// part of sameContentAs: the drape cache must not re-render on paint changes
         /// (matches maplibre-gl-js). See computeDrapeCoverage.
         uint64_t propertiesEpoch = 0;
+        /// 203 Drawn as a far drape, without the groups left to near ones.
+        bool far = false;
 
         /// Whether this would draw exactly what `other` already did.
         /// The paint-property epoch is deliberately NOT part of this: any paint transition
@@ -159,7 +165,8 @@ protected:
         /// panning (measured ~4x overdraw / 11fps -> 1x / 44fps once removed). gl-js keys its
         /// terrain RTT cache on tile coverage + zoom, never on paint changes.
         bool sameContentAs(const DrapeCoverage& other) const {
-            return totalGroups == other.totalGroups && contentHash == other.contentHash && zoom == other.zoom;
+            return totalGroups == other.totalGroups && contentHash == other.contentHash && zoom == other.zoom &&
+                   far == other.far;
         }
         /// Whether this would draw less than `other`: no layer group improved, and at least one
         /// lost its content or fell back to a coarser ancestor. Compared per group, not summed
@@ -206,6 +213,7 @@ protected:
     // a never-rendered target is always rendered to avoid showing a blank tile.
     bool hasRenderedContent = false;
     uint32_t framesHeld = 0;
+    bool far = false;
 
 public:
     void setRenderOnce(bool value) { renderOnce = value; }

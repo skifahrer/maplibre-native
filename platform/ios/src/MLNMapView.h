@@ -682,6 +682,18 @@ MLN_EXPORT
 @property (nonatomic, assign) MLNTerrainLoadMode terrainLoadMode;
 
 /**
+ How many zoom levels below the nearest terrain tile a tile's drape leaves out its line layers.
+
+ A far tile's drape then draws only fills, hillshade and rasters, which costs far less on a
+ tipped map with many road and contour layers. Has no effect when terrain is not enabled.
+
+ The default value of this property is 0: every drape draws every layer.
+
+ This property is experimental and subject to change.
+ */
+@property (nonatomic, assign) NSUInteger farDrapeLevels;
+
+/**
  Moves the map centre onto the 3D terrain under it without moving the camera.
 
  The centre slides along the line of sight up to the ground and the zoom level

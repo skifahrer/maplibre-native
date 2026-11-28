@@ -348,6 +348,7 @@ void RenderLineLayer::update(gfx::ShaderRegistry& shaders,
     // Set up a layer group
     if (!layerGroup) {
         if (auto layerGroup_ = context.createTileLayerGroup(layerIndex, /*initialCapacity=*/64, getID(), draped)) {
+            layerGroup_->setDrawnInFarDrapes(false);
             setLayerGroup(std::move(layerGroup_), changes);
         } else {
             return;

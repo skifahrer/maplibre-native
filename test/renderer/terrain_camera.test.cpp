@@ -2291,6 +2291,27 @@ const char* hillshadeTerrainStyle = R"STYLE({
   "layers": [{"id": "shade", "type": "hillshade", "source": "dem"}]
 })STYLE";
 
+const char* linesTerrainStyle = R"STYLE({
+  "version": 8,
+  "sources": {
+    "dem": {
+      "type": "raster-dem",
+      "tiles": ["http://example.com/{z}-{x}-{y}.png"],
+      "encoding": "mapbox",
+      "maxzoom": 2,
+      "tileSize": 64
+    },
+    "grid": {"type": "geojson", "data": {"type": "MultiLineString", "coordinates": [
+      [[-180, 47.2], [180, 47.2]], [[-180, 47.3], [180, 47.3]], [[-180, 47.4], [180, 47.4]],
+      [[11.3, -80], [11.3, 80]], [[11.4, -80], [11.4, 80]], [[11.5, -80], [11.5, 80]]]}}
+  },
+  "terrain": {"source": "dem", "exaggeration": 1.0},
+  "layers": [
+    {"id": "land", "type": "background", "paint": {"background-color": "white"}},
+    {"id": "grid", "type": "line", "source": "grid", "paint": {"line-color": "red", "line-width": 3}}
+  ]
+})STYLE";
+
 const char* noTerrainStyle = R"STYLE({
   "version": 8,
   "sources": {
@@ -2339,6 +2360,26 @@ TEST(TerrainCounters, TerrainVerticesFollowTheTilesDrawn) {
     const int64_t added = after.numTerrainVertices - before.numTerrainVertices;
     ASSERT_GT(added, 0) << "a frame drew no terrain vertices";
     EXPECT_EQ(added % after.numTerrainTiles, 0) << "the vertices are not whole meshes per tile";
+}
+
+// 203 4CA1 drapes far below the view leave out the lines, so they draw less
+TEST(TerrainCounters, FarDrapesLeaveOutLines) {
+    const auto drawCalls = [](uint8_t levels) {
+        TerrainCameraTest test;
+        test.map.getStyle().loadJSON(linesTerrainStyle);
+        test.map.jumpTo(CameraOptions().withZoom(6.0).withPitch(70.0));
+        test.map.setFarDrapeLevels(levels);
+        return renderFrames(test, 12).totalDrawCalls;
+    };
+    EXPECT_LT(drawCalls(1), drawCalls(0));
+}
+
+// 203 4CA1 the far drapes' levels are the map's to set, and 0, every layer everywhere, by default
+TEST(TerrainCounters, FarDrapeLevelsAreTheMaps) {
+    TerrainCameraTest test;
+    EXPECT_EQ(test.map.getFarDrapeLevels(), 0);
+    test.map.setFarDrapeLevels(3);
+    EXPECT_EQ(test.map.getFarDrapeLevels(), 3);
 }
 
 // 197 the worker makes the slopes, so a hillshade over terrain draws no prepare pass

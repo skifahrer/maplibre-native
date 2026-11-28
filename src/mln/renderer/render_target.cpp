@@ -134,6 +134,7 @@ RenderTarget::DrapeCoverage RenderTarget::computeDrapeCoverage(RenderOrchestrato
                                                                const PaintParameters& parameters) const {
     DrapeCoverage coverage;
     coverage.totalGroups = 0;
+    coverage.far = far;
     // Integer tile-zoom only, NOT the continuous zoom: a drape tile's rasterized content
     // is stable within a zoom level, so a pinch within one level must not invalidate it
     // every frame. Crossing an integer zoom changes the covering tiles (contentHash) and
@@ -201,6 +202,13 @@ RenderTarget::DrapeCoverage RenderTarget::computeDrapeCoverage(RenderOrchestrato
     return coverage;
 }
 
+void RenderTarget::setFar(const bool value) {
+    if (far != value) {
+        far = value;
+        bakedSignature.reset();
+    }
+}
+
 void RenderTarget::renderDrapedLayerGroups(RenderOrchestrator& orchestrator, PaintParameters& parameters) {
     // Following gl-js render_to_texture: every draped layer tile that overlaps this
     // target's tile is drawn into it; the vertex shader places overlapping tiles via
@@ -208,7 +216,8 @@ void RenderTarget::renderDrapedLayerGroups(RenderOrchestrator& orchestrator, Pai
     // for unloaded children renders into each child target it covers.
     const auto visitDrapedGroups = [&](auto&& visit, auto&& f) {
         visit([&](LayerGroupBase& layerGroup) {
-            if (layerGroup.getType() == LayerGroupBase::Type::TileLayerGroup && layerGroup.shouldRenderToTerrain()) {
+            if (layerGroup.getType() == LayerGroupBase::Type::TileLayerGroup && layerGroup.shouldRenderToTerrain() &&
+                (!far || layerGroup.isDrawnInFarDrapes())) {
                 f(layerGroup);
             }
         });

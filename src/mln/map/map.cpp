@@ -745,6 +745,16 @@ TerrainLoadMode Map::getTerrainLoadMode() const {
     return impl->terrainLoadMode;
 }
 
+void Map::setFarDrapeLevels(uint8_t levels) {
+    if (impl->farDrapeLevels == levels) return;
+    impl->farDrapeLevels = levels;
+    impl->onUpdate();
+}
+
+uint8_t Map::getFarDrapeLevels() const {
+    return impl->farDrapeLevels;
+}
+
 void Map::setTerrainSkirtLength(TerrainSkirtLength length) {
     impl->terrainSkirtLength = length;
 }

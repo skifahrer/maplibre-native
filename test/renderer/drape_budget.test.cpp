@@ -27,3 +27,11 @@ TEST(DrapeBudget, NonsenseIsIgnored) {
         EXPECT_EQ(drapeTexelBudget(TerrainLoadMode::Balanced, value), own) << value;
     }
 }
+
+// 203 4CA1 a drape is far when its tile is the given levels or more below the nearest; 0 is never
+TEST(DrapeBudget, FarDrapesAreLevelsBelowTheNearest) {
+    EXPECT_TRUE(isFarDrape(12, 14, 2));
+    EXPECT_FALSE(isFarDrape(13, 14, 2));
+    EXPECT_FALSE(isFarDrape(14, 14, 2));
+    EXPECT_FALSE(isFarDrape(0, 22, 0)) << "0 levels made a drape far";
+}

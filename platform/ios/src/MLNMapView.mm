@@ -3403,6 +3403,14 @@ static void *windowScreenContext = &windowScreenContext;
   return _mbglMap->getSightGroundDistance();
 }
 
+- (void)setFarDrapeLevels:(NSUInteger)farDrapeLevels {
+  _mbglMap->setFarDrapeLevels(static_cast<uint8_t>(MIN(farDrapeLevels, (NSUInteger)UINT8_MAX)));
+}
+
+- (NSUInteger)farDrapeLevels {
+  return _mbglMap->getFarDrapeLevels();
+}
+
 - (void)setTerrainLoadMode:(MLNTerrainLoadMode)terrainLoadMode {
   switch (terrainLoadMode) {
     case MLNTerrainLoadModeBalanced:
