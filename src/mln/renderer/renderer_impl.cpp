@@ -290,10 +290,10 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                 isFarDrape(id.canonical.z, nearestZoom, farDrapeLevels(updateParameters->farDrapeLevels)));
             coverTexels += std::size_t{sides.at(id)} * sides.at(id);
         }
-        // Targets leaving the cover stay in what the budget leaves, so turning back finds them drawn
+        // Targets leaving the cover stay in a reserve, so turning back finds them drawn
         const std::size_t texelBudget = drapeTexelBudget(updateParameters->terrainLoadMode);
-        context.renderingStats().numDrapeTargetsFreed += static_cast<int>(texturePool.removeStaleRenderTargets(
-            demTileIDs, texelBudget > coverTexels ? texelBudget - coverTexels : 0));
+        context.renderingStats().numDrapeTargetsFreed += static_cast<int>(
+            texturePool.removeStaleRenderTargets(demTileIDs, keptDrapeTexels(texelBudget, coverTexels)));
         frameDrapeTargetCount = demTileIDs.size();
         // Hand the exact cover to RenderTerrain so its mesh matches this pool
         terrain->setFrameMeshCover(demTileIDs);
