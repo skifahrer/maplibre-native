@@ -283,13 +283,17 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         for (const auto& id : demTileIDs) {
             nearestZoom = std::max(nearestZoom, id.canonical.z);
         }
+        std::size_t coverTexels = 0;
         for (const auto& id : demTileIDs) {
             texturePool.createRenderTarget(context, id, renderTreeParameters.backgroundColor, sides.at(id));
             texturePool.getRenderTarget(id)->setFar(
                 isFarDrape(id.canonical.z, nearestZoom, farDrapeLevels(updateParameters->farDrapeLevels)));
+            coverTexels += std::size_t{sides.at(id)} * sides.at(id);
         }
-        context.renderingStats().numDrapeTargetsFreed += static_cast<int>(
-            texturePool.removeStaleRenderTargets(demTileIDs));
+        // Targets leaving the cover stay in what the budget leaves, so turning back finds them drawn
+        const std::size_t texelBudget = drapeTexelBudget(updateParameters->terrainLoadMode);
+        context.renderingStats().numDrapeTargetsFreed += static_cast<int>(texturePool.removeStaleRenderTargets(
+            demTileIDs, texelBudget > coverTexels ? texelBudget - coverTexels : 0));
         frameDrapeTargetCount = demTileIDs.size();
         // Hand the exact cover to RenderTerrain so its mesh matches this pool
         terrain->setFrameMeshCover(demTileIDs);
@@ -947,9 +951,9 @@ std::map<UnwrappedTileID, uint32_t> Renderer::Impl::drapeSides(const RenderTerra
         const double edge = terrain.screenEdge(id, state) * pixelRatio;
         auto side = static_cast<uint32_t>(std::ceil(edge / drapeTileSize)) * drapeTileSize;
         side = std::clamp(side, drapeTileSize, maxDrapeSide);
-        uint32_t current = 0;
-        if (const auto target = texturePool.getRenderTarget(id)) {
-            current = target->getTexture()->getSize().width;
+        // A kept target counts as current, so a tile coming back keeps it rather than regrowing
+        const uint32_t current = texturePool.sideOf(id);
+        if (current) {
             // A size changes only by two steps, so a pan does not remake textures each frame;
             // one held back still grows to what it wants.
             if (!drapesHeldBack.contains(id) && side + 2 * drapeTileSize > current &&

@@ -21,9 +21,12 @@ public:
                             const Color& backgroundColor,
                             uint32_t size = 0);
 
-    /// Targets of tiles not in the set leave the pool at once, to be freed by `releaseRetired`.
-    /// The targets whose tile left the cover go; returns how many.
-    std::size_t removeStaleRenderTargets(const std::set<UnwrappedTileID>& currentTiles);
+    /// Targets of tiles not in the set leave the cover: the latest to leave are kept while they
+    /// fit `keptTexels`, the rest go to be freed by `releaseRetired`; returns how many go.
+    std::size_t removeStaleRenderTargets(const std::set<UnwrappedTileID>& currentTiles, std::size_t keptTexels = 0);
+    std::size_t keptCount() const { return kept.size(); }
+    /// The side of the tile's target, drawn or kept; 0 when it has none.
+    uint32_t sideOf(const UnwrappedTileID& id) const;
 
     /// Frees at most `count` targets that left the pool, every one when `count` is 0.
     std::size_t releaseRetired(std::size_t count) { return retired.release(count); }
@@ -50,7 +53,15 @@ public:
 private:
     uint32_t tileSize;
 
+    struct Kept {
+        std::shared_ptr<RenderTarget> target;
+        uint64_t left;
+    };
+
     std::map<UnwrappedTileID, std::shared_ptr<RenderTarget>> renderTargets;
+    std::map<UnwrappedTileID, Kept> kept;
+    std::size_t keptTexelsHeld = 0;
+    uint64_t departures = 0;
     util::Retiring<std::shared_ptr<RenderTarget>> retired;
 };
 

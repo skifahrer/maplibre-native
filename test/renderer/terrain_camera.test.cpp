@@ -2362,6 +2362,18 @@ TEST(TerrainCounters, TerrainVerticesFollowTheTilesDrawn) {
     EXPECT_EQ(added % after.numTerrainTiles, 0) << "the vertices are not whole meshes per tile";
 }
 
+// 202 2CA1 a view moved away and back finds its drapes kept, so it makes no new target
+TEST(TerrainCounters, MovingBackMakesNoDrapeTarget) {
+    TerrainCameraTest test;
+    const auto first = renderFrames(test, 8);
+    test.map.jumpTo(CameraOptions().withCenter(LatLng{-30.0, -120.0}));
+    const auto away = renderFrames(test, 8);
+    ASSERT_GT(away.numDrapeTargetsMade, first.numDrapeTargetsMade) << "the far view made no target";
+    test.map.jumpTo(CameraOptions().withCenter(LatLng{47.2692, 11.4041}));
+    const auto back = renderFrames(test, 8);
+    EXPECT_EQ(back.numDrapeTargetsMade, away.numDrapeTargetsMade) << "moving back made new targets";
+}
+
 // 203 4CA1 drapes far below the view leave out the lines, so they draw less
 TEST(TerrainCounters, FarDrapesLeaveOutLines) {
     const auto drawCalls = [](uint8_t levels) {

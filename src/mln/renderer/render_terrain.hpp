@@ -485,13 +485,21 @@ public:
     /// A tile's grid of `gridSize` cells per side, with the skirts `skirts` asks for.
     static TerrainMesh buildMesh(size_t gridSize, TerrainSkirtLength skirts);
 
+    /// The surface's grid of `gridSize` cells per side, one shared by every tile drawing it.
+    const TerrainMesh& getMesh(gfx::Context& context, size_t gridSize);
+
+    /// Cells per side for a tile `edge` points long on screen, now drawn with `current` (0: none).
+    static size_t meshGridFor(double edge, size_t current);
+
     /**
      * @brief Get the layer group for terrain drawables
      */
     const LayerGroupBasePtr& getLayerGroup() const { return layerGroup; }
 
-    /// 197 The vertices one draw of every surface tile takes: tiles times the mesh.
+    /// 201 The vertices one draw of every surface tile takes, each on its own grid.
     int64_t surfaceVertices() const;
+    /// The vertices of one tile drawn on each of `grids`, from the meshes built so far.
+    int64_t verticesOfGrids(const std::vector<size_t>& grids) const;
     /// 197 The vertices the depth pass draws: the surface tiles times the depth mesh.
     int64_t depthVertices() const;
 
@@ -556,6 +564,9 @@ private:
     // Terrain mesh (shared across all tiles)
     std::optional<TerrainMesh> mesh;
     std::optional<TerrainMesh> depthMesh;
+    std::map<size_t, TerrainMesh> coarserMeshes;
+    // The grid each tile's drawable was built with
+    std::map<OverscaledTileID, size_t> boundGrids;
     // The skirt setting the cached mesh was built with. update() drops the mesh and every
     // tile drawable built from it when the map's setting no longer matches.
     TerrainSkirtLength meshSkirtLength = TerrainSkirtLength::Auto;
@@ -735,7 +746,8 @@ private:
                                                          const OverscaledTileID& tileID,
                                                          std::shared_ptr<gfx::Texture2D> demTexture,
                                                          std::shared_ptr<gfx::Texture2D> mapTexture,
-                                                         bool depthPass = false);
+                                                         bool depthPass = false,
+                                                         size_t gridSize = MESH_SIZE);
 };
 
 } // namespace mln
