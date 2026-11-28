@@ -6,6 +6,8 @@
 #include <atomic>
 #include <cstring>
 #include <mutex>
+#include <optional>
+#include <utility>
 #include <stdexcept>
 
 namespace mln {
@@ -45,23 +47,31 @@ std::variant<PremultipliedImage, std::shared_ptr<ASTCImage>> decodeKTX2(const st
     basist::ktx2_transcoder_state state;
     state.clear();
 
-    if (toASTC) {
+    const auto astcFormat =
+        [&]() -> std::optional<std::pair<gfx::TexturePixelType, basist::transcoder_texture_format>> {
+        using F = basist::transcoder_texture_format;
+        if (ktx2.get_block_width() != ktx2.get_block_height()) return std::nullopt;
+        switch (ktx2.get_block_width()) {
+            case 4:
+                return std::pair{gfx::TexturePixelType::ASTC4x4, F::cTFASTC_LDR_4x4_RGBA};
+            case 6:
+                return std::pair{gfx::TexturePixelType::ASTC6x6, F::cTFASTC_LDR_6x6_RGBA};
+            case 8:
+                return std::pair{gfx::TexturePixelType::ASTC8x8, F::cTFASTC_LDR_8x8_RGBA};
+            default:
+                return std::nullopt;
+        }
+    }();
+
+    if (toASTC && astcFormat) {
         auto image = std::make_shared<ASTCImage>();
         image->size = size;
-        const uint32_t blocks = ((size.width + 3) / 4) * ((size.height + 3) / 4);
+        image->format = astcFormat->first;
+        const uint32_t side = gfx::astcBlockSide(image->format);
+        const uint32_t blocks = ((size.width + side - 1) / side) * ((size.height + side - 1) / side);
         image->blocks.resize(std::size_t{blocks} * 16);
-        if (!ktx2.transcode_image_level(0,
-                                        0,
-                                        0,
-                                        image->blocks.data(),
-                                        blocks,
-                                        basist::transcoder_texture_format::cTFASTC_4x4_RGBA,
-                                        0,
-                                        0,
-                                        0,
-                                        -1,
-                                        -1,
-                                        &state)) {
+        if (!ktx2.transcode_image_level(
+                0, 0, 0, image->blocks.data(), blocks, astcFormat->second, 0, 0, 0, -1, -1, &state)) {
             throw std::runtime_error("KTX2 image does not transcode to ASTC");
         }
         return image;

@@ -165,7 +165,7 @@ void RenderRasterLayer::update(gfx::ShaderRegistry& shaders,
             if (!bucket.texture2d) {
                 if (auto tex = context.createTexture2D()) {
                     if (bucket.astc) {
-                        tex->setFormat(gfx::TexturePixelType::ASTC4x4, gfx::TextureChannelDataType::UnsignedByte);
+                        tex->setFormat(bucket.astc->format, gfx::TextureChannelDataType::UnsignedByte);
                         tex->upload(bucket.astc->blocks.data(), bucket.astc->size);
                     }
                     tex->setImage(bucket.image);

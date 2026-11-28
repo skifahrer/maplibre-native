@@ -10,9 +10,13 @@ using namespace mln;
 namespace {
 
 // The fixtures are 8 × 8: the top four rows (200, 40, 40), the bottom four (40, 40, 200).
-void expectHalves(const PremultipliedImage& image, int tolerance) {
+// A block over 4 texels straddles the middle, so only the outer rows are checked.
+void expectHalves(const PremultipliedImage& image, int tolerance, bool middle) {
     ASSERT_EQ(Size(8, 8), image.size);
     for (uint32_t y : {0u, 3u, 4u, 7u}) {
+        if (!middle && (y == 3 || y == 4)) {
+            continue;
+        }
         const uint8_t* px = image.data.get() + (y * 8 + 3) * 4;
         const int red = y < 4 ? 200 : 40;
         const int blue = y < 4 ? 40 : 200;
@@ -32,23 +36,35 @@ TEST(KTX2Image, IsToldFromOtherImages) {
     EXPECT_FALSE(util::isKTX2(""));
 }
 
-// 205 Both of Basis's formats decode to the photo's pixels where the GPU takes no ASTC.
+// 205 Each of Basis's formats decodes to the photo's pixels where the GPU takes no ASTC.
 TEST(KTX2Image, DecodesToRGBA) {
-    for (const char* name : {"halves-uastc", "halves-etc1s"}) {
+    for (const char* name : {"halves-uastc", "halves-etc1s", "halves-xuastc6", "halves-xuastc8"}) {
         SCOPED_TRACE(name);
         auto decoded = util::decodeKTX2(util::read_file(std::string("test/fixtures/ktx2/") + name + ".ktx2"), false);
         ASSERT_TRUE(std::holds_alternative<PremultipliedImage>(decoded));
-        expectHalves(std::get<PremultipliedImage>(decoded), 12);
+        expectHalves(std::get<PremultipliedImage>(decoded), 12, std::string(name).find("xuastc") == std::string::npos);
     }
 }
 
-// 205 For a GPU that takes ASTC, a tile becomes its 4 × 4 blocks, a quarter of RGBA's bytes.
-TEST(KTX2Image, TranscodesToASTCBlocks) {
-    auto decoded = util::decodeKTX2(util::read_file("test/fixtures/ktx2/halves-uastc.ktx2"), true);
-    ASSERT_TRUE(std::holds_alternative<std::shared_ptr<ASTCImage>>(decoded));
-    const auto& astc = *std::get<std::shared_ptr<ASTCImage>>(decoded);
-    EXPECT_EQ(Size(8, 8), astc.size);
-    EXPECT_EQ(8u * 8u * 4u / 4u, astc.bytes());
+// 205 For a GPU that takes ASTC, a tile becomes blocks of its own size, 16 bytes each.
+TEST(KTX2Image, TranscodesToASTCBlocksOfItsOwnSize) {
+    const struct {
+        const char* name;
+        gfx::TexturePixelType format;
+        std::size_t bytes;
+    } cases[] = {{"halves-uastc", gfx::TexturePixelType::ASTC4x4, 4 * 16},
+                 {"halves-etc1s", gfx::TexturePixelType::ASTC4x4, 4 * 16},
+                 {"halves-xuastc6", gfx::TexturePixelType::ASTC6x6, 4 * 16},
+                 {"halves-xuastc8", gfx::TexturePixelType::ASTC8x8, 16}};
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.name);
+        auto decoded = util::decodeKTX2(util::read_file(std::string("test/fixtures/ktx2/") + c.name + ".ktx2"), true);
+        ASSERT_TRUE(std::holds_alternative<std::shared_ptr<ASTCImage>>(decoded));
+        const auto& astc = *std::get<std::shared_ptr<ASTCImage>>(decoded);
+        EXPECT_EQ(Size(8, 8), astc.size);
+        EXPECT_EQ(c.format, astc.format);
+        EXPECT_EQ(c.bytes, astc.bytes());
+    }
 }
 
 // 205 A truncated KTX2 file throws, so the tile fails like a broken PNG does.
