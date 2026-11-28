@@ -113,6 +113,10 @@ public:
 
     bool shouldRenderToTerrain() const { return renderToTerrain; }
 
+    /// 203 Whether a far drape draws this group; lines are left to the near ones.
+    bool isDrawnInFarDrapes() const { return drawnInFarDrapes; }
+    void setDrawnInFarDrapes(bool value) { drawnInFarDrapes = value; }
+
     /// Set observer
     void setObserver(gfx::ContextObserver*);
 
@@ -123,6 +127,7 @@ protected:
     std::vector<LayerTweakerWeakPtr> layerTweakers;
     std::string name;
     bool renderToTerrain;
+    bool drawnInFarDrapes = true;
     gfx::ContextObserver* observer;
 };
 

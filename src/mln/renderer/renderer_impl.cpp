@@ -279,9 +279,15 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         terrain->prepareSource(orchestrator);
         const std::set<UnwrappedTileID> demTileIDs = terrain->computeMeshCover(state, updateParameters);
         const auto sides = drapeSides(*terrain, demTileIDs, state, updateParameters->terrainLoadMode);
+        uint8_t nearestZoom = 0;
+        for (const auto& id : demTileIDs) {
+            nearestZoom = std::max(nearestZoom, id.canonical.z);
+        }
         std::size_t coverTexels = 0;
         for (const auto& id : demTileIDs) {
             texturePool.createRenderTarget(context, id, renderTreeParameters.backgroundColor, sides.at(id));
+            texturePool.getRenderTarget(id)->setFar(
+                isFarDrape(id.canonical.z, nearestZoom, farDrapeLevels(updateParameters->farDrapeLevels)));
             coverTexels += std::size_t{sides.at(id)} * sides.at(id);
         }
         // Targets leaving the cover stay in what the budget leaves, so turning back finds them drawn

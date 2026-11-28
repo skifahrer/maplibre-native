@@ -27,3 +27,21 @@ TEST(DrapeBudget, NonsenseIsIgnored) {
         EXPECT_EQ(drapeTexelBudget(TerrainLoadMode::Balanced, value), own) << value;
     }
 }
+
+// 203 4CA1 a drape is far when its tile is the given levels or more below the nearest; 0 is never
+TEST(DrapeBudget, FarDrapesAreLevelsBelowTheNearest) {
+    EXPECT_TRUE(isFarDrape(12, 14, 2));
+    EXPECT_FALSE(isFarDrape(13, 14, 2));
+    EXPECT_FALSE(isFarDrape(14, 14, 2));
+    EXPECT_FALSE(isFarDrape(0, 22, 0)) << "0 levels made a drape far";
+}
+
+// 203 4CA1 a run can ask for far drapes the map leaves off; a level the map sets wins
+TEST(DrapeBudget, ARunCanAskForFarDrapes) {
+    EXPECT_EQ(farDrapeLevels(0, "2"), 2);
+    EXPECT_EQ(farDrapeLevels(3, "2"), 3);
+    for (const char* value : {"", "abc", "2x", "-1", "99"}) {
+        EXPECT_EQ(farDrapeLevels(0, value), 0) << value;
+    }
+    EXPECT_EQ(farDrapeLevels(0, nullptr), 0);
+}

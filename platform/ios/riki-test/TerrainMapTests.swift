@@ -19,6 +19,19 @@ final class TerrainMapTests: TerrainMapTestCase {
         }
     }
 
+    /// 203 far drapes keep the levels they are given and the tipped map still draws fully
+    func testFarDrapeLevelsKeepTheirValueAndDraw() throws {
+        try loadMap()
+        XCTAssertEqual(mapView.farDrapeLevels, 0)
+        mapView.farDrapeLevels = 2
+        tilt(70)
+        waitUntilFullyRendered()
+        XCTAssertEqual(mapView.farDrapeLevels, 2)
+        mapView.farDrapeLevels = 0
+        waitUntilFullyRendered()
+        XCTAssertEqual(mapView.farDrapeLevels, 0)
+    }
+
     func testSightMeetsTheGroundOnlyWithTerrain() throws {
         try loadMap()
         tilt(0)
@@ -165,7 +178,7 @@ final class TerrainMapTests: TerrainMapTestCase {
     func testTiltingAroundTheEyeAndBackReturnsTheCentre() throws {
         try loadMap()
         mapView.maximumPitch = 120
-        tilt(80, distance: 80_000)
+        tilt(80, distance: 80000)
         waitUntilFullyRendered()
         let altitude = mapView.centerAltitude
         let latitude = mapView.centerCoordinate.latitude
@@ -203,7 +216,7 @@ final class TerrainMapTests: TerrainMapTestCase {
         XCTAssertEqual(mapView.drawDistance, 0)
     }
 
-    // 155 under a sky the model's edge stood as a table with walls
+    /// 155 under a sky the model's edge stood as a table with walls
     func testPastTheModelTakesItsColourOnlyWhenGivenOne() throws {
         try loadMap()
         XCTAssertNil(mapView.pastModelColor)
@@ -217,7 +230,8 @@ final class TerrainMapTests: TerrainMapTestCase {
     }
 
     private func assertColor(_ color: UIColor?, _ red: CGFloat, _ green: CGFloat, _ blue: CGFloat,
-                             file: StaticString = #filePath, line: UInt = #line) {
+                             file: StaticString = #filePath, line: UInt = #line)
+    {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         guard let color, color.getRed(&r, green: &g, blue: &b, alpha: &a) else {
             return XCTFail("no colour", file: file, line: line)

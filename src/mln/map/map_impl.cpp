@@ -221,6 +221,7 @@ void Map::Impl::onUpdate() {
                                .tileLodMode = tileLodMode,
                                .terrainLoadMode = terrainLoadMode,
                                .terrainSkirtLength = terrainSkirtLength,
+                               .farDrapeLevels = farDrapeLevels,
                                .debugAboveGroundLog = debugAboveGroundLog,
                                .transitionTargetCenter = centerClampedToGround && !transitionIsFling
                                                              ? transform.getTransitionTargetCenter()
@@ -604,14 +605,16 @@ bool Map::Impl::turnAround(double bearingDegrees, double pivotAhead) {
     const double ahead = state.getCameraToCenterDistance() * std::sin(pitch) - pivotAhead;
     const double scale = state.getScale();
     const Point<double> center = Projection::project(*camera.center, scale);
-    const LatLng turned = Projection::unproject({center.x + ahead * (std::sin(to) - std::sin(from)),
-                                                 center.y - ahead * (std::cos(to) - std::cos(from))},
-                                                scale);
+    const LatLng turned = Projection::unproject(
+        {center.x + ahead * (std::sin(to) - std::sin(from)), center.y - ahead * (std::cos(to) - std::cos(from))},
+        scale);
     // Heights are metres at the centre's latitude, so the turned centre measures them anew.
     const double before = Projection::getMetersPerPixelAtLatitude(camera.center->latitude(), *camera.zoom);
     const double after = Projection::getMetersPerPixelAtLatitude(turned.latitude(), *camera.zoom);
-    const auto aimed = CameraOptions().withCenter(turned).withBearing(bearingDegrees).withCenterAltitude(
-        state.getCenterAltitude() / before * after);
+    const auto aimed = CameraOptions()
+                           .withCenter(turned)
+                           .withBearing(bearingDegrees)
+                           .withCenterAltitude(state.getCenterAltitude() / before * after);
 
     Transform trial(state);
     trial.jumpTo(aimed);

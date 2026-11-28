@@ -279,6 +279,11 @@ public:
     void setTerrainSkirtLength(TerrainSkirtLength length);
     TerrainSkirtLength getTerrainSkirtLength() const;
 
+    /// 203 Drapes this many zoom levels or more below the nearest terrain tile draw only fills,
+    /// hillshade and rasters, not lines; 0, the default, draws every layer into every drape.
+    void setFarDrapeLevels(uint8_t levels);
+    uint8_t getFarDrapeLevels() const;
+
     /// Whether the map centre rides the terrain surface rather than sea level. Off by
     /// default; with it on the center altitude follows the rendered terrain height under the
     /// centre, so pitching over tall ground keeps the camera above it instead of sinking
