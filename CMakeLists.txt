@@ -1016,6 +1016,8 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/util/mat4.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/math.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/padding.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/util/ktx2_image.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/util/ktx2_image.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/premultiply.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/quaternion.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/rapidjson.cpp
@@ -1154,6 +1156,7 @@ target_include_directories(
 )
 
 include(${PROJECT_SOURCE_DIR}/vendor/args.cmake)
+include(${PROJECT_SOURCE_DIR}/vendor/basis_universal.cmake)
 include(${PROJECT_SOURCE_DIR}/vendor/boost.cmake)
 include(${PROJECT_SOURCE_DIR}/vendor/csscolorparser.cmake)
 include(${PROJECT_SOURCE_DIR}/vendor/earcut.hpp.cmake)
@@ -1187,6 +1190,7 @@ target_link_libraries(
         MapLibreNative::Base::geojson-vt-cpp
         MapLibreNative::Base::cheap-ruler-cpp
         mbgl-compiler-options
+        mbgl-vendor-basis_universal
         mbgl-vendor-boost
         mbgl-vendor-earcut.hpp
         mbgl-vendor-eternal
@@ -1229,6 +1233,7 @@ set(EXPORT_TARGETS
     mbgl-vendor-supercluster
     maplibre-native-base-variant
     mbgl-compiler-options
+    mbgl-vendor-basis_universal
     mbgl-vendor-boost
     mbgl-vendor-earcut.hpp
     mbgl-vendor-eternal

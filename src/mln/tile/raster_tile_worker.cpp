@@ -2,6 +2,7 @@
 #include <mln/tile/raster_tile.hpp>
 #include <mln/renderer/buckets/raster_bucket.hpp>
 #include <mln/actor/actor.hpp>
+#include <mln/util/ktx2_image.hpp>
 #include <mln/util/premultiply.hpp>
 
 namespace mln {
@@ -17,7 +18,17 @@ void RasterTileWorker::parse(const std::shared_ptr<const std::string>& data, uin
     }
 
     try {
-        auto bucket = std::make_unique<RasterBucket>(decodeImage(*data));
+        std::unique_ptr<RasterBucket> bucket;
+        if (util::isKTX2(*data)) {
+            auto decoded = util::decodeKTX2(*data, util::astcTextures());
+            if (auto* blocks = std::get_if<std::shared_ptr<ASTCImage>>(&decoded)) {
+                bucket = std::make_unique<RasterBucket>(std::shared_ptr<const ASTCImage>(std::move(*blocks)));
+            } else {
+                bucket = std::make_unique<RasterBucket>(std::get<PremultipliedImage>(std::move(decoded)));
+            }
+        } else {
+            bucket = std::make_unique<RasterBucket>(decodeImage(*data));
+        }
         parent.invoke(&RasterTile::onParsed, std::move(bucket), correlationID);
     } catch (...) {
         parent.invoke(&RasterTile::onError, std::current_exception(), correlationID);

@@ -10,6 +10,12 @@
 namespace mln {
 namespace mtl {
 
+namespace {
+NS::UInteger astcBlocks(uint32_t texels, uint32_t side) {
+    return NS::UInteger{(texels + side - 1) / side};
+}
+} // namespace
+
 Texture2D::Texture2D(Context& context_)
     : context(context_) {}
 
@@ -60,6 +66,9 @@ gfx::Texture2D& Texture2D::setImage(std::shared_ptr<PremultipliedImage> image_) 
 }
 
 size_t Texture2D::getDataSize() const noexcept {
+    if (const auto side = gfx::astcBlockSide(pixelFormat)) {
+        return astcBlocks(size.width, side) * astcBlocks(size.height, side) * 16;
+    }
     return size.width * size.height * getPixelStride(); // NOLINT(clang-analyzer-optin.cplusplus.VirtualCall)
 }
 
@@ -103,6 +112,17 @@ MTL::PixelFormat Texture2D::getMetalPixelFormat() const noexcept {
         return MTL::PixelFormatDepth32Float_Stencil8;
     }
 #endif
+
+    switch (pixelFormat) {
+        case gfx::TexturePixelType::ASTC4x4:
+            return MTL::PixelFormat::PixelFormatASTC_4x4_LDR;
+        case gfx::TexturePixelType::ASTC6x6:
+            return MTL::PixelFormat::PixelFormatASTC_6x6_LDR;
+        case gfx::TexturePixelType::ASTC8x8:
+            return MTL::PixelFormat::PixelFormatASTC_8x8_LDR;
+        default:
+            break;
+    }
 
     switch (channelType) {
         case gfx::TextureChannelDataType::UnsignedByte:
@@ -314,11 +334,13 @@ void Texture2D::uploadSubRegion(const void* pixelData, const Size& size_, uint16
     assert(!textureDirty);
 
     const MTL::Region region = MTL::Region::Make2D(xOffset, yOffset, size_.width, size_.height);
-    const NS::UInteger bytesPerRow = size_.width * getPixelStride();
+    const auto side = gfx::astcBlockSide(pixelFormat);
+    const NS::UInteger bytesPerRow = side ? astcBlocks(size_.width, side) * 16 : size_.width * getPixelStride();
     metalTexture->replaceRegion(region, 0, pixelData, bytesPerRow);
     context.threadSafeAccessRenderingStats([&](gfx::RenderingStats& stats) {
         stats.numTextureUpdates++;
-        stats.textureUpdateBytes += bytesPerRow * size_.height;
+        const auto rows = side ? astcBlocks(size_.height, side) : size_.height;
+        stats.textureUpdateBytes += bytesPerRow * rows;
     });
 }
 

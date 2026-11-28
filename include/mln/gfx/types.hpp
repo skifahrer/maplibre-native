@@ -107,7 +107,24 @@ enum class TexturePixelType : uint8_t {
     Stencil,   ///< Stencil
     Depth,     ///< Depth component
     Luminance, ///< Luminance
+    ASTC4x4,   ///< ASTC blocks of 4 × 4 texels, 16 bytes each
+    ASTC6x6,   ///< ASTC blocks of 6 × 6 texels, 16 bytes each
+    ASTC8x8,   ///< ASTC blocks of 8 × 8 texels, 16 bytes each
 };
+
+/// The side of an ASTC format's square block, 0 for any other format.
+constexpr uint32_t astcBlockSide(TexturePixelType type) {
+    switch (type) {
+        case TexturePixelType::ASTC4x4:
+            return 4;
+        case TexturePixelType::ASTC6x6:
+            return 6;
+        case TexturePixelType::ASTC8x8:
+            return 8;
+        default:
+            return 0;
+    }
+}
 
 /// Texture channel data type
 enum class TextureChannelDataType : uint8_t {

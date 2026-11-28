@@ -164,6 +164,10 @@ void RenderRasterLayer::update(gfx::ShaderRegistry& shaders,
         if (bucket.hasData()) {
             if (!bucket.texture2d) {
                 if (auto tex = context.createTexture2D()) {
+                    if (bucket.astc) {
+                        tex->setFormat(bucket.astc->format, gfx::TextureChannelDataType::UnsignedByte);
+                        tex->upload(bucket.astc->blocks.data(), bucket.astc->size);
+                    }
                     tex->setImage(bucket.image);
                     bucket.texture2d = std::move(tex);
                 }

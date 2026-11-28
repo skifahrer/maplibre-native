@@ -23,6 +23,9 @@ size_t pixelStride(gfx::TexturePixelType pixelType) {
             return 4;
         case gfx::TexturePixelType::Stencil:
         case gfx::TexturePixelType::Depth:
+        case gfx::TexturePixelType::ASTC4x4:
+        case gfx::TexturePixelType::ASTC6x6:
+        case gfx::TexturePixelType::ASTC8x8:
             return 4;
     }
     return 4;

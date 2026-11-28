@@ -194,6 +194,36 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
+# Only KTX2's ETC1S and UASTC, transcoded to ASTC or RGBA: the photos' formats.
+cc_library(
+    name = "basis_universal",
+    srcs = [
+        "basis_universal/transcoder/basisu_transcoder.cpp",
+        "basis_universal/zstd/zstddeclib.c",
+    ] + glob([
+        "basis_universal/transcoder/*.h",
+        "basis_universal/transcoder/*.inc",
+        "basis_universal/transcoder/*.inl",
+        "basis_universal/zstd/*.h",
+    ]),
+    hdrs = ["basis_universal/transcoder/basisu_transcoder.h"],
+    copts = ["-w"],
+    defines = [
+        "BASISD_SUPPORT_KTX2=1",
+        "BASISD_SUPPORT_KTX2_ZSTD=1",
+        "BASISD_SUPPORT_DXT1=0",
+        "BASISD_SUPPORT_DXT5A=0",
+        "BASISD_SUPPORT_PVRTC1=0",
+        "BASISD_SUPPORT_PVRTC2=0",
+        "BASISD_SUPPORT_ETC2_EAC_A8=0",
+        "BASISD_SUPPORT_ETC2_EAC_RG11=0",
+        "BASISD_SUPPORT_ATC=0",
+        "BASISD_SUPPORT_FXT1=0",
+    ],
+    includes = ["basis_universal/transcoder"],
+    visibility = ["//visibility:public"],
+)
+
 # vendor/pmtiles-files.json
 cc_library(
     name = "pmtiles",
