@@ -615,6 +615,8 @@ MLN_CORE_SOURCE = [
     "src/mln/util/mat4.hpp",
     "src/mln/util/math.hpp",
     "src/mln/util/padding.cpp",
+    "src/mln/util/ktx2_image.cpp",
+    "src/mln/util/ktx2_image.hpp",
     "src/mln/util/premultiply.cpp",
     "src/mln/util/quaternion.cpp",
     "src/mln/util/quaternion.hpp",

@@ -1,5 +1,7 @@
 #include <mln/mtl/context.hpp>
+#include <mln/util/ktx2_image.hpp>
 
+#include <Metal/MTLDevice.hpp>
 #include <mln/gfx/shader_registry.hpp>
 #include <mln/mtl/command_encoder.hpp>
 #include <mln/mtl/drawable_builder.hpp>
@@ -43,7 +45,10 @@ constexpr uint32_t maximumVertexBindingCount = 31;
 
 Context::Context(RendererBackend& backend_)
     : gfx::Context(mtl::maximumVertexBindingCount),
-      backend(backend_) {}
+      backend(backend_) {
+    const auto& device = backend.getDevice();
+    util::setASTCTextures(device && device->supportsFamily(MTL::GPUFamilyApple2));
+}
 
 Context::~Context() noexcept {
     if (cleanupOnDestruction) {

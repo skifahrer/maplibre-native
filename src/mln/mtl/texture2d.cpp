@@ -10,6 +10,12 @@
 namespace mln {
 namespace mtl {
 
+namespace {
+NS::UInteger astcBytesPerRow(uint32_t width) {
+    return NS::UInteger{(width + 3) / 4} * 16;
+}
+} // namespace
+
 Texture2D::Texture2D(Context& context_)
     : context(context_) {}
 
@@ -60,6 +66,9 @@ gfx::Texture2D& Texture2D::setImage(std::shared_ptr<PremultipliedImage> image_) 
 }
 
 size_t Texture2D::getDataSize() const noexcept {
+    if (pixelFormat == gfx::TexturePixelType::ASTC4x4) {
+        return astcBytesPerRow(size.width) * ((size.height + 3) / 4);
+    }
     return size.width * size.height * getPixelStride(); // NOLINT(clang-analyzer-optin.cplusplus.VirtualCall)
 }
 
@@ -103,6 +112,10 @@ MTL::PixelFormat Texture2D::getMetalPixelFormat() const noexcept {
         return MTL::PixelFormatDepth32Float_Stencil8;
     }
 #endif
+
+    if (pixelFormat == gfx::TexturePixelType::ASTC4x4) {
+        return MTL::PixelFormat::PixelFormatASTC_4x4_LDR;
+    }
 
     switch (channelType) {
         case gfx::TextureChannelDataType::UnsignedByte:
@@ -314,11 +327,13 @@ void Texture2D::uploadSubRegion(const void* pixelData, const Size& size_, uint16
     assert(!textureDirty);
 
     const MTL::Region region = MTL::Region::Make2D(xOffset, yOffset, size_.width, size_.height);
-    const NS::UInteger bytesPerRow = size_.width * getPixelStride();
+    const NS::UInteger bytesPerRow = pixelFormat == gfx::TexturePixelType::ASTC4x4 ? astcBytesPerRow(size_.width)
+                                                                                   : size_.width * getPixelStride();
     metalTexture->replaceRegion(region, 0, pixelData, bytesPerRow);
     context.threadSafeAccessRenderingStats([&](gfx::RenderingStats& stats) {
         stats.numTextureUpdates++;
-        stats.textureUpdateBytes += bytesPerRow * size_.height;
+        const auto rows = pixelFormat == gfx::TexturePixelType::ASTC4x4 ? (size_.height + 3) / 4 : size_.height;
+        stats.textureUpdateBytes += bytesPerRow * rows;
     });
 }
 

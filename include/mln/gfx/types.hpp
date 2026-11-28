@@ -107,6 +107,7 @@ enum class TexturePixelType : uint8_t {
     Stencil,   ///< Stencil
     Depth,     ///< Depth component
     Luminance, ///< Luminance
+    ASTC4x4,   ///< ASTC blocks of 4 × 4 texels, 16 bytes each
 };
 
 /// Texture channel data type

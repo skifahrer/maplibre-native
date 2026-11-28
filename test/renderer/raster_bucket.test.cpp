@@ -6,6 +6,7 @@
 #include <mln/test/map_adapter.hpp>
 #include <mln/test/stub_file_source.hpp>
 #include <mln/util/image.hpp>
+#include <mln/util/io.hpp>
 #include <mln/util/run_loop.hpp>
 
 #include <gtest/gtest.h>
@@ -91,5 +92,48 @@ TEST(RasterBucket, ReleasesDecodedImageAfterTextureCreated) {
     }
 
     // Every held image is accounted for again once the map is gone.
+    EXPECT_EQ(baseline, RasterBucket::getHeldImageBytes());
+}
+
+// 205 A KTX2 raster tile draws its photo, as ASTC blocks or as RGBA, and lets go of them once drawn.
+TEST(RasterBucket, AKTX2TileDrawsAndReleasesItsBlocks) {
+    const size_t baseline = RasterBucket::getHeldImageBytes();
+    {
+        util::RunLoop loop;
+        auto fileSource = std::make_shared<StubFileSource>(ResourceOptions::Default(), ClientOptions());
+        const auto tile = std::make_shared<std::string>(util::read_file("test/fixtures/ktx2/halves-uastc.ktx2"));
+        fileSource->tileResponse = [&](const Resource&) {
+            Response res;
+            res.data = tile;
+            return res;
+        };
+
+        HeadlessFrontend frontend{{256, 256}, 1};
+        MapAdapter map(frontend,
+                       MapObserver::nullObserver(),
+                       fileSource,
+                       MapOptions().withMapMode(MapMode::Static).withSize(frontend.getSize()));
+        map.getStyle().loadJSON(R"STYLE({
+            "version": 8,
+            "sources": {"r": {"type": "raster", "tiles": ["http://example.com/{z}-{x}-{y}.ktx2"],
+                              "tileSize": 256, "maxzoom": 0}},
+            "layers": [{"id": "r", "type": "raster", "source": "r", "paint": {"raster-fade-duration": 0}}]
+        })STYLE");
+        map.jumpTo(CameraOptions().withCenter(LatLng{0.0, 0.0}).withZoom(0.0));
+
+        const auto image = frontend.render(map).image;
+        const auto at = [&](uint32_t x, uint32_t y) {
+            return image.data.get() + (y * 256 + x) * 4;
+        };
+        EXPECT_NEAR(200, at(128, 40)[0], 16);
+        EXPECT_NEAR(40, at(128, 40)[2], 16);
+        EXPECT_NEAR(40, at(128, 216)[0], 16);
+        EXPECT_NEAR(200, at(128, 216)[2], 16);
+
+        for (int frames = 0; frames < 10 && baseline != RasterBucket::getHeldImageBytes(); ++frames) {
+            (void)frontend.render(map);
+        }
+        EXPECT_EQ(baseline, RasterBucket::getHeldImageBytes());
+    }
     EXPECT_EQ(baseline, RasterBucket::getHeldImageBytes());
 }

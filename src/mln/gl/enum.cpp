@@ -387,6 +387,8 @@ platform::GLenum Enum<gfx::TexturePixelType>::to(const gfx::TexturePixelType val
             return GL_DEPTH_COMPONENT;
         case gfx::TexturePixelType::Luminance:
             return GL_LUMINANCE;
+        case gfx::TexturePixelType::ASTC4x4:
+            break;
     }
     return GL_INVALID_ENUM;
 }

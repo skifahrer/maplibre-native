@@ -8,6 +8,7 @@
 #include <mln/shaders/segment.hpp>
 #include <mln/style/layers/raster_layer_properties.hpp>
 #include <mln/util/image.hpp>
+#include <mln/util/ktx2_image.hpp>
 #include <mln/util/mat4.hpp>
 
 #include <memory>
@@ -26,6 +27,7 @@ class RasterBucket final : public Bucket {
 public:
     RasterBucket(PremultipliedImage&&);
     RasterBucket(std::shared_ptr<PremultipliedImage>);
+    RasterBucket(std::shared_ptr<const ASTCImage>);
     ~RasterBucket() override;
 
     void upload(gfx::UploadPass&) override;
@@ -48,6 +50,8 @@ public:
     // The decoded pixels, until the layer hands them to `texture2d` and calls `releaseImage()`.
     // Image source buckets keep them, because the source compares against them to detect a new image.
     std::shared_ptr<PremultipliedImage> image;
+    /// A KTX2 tile's blocks, for a GPU that draws ASTC; released with `image`.
+    std::shared_ptr<const ASTCImage> astc;
     gfx::Texture2DPtr texture2d;
     TileMask mask{{0, 0, 0}};
 

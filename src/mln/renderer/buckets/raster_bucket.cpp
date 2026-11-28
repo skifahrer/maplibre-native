@@ -26,9 +26,15 @@ RasterBucket::RasterBucket(std::shared_ptr<PremultipliedImage> image_)
     heldImageBytes += imageBytes(image);
 }
 
+RasterBucket::RasterBucket(std::shared_ptr<const ASTCImage> astc_)
+    : astc(std::move(astc_)) {
+    heldImageBytes += astc ? astc->bytes() : 0;
+}
+
 RasterBucket::~RasterBucket() {
     clear();
     setImage({});
+    releaseImage();
 }
 
 std::size_t RasterBucket::getHeldImageBytes() {
@@ -61,8 +67,9 @@ void RasterBucket::setImage(std::shared_ptr<PremultipliedImage> image_) {
 }
 
 void RasterBucket::releaseImage() {
-    heldImageBytes -= imageBytes(image);
+    heldImageBytes -= imageBytes(image) + (astc ? astc->bytes() : 0);
     image.reset();
+    astc.reset();
 }
 
 void RasterBucket::setMask(TileMask&& mask_) {
@@ -127,7 +134,7 @@ void RasterBucket::setMask(TileMask&& mask_) {
 }
 
 bool RasterBucket::hasData() const {
-    return image || texture2d;
+    return image || astc || texture2d;
 }
 
 } // namespace mln
