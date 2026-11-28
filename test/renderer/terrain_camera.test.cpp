@@ -14,6 +14,7 @@
 #include <mln/style/layers/fill_layer.hpp>
 #include <mln/style/layers/raster_layer.hpp>
 #include <mln/style/sources/geojson_source.hpp>
+#include <mln/renderer/render_terrain.hpp>
 #include <mln/style/style.hpp>
 #include <mln/style/terrain.hpp>
 #include <mln/util/constants.hpp>
@@ -2328,7 +2329,7 @@ TEST(TerrainCounters, DrapeTargetsAreMadeAndFreedWithTheCover) {
     EXPECT_EQ(gone.numDrapeTargetsFreed, shown.numDrapeTargetsMade) << "terrain off keeps targets";
 }
 
-// 197 a frame adds a mesh per surface tile, and a depth pass a depth mesh per tile
+// 201 a frame adds a mesh of its own grid per surface tile, and a depth pass a depth mesh per tile
 TEST(TerrainCounters, TerrainVerticesFollowTheTilesDrawn) {
     TerrainCameraTest test;
     const auto before = renderFrames(test, 8);
@@ -2338,7 +2339,10 @@ TEST(TerrainCounters, TerrainVerticesFollowTheTilesDrawn) {
     const auto after = renderFrames(test, 1);
     const int64_t added = after.numTerrainVertices - before.numTerrainVertices;
     ASSERT_GT(added, 0) << "a frame drew no terrain vertices";
-    EXPECT_EQ(added % after.numTerrainTiles, 0) << "the vertices are not whole meshes per tile";
+    const int64_t coarsest = RenderTerrain::buildMesh(32, TerrainSkirtLength::Auto).vertexCount;
+    const int64_t finest = RenderTerrain::buildMesh(128, TerrainSkirtLength::Auto).vertexCount;
+    EXPECT_GE(added, after.numTerrainTiles * coarsest) << "a tile drew less than the coarsest mesh";
+    EXPECT_LE(added, after.numTerrainTiles * (finest + coarsest)) << "a tile drew more than its mesh and depth";
 }
 
 // 202 2CA1 a view moved away and back finds its drapes kept, so it makes no new target
