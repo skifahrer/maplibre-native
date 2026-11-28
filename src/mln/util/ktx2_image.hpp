@@ -30,7 +30,7 @@ bool isKTX2(const std::string& data);
 void setASTCTextures(bool);
 bool astcTextures();
 
-/// A KTX2 tile's image: ASTC blocks of its own size when `astc`, else RGBA; throws if none.
+/// A KTX2 tile's image: ASTC blocks of its size when `astc`, else RGBA; throws if none.
 std::variant<PremultipliedImage, std::shared_ptr<ASTCImage>> decodeKTX2(const std::string& data, bool astc);
 
 } // namespace util
